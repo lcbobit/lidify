@@ -16,6 +16,7 @@ import { prisma } from "../utils/db";
 import { config } from "../config";
 import { requireSubsonicAuth } from "../middleware/subsonicAuth";
 import { AudioStreamingService, Quality, QUALITY_SETTINGS } from "../services/audioStreaming";
+import { scanQueue } from "../workers/queues";
 import {
     sendSubsonicSuccess,
     sendSubsonicError,
@@ -30,6 +31,17 @@ import {
 } from "../utils/subsonicResponse";
 
 const router = Router();
+
+// Log all Subsonic API requests for debugging
+router.use((req: Request, res: Response, next) => {
+    const endpoint = req.path;
+    const client = req.query.c || 'unknown';
+    // Skip noisy endpoints
+    if (!endpoint.includes('ping') && !endpoint.includes('stream') && !endpoint.includes('getCoverArt')) {
+        console.log(`[Subsonic] ${req.method} ${endpoint} from client=${client}`);
+    }
+    next();
+});
 
 // Apply Subsonic authentication to all routes
 router.use(requireSubsonicAuth);
@@ -2023,6 +2035,141 @@ router.get("/getGenres.view", (req: Request, res: Response) => {
     sendSubsonicSuccess(res, { genres: { genre: [] } }, format, req.query.callback as string);
 });
 
+/**
+ * getAlbumInfo2.view - Get album notes/info (required by Symfonium for sync)
+ */
+router.get("/getAlbumInfo2.view", async (req: Request, res: Response) => {
+    const format = getResponseFormat(req.query);
+    const { id } = req.query;
+
+    if (!id) {
+        return sendSubsonicError(
+            res,
+            SubsonicErrorCode.MISSING_PARAMETER,
+            "Required parameter 'id' is missing",
+            format,
+            req.query.callback as string
+        );
+    }
+
+    try {
+        const { id: albumId } = parseSubsonicId(id as string);
+
+        const album = await prisma.album.findUnique({
+            where: { id: albumId },
+            select: {
+                id: true,
+                title: true,
+                rgMbid: true,
+                coverUrl: true,
+            },
+        });
+
+        if (!album) {
+            return sendSubsonicError(
+                res,
+                SubsonicErrorCode.NOT_FOUND,
+                "Album not found",
+                format,
+                req.query.callback as string
+            );
+        }
+
+        // Return album info - notes are optional, musicBrainzId helps with identification
+        sendSubsonicSuccess(
+            res,
+            {
+                albumInfo: {
+                    notes: "",
+                    musicBrainzId: album.rgMbid && !album.rgMbid.startsWith("temp-") ? album.rgMbid : undefined,
+                    smallImageUrl: album.coverUrl || undefined,
+                    mediumImageUrl: album.coverUrl || undefined,
+                    largeImageUrl: album.coverUrl || undefined,
+                },
+            },
+            format,
+            req.query.callback as string
+        );
+    } catch (error) {
+        console.error("[Subsonic] getAlbumInfo2 error:", error);
+        sendSubsonicError(
+            res,
+            SubsonicErrorCode.GENERIC,
+            "Failed to fetch album info",
+            format,
+            req.query.callback as string
+        );
+    }
+});
+
+/**
+ * getArtistInfo2.view - Get artist bio/info (required by Symfonium for sync)
+ */
+router.get("/getArtistInfo2.view", async (req: Request, res: Response) => {
+    const format = getResponseFormat(req.query);
+    const { id } = req.query;
+
+    if (!id) {
+        return sendSubsonicError(
+            res,
+            SubsonicErrorCode.MISSING_PARAMETER,
+            "Required parameter 'id' is missing",
+            format,
+            req.query.callback as string
+        );
+    }
+
+    try {
+        const { id: artistId } = parseSubsonicId(id as string);
+
+        const artist = await prisma.artist.findUnique({
+            where: { id: artistId },
+            select: {
+                id: true,
+                name: true,
+                mbid: true,
+                heroUrl: true,
+                bio: true,
+            },
+        });
+
+        if (!artist) {
+            return sendSubsonicError(
+                res,
+                SubsonicErrorCode.NOT_FOUND,
+                "Artist not found",
+                format,
+                req.query.callback as string
+            );
+        }
+
+        sendSubsonicSuccess(
+            res,
+            {
+                artistInfo2: {
+                    biography: artist.bio || "",
+                    musicBrainzId: artist.mbid && !artist.mbid.startsWith("temp-") ? artist.mbid : undefined,
+                    smallImageUrl: artist.heroUrl || undefined,
+                    mediumImageUrl: artist.heroUrl || undefined,
+                    largeImageUrl: artist.heroUrl || undefined,
+                    similarArtist: [], // Could populate from AI similar artists
+                },
+            },
+            format,
+            req.query.callback as string
+        );
+    } catch (error) {
+        console.error("[Subsonic] getArtistInfo2 error:", error);
+        sendSubsonicError(
+            res,
+            SubsonicErrorCode.GENERIC,
+            "Failed to fetch artist info",
+            format,
+            req.query.callback as string
+        );
+    }
+});
+
 router.get("/getBookmarks.view", (req: Request, res: Response) => {
     const format = getResponseFormat(req.query);
     sendSubsonicSuccess(res, { bookmarks: {} }, format, req.query.callback as string);
@@ -2110,25 +2257,62 @@ router.get("/getTopSongs.view", async (req: Request, res: Response) => {
     }
 });
 
-router.get("/getScanStatus.view", (req: Request, res: Response) => {
+router.get("/getScanStatus.view", async (req: Request, res: Response) => {
     const format = getResponseFormat(req.query);
-    sendSubsonicSuccess(
-        res,
-        { scanStatus: { scanning: false, count: 0 } },
-        format,
-        req.query.callback as string
-    );
+    try {
+        const [albumCount, trackCount, activeJobs, waitingJobs] = await Promise.all([
+            prisma.album.count(),
+            prisma.track.count(),
+            scanQueue.getActive(),
+            scanQueue.getWaiting(),
+        ]);
+        const scanning = activeJobs.length > 0 || waitingJobs.length > 0;
+        sendSubsonicSuccess(
+            res,
+            { scanStatus: { scanning, count: trackCount, folderCount: albumCount } },
+            format,
+            req.query.callback as string
+        );
+    } catch (error) {
+        console.error("[Subsonic] getScanStatus error:", error);
+        sendSubsonicSuccess(res, { scanStatus: { scanning: false, count: 0 } }, format, req.query.callback as string);
+    }
 });
 
-router.get("/startScan.view", (req: Request, res: Response) => {
+router.get("/startScan.view", async (req: Request, res: Response) => {
     const format = getResponseFormat(req.query);
-    // TODO: Could trigger library scan
-    sendSubsonicSuccess(
-        res,
-        { scanStatus: { scanning: false, count: 0 } },
-        format,
-        req.query.callback as string
-    );
+    if (!config.music.musicPath) {
+        return sendSubsonicError(
+            res,
+            SubsonicErrorCode.GENERIC,
+            "Music path not configured",
+            format,
+            req.query.callback as string
+        );
+    }
+
+    try {
+        const userId = req.user?.id || "system";
+        await scanQueue.add("scan", {
+            userId,
+            musicPath: config.music.musicPath,
+        });
+        sendSubsonicSuccess(
+            res,
+            { scanStatus: { scanning: true, count: 0 } },
+            format,
+            req.query.callback as string
+        );
+    } catch (error) {
+        console.error("[Subsonic] startScan error:", error);
+        sendSubsonicError(
+            res,
+            SubsonicErrorCode.GENERIC,
+            "Failed to start scan",
+            format,
+            req.query.callback as string
+        );
+    }
 });
 
 export default router;
