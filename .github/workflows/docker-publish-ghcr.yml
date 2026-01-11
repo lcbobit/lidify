@@ -1,10 +1,11 @@
 name: Build and Publish to GHCR
 
 on:
+    # Only build on version tags (releases) - not every push
     push:
-        branches: [main]
         tags:
             - "v*"
+    # Manual trigger for testing builds
     workflow_dispatch:
         inputs:
             tag:
@@ -75,3 +76,58 @@ jobs:
                   # Note: ARM64 disabled due to QEMU issues with npm packages
                   # Re-enable when using native ARM64 runners
                   platforms: linux/amd64
+
+    # Create GitHub Release with auto-generated changelog (only for version tags)
+    release:
+        needs: build
+        if: startsWith(github.ref, 'refs/tags/v')
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0  # Need full history for changelog
+
+            - name: Generate changelog
+              id: changelog
+              run: |
+                  # Get the previous tag
+                  PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+                  CURRENT_TAG=${GITHUB_REF#refs/tags/}
+
+                  echo "Previous tag: $PREV_TAG"
+                  echo "Current tag: $CURRENT_TAG"
+
+                  # Generate changelog from commits
+                  if [ -n "$PREV_TAG" ]; then
+                      CHANGES=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges)
+                  else
+                      CHANGES=$(git log --pretty=format:"- %s" --no-merges -20)
+                  fi
+
+                  # Write to file for multiline support
+                  cat > changelog.md << EOF
+                  ## What's Changed
+
+                  $CHANGES
+
+                  ## Docker Image
+
+                  \`\`\`bash
+                  docker pull ghcr.io/${{ github.repository }}:${CURRENT_TAG#v}
+                  # or
+                  docker pull ghcr.io/${{ github.repository }}:latest
+                  \`\`\`
+
+                  **Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${CURRENT_TAG}
+                  EOF
+
+            - name: Create Release
+              uses: softprops/action-gh-release@v2
+              with:
+                  body_path: changelog.md
+                  generate_release_notes: false
+                  draft: false
+                  prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
