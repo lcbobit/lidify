@@ -8,6 +8,24 @@ import { deezerService } from "./deezer";
 import { musicBrainzService } from "./musicbrainz";
 import { normalizeArtistName, areArtistNamesSimilar, canonicalizeVariousArtists } from "../utils/artistNormalization";
 
+/**
+ * Sanitize metadata strings by removing null bytes and other invalid UTF-8 characters
+ * PostgreSQL throws "invalid byte sequence for encoding UTF8: 0x00" if these slip through
+ * Also handles Unicode escape sequences like \u0000 that some metadata parsers produce
+ */
+function sanitizeMetadataString(str: string | undefined): string {
+    if (!str) return "";
+    return str
+        // Remove Unicode escape sequences for null (e.g., \u0000)
+        .replace(/\\u0000/gi, "")
+        // Remove raw null bytes (0x00) and other control characters except common whitespace
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+        // Remove any remaining invisible/zero-width characters
+        .replace(/[\u200B-\u200D\uFEFF]/g, "")
+        .trim();
+}
+
 // Supported audio formats
 const AUDIO_EXTENSIONS = new Set([
     ".mp3",
@@ -106,6 +124,7 @@ export class MusicScannerService {
                     const existingTrack = tracksByPath.get(relativePath);
 
                     // Check if file needs updating
+                    const isUpdate = !!existingTrack;
                     if (existingTrack) {
                         if (
                             existingTrack.fileModified &&
@@ -115,11 +134,6 @@ export class MusicScannerService {
                             // Note: Don't increment filesScanned here - finally block handles it
                             return;
                         }
-                        // File changed, will update
-                        result.tracksUpdated++;
-                    } else {
-                        // New file
-                        result.tracksAdded++;
                     }
 
                     // Extract metadata and update database
@@ -128,6 +142,13 @@ export class MusicScannerService {
                         relativePath,
                         musicPath
                     );
+
+                    // Increment counters only after successful insert/update
+                    if (isUpdate) {
+                        result.tracksUpdated++;
+                    } else {
+                        result.tracksAdded++;
+                    }
                 } catch (err: any) {
                     const error = {
                         file: audioFile,
@@ -530,9 +551,8 @@ export class MusicScannerService {
         const metadata = await parseFile(absolutePath);
         const stats = await fs.promises.stat(absolutePath);
 
-        // Parse basic info
-        const title =
-            metadata.common.title ||
+        // Parse basic info - sanitize all strings to remove null bytes that break PostgreSQL
+        const title = sanitizeMetadataString(metadata.common.title) ||
             path.basename(relativePath, path.extname(relativePath));
         const trackNo = metadata.common.track.no || 0;
         const discNo = metadata.common.disk?.no || 1;
@@ -543,15 +563,16 @@ export class MusicScannerService {
         // IMPORTANT: Prefer albumartist over artist to keep albums grouped under the primary artist
         // This prevents featured artists from creating separate album entries
         // e.g., "Artist A feat. Artist B" track should still be under "Artist A"'s album
-        let rawArtistName =
+        let rawArtistName = sanitizeMetadataString(
             metadata.common.albumartist ||
-            metadata.common.artist ||
-            "Unknown Artist";
+            metadata.common.artist
+        ) || "Unknown Artist";
 
-        const rawAlbumTitle = metadata.common.album || "Unknown Album";
+        const rawAlbumTitle = sanitizeMetadataString(metadata.common.album) || "Unknown Album";
         const albumTitle = this.stripDiscSuffix(rawAlbumTitle);
         const year = metadata.common.year || null;
-        const genres = metadata.common.genre || []; // Array of genre strings from file tags
+        // Sanitize each genre string to remove null bytes
+        const genres = (metadata.common.genre || []).map(g => sanitizeMetadataString(g)).filter(g => g.length > 0);
 
         // ALWAYS extract primary artist first - this handles both:
         // - Featured artists: "Artist A feat. Artist B" -> "Artist A"  
@@ -691,7 +712,15 @@ export class MusicScannerService {
                 });
             } catch (err: any) {
                 // MBID might already exist for another album (duplicate)
-                if (err.code !== "P2002") {
+                if (err.code === "P2002") {
+                    const existingByMbid = await prisma.album.findUnique({
+                        where: { rgMbid: albumMbidFromFile },
+                    });
+                    if (existingByMbid) {
+                        console.log(`[Scanner] Using existing album for MBID ${albumMbidFromFile}: "${existingByMbid.title}"`);
+                        album = existingByMbid;
+                    }
+                } else {
                     console.error(`[Scanner] Failed to update MBID for "${albumTitle}":`, err);
                 }
             }
@@ -738,6 +767,15 @@ export class MusicScannerService {
                         if (match) {
                             rgMbid = match.id;
                             console.log(`[Scanner] Found MBID for "${albumTitle}" via MusicBrainz: ${rgMbid}`);
+
+                            // Check if album with this MBID already exists (might have different title)
+                            const existingByMbid = await prisma.album.findUnique({
+                                where: { rgMbid },
+                            });
+                            if (existingByMbid) {
+                                console.log(`[Scanner] Album already exists with MBID ${rgMbid}: "${existingByMbid.title}"`);
+                                album = existingByMbid;
+                            }
                         }
                     } catch (err) {
                         // MusicBrainz lookup failed, will fall back to temp MBID
@@ -745,8 +783,8 @@ export class MusicScannerService {
                     }
                 }
 
-                // Fall back to temp MBID if no match found
-                if (!rgMbid) {
+                // Fall back to temp MBID if no match found and album not found by MBID
+                if (!rgMbid && !album) {
                     rgMbid = `temp-${Date.now()}-${Math.random()}`;
                     console.log(`[Scanner] Using temp MBID for "${albumTitle}" (no MusicBrainz match)`);
                 }
@@ -779,40 +817,65 @@ export class MusicScannerService {
                 
                 const isDiscoveryAlbum = isDiscoveryByPath || isDiscoveryByJob || isDiscoveryArtist;
 
-                album = await prisma.album.create({
-                    data: {
-                        title: albumTitle,
-                        artistId: artist.id,
-                        rgMbid,
-                        year,
-                        genres: genres.length > 0 ? genres : undefined,
-                        primaryType: "Album",
-                        location: isDiscoveryAlbum ? "DISCOVER" : "LIBRARY",
-                    },
-                });
+                // Only create album if not found by MBID lookup above
+                if (!album) {
+                    try {
+                        album = await prisma.album.create({
+                            data: {
+                                title: albumTitle,
+                                artistId: artist.id,
+                                rgMbid,
+                                year,
+                                genres: genres.length > 0 ? genres : undefined,
+                                primaryType: "Album",
+                                location: isDiscoveryAlbum ? "DISCOVER" : "LIBRARY",
+                            },
+                        });
+                    } catch (err: any) {
+                        if (err.code === "P2002") {
+                            const existingByMbid = rgMbid
+                                ? await prisma.album.findUnique({ where: { rgMbid } })
+                                : null;
+                            const existingByTitle = existingByMbid
+                                ? existingByMbid
+                                : await prisma.album.findFirst({
+                                      where: { artistId: artist.id, title: albumTitle },
+                                  });
+                            if (existingByTitle) {
+                                console.log(`[Scanner] Album already exists, reusing: "${existingByTitle.title}"`);
+                                album = existingByTitle;
+                            } else {
+                                throw err;
+                            }
+                        } else {
+                            throw err;
+                        }
+                    }
 
-                // Only create OwnedAlbum record for library albums (not discovery)
-                // Discovery albums are temporary and should not appear in the user's library
-                if (!isDiscoveryAlbum) {
-                    await prisma.ownedAlbum.create({
-                        data: {
-                            rgMbid,
-                            artistId: artist.id,
-                            source: "native_scan",
-                        },
-                    });
+                    // Only create OwnedAlbum record for library albums (not discovery)
+                    // Discovery albums are temporary and should not appear in the user's library
+                    if (!isDiscoveryAlbum) {
+                        await prisma.ownedAlbum.create({
+                            data: {
+                                rgMbid,
+                                artistId: artist.id,
+                                source: "native_scan",
+                            },
+                        });
 
-                    // Update artist's lastSynced so they appear in "Recently Added"
-                    await prisma.artist.update({
-                        where: { id: artist.id },
-                        data: { lastSynced: new Date() },
-                    });
+                        // Update artist's lastSynced so they appear in "Recently Added"
+                        await prisma.artist.update({
+                            where: { id: artist.id },
+                            data: { lastSynced: new Date() },
+                        });
+                    }
                 }
             }
+        }
 
-            // Extract cover art if we have an extractor
-            // Re-extract if: no cover, OR native cover file is missing
-            if (this.coverArtExtractor) {
+        // Extract cover art if we have an extractor
+        // Re-extract if: no cover, OR native cover file is missing
+        if (this.coverArtExtractor) {
                 let needsExtraction = !album.coverUrl;
 
                 // Check if existing native cover file is missing
@@ -863,7 +926,6 @@ export class MusicScannerService {
                             // Silently fail - cover art is optional
                         }
                     }
-                }
             }
         }
 
