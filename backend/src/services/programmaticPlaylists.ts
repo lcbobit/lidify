@@ -175,7 +175,7 @@ async function findTracksByGenrePatterns(
                 { essentiaGenres: { hasSome: tagPatterns } },
             ],
         },
-        include: { album: { select: { coverUrl: true, genres: true } } },
+        include: { album: { select: { coverUrl: true, genres: true, artist: { select: { id: true } } } } },
         take: limit,
     });
 
@@ -190,7 +190,7 @@ async function findTracksByGenrePatterns(
                 genres: { not: { equals: null } },
             },
         },
-        include: { album: { select: { coverUrl: true, genres: true } } },
+        include: { album: { select: { coverUrl: true, genres: true, artist: { select: { id: true } } } } },
         take: limit * 3, // Get more to filter down
     });
 
@@ -431,7 +431,7 @@ export class ProgrammaticPlaylistService {
             {
                 fn: () => this.generateUnhinged(userId, today + seedSuffix),
                 weight: 2,
-                name: "Unhinged",
+                name: "Off The Charts",
             },
             // Weekly Curated Mixes (20 tracks)
             {
@@ -592,7 +592,7 @@ export class ProgrammaticPlaylistService {
         const decadeSeed = getSeededRandom(`era-${today}`);
         const selectedDecade = decadeArray[decadeSeed % decadeArray.length];
 
-        // Get ALL tracks from this decade
+        // Get ALL tracks from this decade (include artist for diversity)
         const tracks = await prisma.track.findMany({
             where: {
                 album: {
@@ -600,14 +600,15 @@ export class ProgrammaticPlaylistService {
                 },
             },
             include: {
-                album: { select: { coverUrl: true } },
+                album: { select: { coverUrl: true, artist: { select: { id: true } } } },
             },
         });
 
         if (tracks.length < 15) return null;
 
-        // Random sample 20 tracks
-        const selectedTracks = randomSample(tracks, this.TRACK_LIMIT);
+        // Apply artist diversity: max 2 tracks per artist, then take limit
+        const diverseTracks = diversifyByArtist(tracks, 2);
+        const selectedTracks = diverseTracks.slice(0, this.TRACK_LIMIT);
         const coverUrls = selectedTracks
             .filter((t) => t.album.coverUrl)
             .slice(0, 4)
@@ -657,13 +658,13 @@ export class ProgrammaticPlaylistService {
         const genreSeed = getSeededRandom(`genre-${today}`);
         const selectedGenre = validGenres[genreSeed % validGenres.length];
 
-        // Get ALL tracks from this genre
+        // Get ALL tracks from this genre (include artist for diversity)
         const trackGenres = await prisma.trackGenre.findMany({
             where: { genreId: selectedGenre.id },
             include: {
                 track: {
                     include: {
-                        album: { select: { coverUrl: true } },
+                        album: { select: { coverUrl: true, artist: { select: { id: true } } } },
                     },
                 },
             },
@@ -672,8 +673,9 @@ export class ProgrammaticPlaylistService {
         const tracks = trackGenres.map((tg) => tg.track);
         if (tracks.length < 5) return null;
 
-        // Random sample 20 tracks
-        const selectedTracks = randomSample(tracks, this.TRACK_LIMIT);
+        // Apply artist diversity: max 2 tracks per artist, then take limit
+        const diverseTracks = diversifyByArtist(tracks, 2);
+        const selectedTracks = diverseTracks.slice(0, this.TRACK_LIMIT);
         const coverUrls = selectedTracks
             .filter((t) => t.album.coverUrl)
             .slice(0, 4)
@@ -719,16 +721,28 @@ export class ProgrammaticPlaylistService {
         const tracks = await prisma.track.findMany({
             where: { id: { in: trackIds } },
             include: {
-                album: { select: { coverUrl: true } },
+                album: { select: { coverUrl: true, artist: { select: { id: true } } } },
             },
         });
 
-        // Preserve play count order
+        // Preserve play count order, then apply artist diversity
         const orderedTracks = trackIds
             .map((id) => tracks.find((t) => t.id === id))
             .filter((t) => t !== undefined);
 
-        const coverUrls = orderedTracks
+        // Apply artist diversity: max 2 tracks per artist (preserves relative order)
+        const artistCounts = new Map<string, number>();
+        const diverseTracks = orderedTracks.filter((track) => {
+            const artistId = track.album?.artist?.id || `unknown-${Math.random()}`;
+            const count = artistCounts.get(artistId) || 0;
+            if (count < 2) {
+                artistCounts.set(artistId, count + 1);
+                return true;
+            }
+            return false;
+        });
+
+        const coverUrls = diverseTracks
             .filter((t) => t.album.coverUrl)
             .slice(0, 4)
             .map((t) => t.album.coverUrl!);
@@ -738,9 +752,9 @@ export class ProgrammaticPlaylistService {
             type: "top-tracks",
             name: "Your Top 20",
             description: "Your most played tracks",
-            trackIds: orderedTracks.map((t) => t.id),
+            trackIds: diverseTracks.map((t) => t.id),
             coverUrls,
-            trackCount: orderedTracks.length,
+            trackCount: diverseTracks.length,
             color: getMixColor("top-tracks"),
         };
     }
@@ -752,7 +766,7 @@ export class ProgrammaticPlaylistService {
         userId: string,
         today: string
     ): Promise<ProgrammaticMix | null> {
-        // Get tracks with low play count (0-2 plays)
+        // Get tracks with low play count (0-2 plays) - include artist for diversity
         const allTracks = await prisma.track.findMany({
             include: {
                 _count: {
@@ -760,7 +774,7 @@ export class ProgrammaticPlaylistService {
                         plays: { where: { userId } },
                     },
                 },
-                album: { select: { coverUrl: true } },
+                album: { select: { coverUrl: true, artist: { select: { id: true } } } },
             },
         });
 
@@ -768,10 +782,13 @@ export class ProgrammaticPlaylistService {
 
         if (underplayedTracks.length < 5) return null;
 
+        // Apply artist diversity: max 2 tracks per artist, then shuffle with seed
+        const diverseTracks = diversifyByArtist(underplayedTracks, 2);
+
         // Use date seed for consistent daily selection
         const seed = getSeededRandom(`rediscover-${today}`);
         let random = seed;
-        const shuffled = underplayedTracks.sort(() => {
+        const shuffled = diverseTracks.sort(() => {
             random = (random * 9301 + 49297) % 233280;
             return random / 233280 - 0.5;
         });
@@ -872,7 +889,7 @@ export class ProgrammaticPlaylistService {
                         include: {
                             tracks: {
                                 include: {
-                                    album: { select: { coverUrl: true } },
+                                    album: { select: { coverUrl: true, artist: { select: { id: true } } } },
                                 },
                             },
                         },
@@ -899,7 +916,9 @@ export class ProgrammaticPlaylistService {
                 return null;
             }
 
-            const selectedTracks = randomSample(tracks, this.TRACK_LIMIT);
+            // Apply artist diversity: max 2 tracks per similar artist
+            const diverseTracks = diversifyByArtist(tracks, 2);
+            const selectedTracks = diverseTracks.slice(0, this.TRACK_LIMIT);
             const coverUrls = selectedTracks
                 .filter((t) => t.album.coverUrl)
                 .slice(0, 4)
@@ -928,32 +947,44 @@ export class ProgrammaticPlaylistService {
         userId: string,
         today: string
     ): Promise<ProgrammaticMix | null> {
-        const totalAlbums = await prisma.album.count({
+        // Get all albums with tracks (more efficient than skip-based selection)
+        const allAlbums = await prisma.album.findMany({
             where: { tracks: { some: {} } },
+            select: { id: true },
         });
 
-        if (totalAlbums < 10) return null;
+        if (allAlbums.length < 10) return null;
 
-        // Use date as seed for consistent daily randomness
-        const seed = getSeededRandom(`random-${today}`) % totalAlbums;
+        // Use seeded shuffle to pick random albums consistently per day
+        const seed = getSeededRandom(`random-${today}`);
+        let random = seed;
+        const shuffledAlbumIds = [...allAlbums]
+            .sort(() => {
+                random = (random * 9301 + 49297) % 233280;
+                return random / 233280 - 0.5;
+            })
+            .slice(0, 8) // Pick 8 albums to ensure enough tracks
+            .map((a) => a.id);
 
+        // Fetch full album data for selected albums
         const randomAlbums = await prisma.album.findMany({
-            where: { tracks: { some: {} } },
+            where: { id: { in: shuffledAlbumIds } },
             include: {
                 tracks: {
                     include: {
-                        album: { select: { coverUrl: true } },
+                        album: { select: { coverUrl: true, artist: { select: { id: true } } } },
                     },
                 },
             },
-            skip: seed,
-            take: 5, // Just a few albums
         });
 
         const tracks = randomAlbums.flatMap((album) => album.tracks);
         if (tracks.length < 5) return null;
 
-        const selectedTracks = randomSample(tracks, this.TRACK_LIMIT);
+        // Apply artist diversity: max 2 tracks per artist
+        const diverseTracks = diversifyByArtist(tracks, 2);
+        const selectedTracks = diverseTracks.slice(0, this.TRACK_LIMIT);
+
         const coverUrls = randomAlbums
             .filter((a) => a.coverUrl)
             .slice(0, 4)
@@ -1000,14 +1031,14 @@ export class ProgrammaticPlaylistService {
 
         let tracks: any[] = [];
 
-        // Strategy 1: Genre table
+        // Strategy 1: Genre table (include artist for diversity)
         const genres = await prisma.genre.findMany({
             where: { name: { in: partyGenres, mode: "insensitive" } },
             include: {
                 trackGenres: {
                     include: {
                         track: {
-                            include: { album: { select: { coverUrl: true } } },
+                            include: { album: { select: { coverUrl: true, artist: { select: { id: true } } } } },
                         },
                     },
                     take: 50,
@@ -1050,7 +1081,7 @@ export class ProgrammaticPlaylistService {
                         },
                     ],
                 },
-                include: { album: { select: { coverUrl: true } } },
+                include: { album: { select: { coverUrl: true, artist: { select: { id: true } } } } },
                 take: 50,
             });
             const existingIds = new Set(tracks.map((t) => t.id));
@@ -2058,7 +2089,7 @@ export class ProgrammaticPlaylistService {
 
     /**
      * Generate "Instrumental Focus" mix using audio analysis
-     * Criteria: instrumentalness >= 0.7, energy 0.3-0.6
+     * Criteria: instrumentalness >= 0.9, energy 0.3-0.6 (calm instrumentals for concentration)
      * Fallback: instrumental/classical/soundtrack genres
      */
     async generateInstrumentalMix(
@@ -2071,7 +2102,7 @@ export class ProgrammaticPlaylistService {
         const audioTracks = await prisma.track.findMany({
             where: {
                 analysisStatus: "completed",
-                instrumentalness: { gte: 0.7 },
+                instrumentalness: { gte: 0.9 },
                 energy: { gte: 0.3, lte: 0.6 },
             },
             include: { album: { select: { coverUrl: true, artist: { select: { id: true } } } } },
@@ -3167,7 +3198,7 @@ export class ProgrammaticPlaylistService {
     }
 
     /**
-     * "Unhinged" - Chaotic, weird, fun
+     * "Off The Charts" - Tracks with extreme audio features (very high or very low)
      * High variance in features, unexpected combinations
      */
     async generateUnhinged(
@@ -3203,10 +3234,10 @@ export class ProgrammaticPlaylistService {
             .map((t) => t.album.coverUrl!);
 
         return {
-            id: `unhinged-${today}`,
-            type: "unhinged",
-            name: "Unhinged",
-            description: "Embrace the chaos",
+            id: `off-the-charts-${today}`,
+            type: "off-the-charts",
+            name: "Off The Charts",
+            description: "Tracks with extreme audio features",
             trackIds: selectedTracks.map((t) => t.id),
             coverUrls,
             trackCount: selectedTracks.length,
@@ -3427,7 +3458,7 @@ export class ProgrammaticPlaylistService {
 
     /**
      * "Vocal Detox" - Pure instrumental escape
-     * instrumentalness > 0.8 + variety of moods
+     * instrumentalness >= 0.9 for truly vocal-free tracks
      */
     async generateVocalDetox(
         userId: string,
@@ -3436,7 +3467,7 @@ export class ProgrammaticPlaylistService {
         const tracks = await prisma.track.findMany({
             where: {
                 analysisStatus: "completed",
-                instrumentalness: { gte: 0.75 },
+                instrumentalness: { gte: 0.9 },
             },
             include: { album: { select: { coverUrl: true, artist: { select: { id: true } } } } },
         });

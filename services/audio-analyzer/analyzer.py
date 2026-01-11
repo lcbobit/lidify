@@ -118,10 +118,10 @@ MODELS = {
     'mood_sad': os.path.join(MODEL_DIR, 'mood_sad-discogs-effnet-1.pb'),
     'mood_relaxed': os.path.join(MODEL_DIR, 'mood_relaxed-discogs-effnet-1.pb'),
     'mood_aggressive': os.path.join(MODEL_DIR, 'mood_aggressive-discogs-effnet-1.pb'),
-    # Arousal and Valence (direct models for vibe matching)
-    'mood_arousal': os.path.join(MODEL_DIR, 'mood_arousal-discogs-effnet-1.pb'),
-    'mood_valence': os.path.join(MODEL_DIR, 'mood_valence-discogs-effnet-1.pb'),
-    # Danceability and Voice/Instrumental
+    'mood_party': os.path.join(MODEL_DIR, 'mood_party-discogs-effnet-1.pb'),
+    'mood_acoustic': os.path.join(MODEL_DIR, 'mood_acoustic-discogs-effnet-1.pb'),
+    'mood_electronic': os.path.join(MODEL_DIR, 'mood_electronic-discogs-effnet-1.pb'),
+    # Danceability and Voice/Instrumental (arousal/valence derived from mood predictions)
     'danceability': os.path.join(MODEL_DIR, 'danceability-discogs-effnet-1.pb'),
     'voice_instrumental': os.path.join(MODEL_DIR, 'voice_instrumental-discogs-effnet-1.pb'),
 }
@@ -138,6 +138,7 @@ class DatabaseConnection:
         if not self.url:
             raise ValueError("DATABASE_URL not set")
         self.conn = psycopg2.connect(self.url)
+        self.conn.set_client_encoding('UTF8')
         self.conn.autocommit = False
         logger.info("Connected to PostgreSQL")
     
@@ -235,6 +236,9 @@ class AudioAnalyzer:
                 'mood_sad': MODELS['mood_sad'],
                 'mood_relaxed': MODELS['mood_relaxed'],
                 'mood_aggressive': MODELS['mood_aggressive'],
+                'mood_party': MODELS['mood_party'],
+                'mood_acoustic': MODELS['mood_acoustic'],
+                'mood_electronic': MODELS['mood_electronic'],
                 'danceability': MODELS['danceability'],
                 'voice_instrumental': MODELS['voice_instrumental'],
             }
@@ -469,9 +473,9 @@ class AudioAnalyzer:
                 # preds shape: [frames, 2] for binary classification
                 # Discogs-effnet models have INCONSISTENT column ordering per model!
                 # Verified from model metadata JSON files at essentia.upf.edu:
-                #   Column 0 = positive: mood_aggressive, mood_happy, danceability
-                #   Column 1 = positive: mood_sad, mood_relaxed, voice_instrumental
-                positive_col = 0 if model_name in ['mood_aggressive', 'mood_happy', 'danceability'] else 1
+                #   Column 0 = positive: mood_aggressive, mood_happy, danceability, mood_acoustic, mood_electronic, voice_instrumental (instrumental)
+                #   Column 1 = positive: mood_sad, mood_relaxed, mood_party
+                positive_col = 0 if model_name in ['mood_aggressive', 'mood_happy', 'danceability', 'mood_acoustic', 'mood_electronic', 'voice_instrumental'] else 1
                 positive_probs = preds[:, positive_col]
                 raw_value = float(np.mean(positive_probs))
                 variance = float(np.var(positive_probs))
@@ -588,7 +592,9 @@ class AudioAnalyzer:
         if 'danceability' in self.prediction_models:
             val, var = safe_predict(self.prediction_models['danceability'], embeddings, 'danceability')
             result['danceabilityMl'] = val
-        
+            # Override basic danceability with ML value (basic algorithm is unreliable)
+            result['danceability'] = val
+
         return result
     
     def _apply_standard_estimates(self, result: Dict[str, Any], scale: str, bpm: float):

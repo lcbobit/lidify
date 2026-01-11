@@ -386,23 +386,31 @@ export class MoodBucketService {
             return null;
         }
 
-        // Randomly sample from the pool
-        const shuffled = [...moodBuckets].sort(() => Math.random() - 0.5);
-        const selectedIds = shuffled.slice(0, limit).map((b) => b.trackId);
-
-        // Get cover URLs for the selected tracks
+        // Get full track data including artist for diversity check
+        const trackIds = moodBuckets.map((b) => b.trackId);
         const tracks = await prisma.track.findMany({
-            where: { id: { in: selectedIds } },
+            where: { id: { in: trackIds } },
             select: {
                 id: true,
-                album: { select: { coverUrl: true } },
+                album: { select: { coverUrl: true, artist: { select: { id: true } } } },
             },
         });
 
-        // Preserve order of selectedIds
-        const orderedTracks = selectedIds
-            .map((id) => tracks.find((t) => t.id === id))
-            .filter(Boolean);
+        // Apply artist diversity: max 2 tracks per artist, then take limit
+        const shuffled = [...tracks].sort(() => Math.random() - 0.5);
+        const artistCounts = new Map<string, number>();
+        const diverseTracks: typeof tracks = [];
+
+        for (const track of shuffled) {
+            const artistId = track.album?.artist?.id || `unknown-${Math.random()}`;
+            const count = artistCounts.get(artistId) || 0;
+            if (count < 2) {
+                diverseTracks.push(track);
+                artistCounts.set(artistId, count + 1);
+            }
+        }
+
+        const orderedTracks = diverseTracks.slice(0, limit);
         const coverUrls = orderedTracks
             .filter((t) => t?.album.coverUrl)
             .slice(0, 4)

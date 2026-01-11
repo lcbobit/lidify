@@ -62,12 +62,13 @@ RUN echo "Downloading Essentia ML models for Enhanced vibe matching..." && \
         "https://essentia.upf.edu/models/classification-heads/mood_relaxed/mood_relaxed-discogs-effnet-1.pb" && \
     curl -L --progress-bar -o /app/models/mood_aggressive-discogs-effnet-1.pb \
         "https://essentia.upf.edu/models/classification-heads/mood_aggressive/mood_aggressive-discogs-effnet-1.pb" && \
-    # Arousal and Valence (key for vibe matching)
-    curl -L --progress-bar -o /app/models/mood_arousal-discogs-effnet-1.pb \
-        "https://essentia.upf.edu/models/classification-heads/mood_arousal/mood_arousal-discogs-effnet-1.pb" && \
-    curl -L --progress-bar -o /app/models/mood_valence-discogs-effnet-1.pb \
-        "https://essentia.upf.edu/models/classification-heads/mood_valence/mood_valence-discogs-effnet-1.pb" && \
-    # Danceability and Voice/Instrumental
+    curl -L --progress-bar -o /app/models/mood_party-discogs-effnet-1.pb \
+        "https://essentia.upf.edu/models/classification-heads/mood_party/mood_party-discogs-effnet-1.pb" && \
+    curl -L --progress-bar -o /app/models/mood_acoustic-discogs-effnet-1.pb \
+        "https://essentia.upf.edu/models/classification-heads/mood_acoustic/mood_acoustic-discogs-effnet-1.pb" && \
+    curl -L --progress-bar -o /app/models/mood_electronic-discogs-effnet-1.pb \
+        "https://essentia.upf.edu/models/classification-heads/mood_electronic/mood_electronic-discogs-effnet-1.pb" && \
+    # Danceability and Voice/Instrumental (arousal/valence derived from mood predictions)
     curl -L --progress-bar -o /app/models/danceability-discogs-effnet-1.pb \
         "https://essentia.upf.edu/models/classification-heads/danceability/danceability-discogs-effnet-1.pb" && \
     curl -L --progress-bar -o /app/models/voice_instrumental-discogs-effnet-1.pb \
