@@ -106,6 +106,15 @@ export const config = {
           }
         : undefined,
 
+    // ntfy push notifications - for triggering external app syncs (e.g., Symfonium)
+    ntfy: process.env.NTFY_URL
+        ? {
+              url: process.env.NTFY_URL,  // e.g., "https://ntfy.example.com" or "http://ntfy:80"
+              topic: process.env.NTFY_TOPIC || "lidify-sync",
+              enabled: process.env.NTFY_ENABLED !== "false",  // enabled by default if URL is set
+          }
+        : undefined,
+
     allowedOrigins:
         process.env.ALLOWED_ORIGINS?.split(",").map((o) => o.trim()) ||
         (process.env.NODE_ENV === "development" ? true : []),

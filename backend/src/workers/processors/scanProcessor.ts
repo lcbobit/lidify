@@ -90,6 +90,16 @@ export async function processScan(
             `[ScanJob ${job.id}] Scan complete: +${result.tracksAdded} ~${result.tracksUpdated} -${result.tracksRemoved}`
         );
 
+        // Send ntfy push notification for new music (triggers Symfonium sync via Tasker)
+        if (result.tracksAdded > 0) {
+            try {
+                const { ntfyService } = await import("../../services/ntfyService");
+                await ntfyService.notifyNewMusic(result.tracksAdded);
+            } catch (error: any) {
+                console.error(`[ScanJob ${job.id}] Failed to send ntfy notification:`, error.message);
+            }
+        }
+
         // If we have Lidarr album data, fix temp MBIDs on the imported album
         if (lidarrAlbumMbid && lidarrArtistName && lidarrAlbumTitle) {
             try {
