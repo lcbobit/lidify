@@ -288,7 +288,7 @@ export function AISimilarArtists({ artistId, artistName }: AISimilarArtistsProps
                                         <div className={cn(
                                             "rounded-2xl px-4 py-2 max-w-[85%]",
                                             msg.role === "user"
-                                                ? "bg-brand text-black"
+                                                ? "bg-brand text-white"
                                                 : "bg-white/10 text-white"
                                         )}>
                                             <p className="text-sm">
