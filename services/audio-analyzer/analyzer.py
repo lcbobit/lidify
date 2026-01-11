@@ -77,6 +77,10 @@ MUSIC_PATH = os.getenv('MUSIC_PATH', '/music')
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '10'))
 SLEEP_INTERVAL = int(os.getenv('SLEEP_INTERVAL', '5'))
 
+# Disable ML analysis entirely (set to 'true' to disable)
+# Useful for low-resource systems that don't need mood-based playlists
+DISABLE_ML_ANALYSIS = os.getenv('DISABLE_ML_ANALYSIS', 'false').lower() in ('true', '1', 'yes')
+
 # Large file handling configuration
 # Files larger than MAX_FILE_SIZE_MB will be skipped (0 = no limit)
 # Hi-res FLAC files (24-bit/96kHz+) can be 200-500MB and take too long to analyze
@@ -86,15 +90,9 @@ BASE_TRACK_TIMEOUT = int(os.getenv('BASE_TRACK_TIMEOUT', '120'))
 # Max timeout per track (even for very large files)
 MAX_TRACK_TIMEOUT = int(os.getenv('MAX_TRACK_TIMEOUT', '600'))
 
-# Auto-scaling workers: use 50% of CPU cores, min 2, max 8
-# Can be overridden with NUM_WORKERS environment variable
-def _get_auto_workers() -> int:
-    """Calculate optimal worker count based on CPU cores"""
-    cpu_count = os.cpu_count() or 4
-    auto_workers = max(2, min(8, cpu_count // 2))
-    return auto_workers
-
-NUM_WORKERS = int(os.getenv('NUM_WORKERS', str(_get_auto_workers())))
+# Number of parallel analysis workers (default: 2)
+# ML analysis is resource-intensive; increase only if you have CPU/RAM headroom
+NUM_WORKERS = int(os.getenv('NUM_WORKERS', '2'))
 ESSENTIA_VERSION = '2.1b6-enhanced-v2'
 
 # Retry configuration
@@ -850,6 +848,7 @@ class AnalysisWorker:
         self.running = False
         self.executor = None
         self.consecutive_empty = 0
+        self.batch_count = 0  # Track batches for periodic cleanup
     
     def _cleanup_stale_processing(self):
         """Reset tracks stuck in 'processing' status (from crashed workers)"""
@@ -858,7 +857,8 @@ class AnalysisWorker:
             # Reset tracks that have been "processing" for too long
             cursor.execute("""
                 UPDATE "Track"
-                SET "analysisStatus" = 'pending'
+                SET "analysisStatus" = 'pending',
+                    "updatedAt" = NOW()
                 WHERE "analysisStatus" = 'processing'
                 AND "updatedAt" < NOW() - INTERVAL '%s minutes'
                 RETURNING id
@@ -883,9 +883,10 @@ class AnalysisWorker:
         try:
             cursor.execute("""
                 UPDATE "Track"
-                SET 
+                SET
                     "analysisStatus" = 'pending',
-                    "analysisError" = NULL
+                    "analysisError" = NULL,
+                    "updatedAt" = NOW()
                 WHERE "analysisStatus" = 'failed'
                 AND COALESCE("analysisRetryCount", 0) < %s
                 RETURNING id
@@ -922,16 +923,14 @@ class AnalysisWorker:
     def start(self):
         """Start processing jobs with parallel workers"""
         cpu_count = os.cpu_count() or 4
-        auto_workers = _get_auto_workers()
-        
+
         logger.info("=" * 60)
         logger.info("Starting Audio Analysis Worker (PARALLEL MODE)")
         logger.info("=" * 60)
         logger.info(f"  Music path: {MUSIC_PATH}")
         logger.info(f"  Batch size: {BATCH_SIZE}")
         logger.info(f"  CPU cores detected: {cpu_count}")
-        logger.info(f"  Auto-scaled workers: {auto_workers} (50% of cores, min 2, max 8)")
-        logger.info(f"  Active workers: {NUM_WORKERS}" + (" (from env)" if os.getenv('NUM_WORKERS') else " (auto)"))
+        logger.info(f"  Active workers: {NUM_WORKERS}" + (" (from env)" if os.getenv('NUM_WORKERS') else " (default: 2)"))
         logger.info(f"  Max retries per track: {MAX_RETRIES}")
         logger.info(f"  Stale processing timeout: {STALE_PROCESSING_MINUTES} minutes")
         logger.info(f"  Max file size: {MAX_FILE_SIZE_MB}MB" + (" (disabled)" if MAX_FILE_SIZE_MB == 0 else ""))
@@ -964,7 +963,7 @@ class AnalysisWorker:
                     
                     if not has_work:
                         self.consecutive_empty += 1
-                        
+
                         # After 10 consecutive empty batches, do cleanup and retry
                         if self.consecutive_empty >= 10:
                             logger.info("No pending tracks, running cleanup and retry cycle...")
@@ -973,6 +972,14 @@ class AnalysisWorker:
                             self.consecutive_empty = 0
                     else:
                         self.consecutive_empty = 0
+                        self.batch_count += 1
+
+                        # Run periodic cleanup every 50 batches to catch stuck tracks
+                        # This prevents tracks from being stuck forever when queue is never empty
+                        if self.batch_count % 50 == 0:
+                            logger.info(f"Periodic cleanup after {self.batch_count} batches...")
+                            self._cleanup_stale_processing()
+                            self._retry_failed_tracks()
                         
                 except KeyboardInterrupt:
                     logger.info("Shutdown requested")
@@ -1059,19 +1066,36 @@ class AnalysisWorker:
 
         logger.info(f"Processing batch of {len(tracks)} tracks with {NUM_WORKERS} workers...")
 
-        # Mark all as processing
+        # Mark tracks as processing, but only if they're still pending
+        # This prevents reprocessing completed/failed/skipped tracks from stale queue entries
         cursor = self.db.get_cursor()
+        valid_track_ids = set()
         try:
             track_ids = [t[0] for t in tracks]
             cursor.execute("""
                 UPDATE "Track"
-                SET "analysisStatus" = 'processing'
+                SET "analysisStatus" = 'processing',
+                    "updatedAt" = NOW()
                 WHERE id = ANY(%s)
+                AND "analysisStatus" = 'pending'
+                RETURNING id
             """, (track_ids,))
+            valid_track_ids = {row['id'] for row in cursor.fetchall()}
             self.db.commit()
+
+            # Filter to only process tracks that were successfully marked
+            if len(valid_track_ids) < len(tracks):
+                skipped_count = len(tracks) - len(valid_track_ids)
+                logger.info(f"Skipped {skipped_count} tracks (already processed or not pending)")
+                tracks = [t for t in tracks if t[0] in valid_track_ids]
+
+            if not tracks:
+                logger.info("No pending tracks in batch after filtering")
+                return
         except Exception as e:
             logger.error(f"Failed to mark tracks as processing: {e}")
             self.db.rollback()
+            return
         finally:
             cursor.close()
 
@@ -1187,7 +1211,8 @@ class AnalysisWorker:
                     "analysisStatus" = 'completed',
                     "analysisVersion" = %s,
                     "analyzedAt" = %s,
-                    "analysisError" = NULL
+                    "analysisError" = NULL,
+                    "updatedAt" = NOW()
                 WHERE id = %s
             """, (
                 features['bpm'],
@@ -1244,7 +1269,8 @@ class AnalysisWorker:
                     SET
                         "analysisStatus" = 'skipped',
                         "analysisError" = %s,
-                        "analysisRetryCount" = %s
+                        "analysisRetryCount" = %s,
+                        "updatedAt" = NOW()
                     WHERE id = %s
                 """, (error[:500], MAX_RETRIES, track_id))
                 logger.info(f"Track {track_id} skipped: {error}")
@@ -1255,7 +1281,8 @@ class AnalysisWorker:
                     SET
                         "analysisStatus" = 'failed',
                         "analysisError" = %s,
-                        "analysisRetryCount" = COALESCE("analysisRetryCount", 0) + 1
+                        "analysisRetryCount" = COALESCE("analysisRetryCount", 0) + 1,
+                        "updatedAt" = NOW()
                     WHERE id = %s
                     RETURNING "analysisRetryCount"
                 """, (error[:500], track_id))
@@ -1278,17 +1305,28 @@ class AnalysisWorker:
 
 def main():
     """Main entry point"""
+    # Check if ML analysis is disabled
+    if DISABLE_ML_ANALYSIS:
+        logger.info("=" * 60)
+        logger.info("ML Audio Analysis is DISABLED (DISABLE_ML_ANALYSIS=true)")
+        logger.info("Mood-based playlists will not be available.")
+        logger.info("To enable, remove DISABLE_ML_ANALYSIS or set to 'false'")
+        logger.info("=" * 60)
+        # Sleep forever to prevent supervisor restart loops
+        while True:
+            time.sleep(3600)
+
     if len(sys.argv) > 1 and sys.argv[1] == '--test':
         # Test mode: analyze a single file
         if len(sys.argv) < 3:
             print("Usage: analyzer.py --test <audio_file>")
             sys.exit(1)
-        
+
         analyzer = AudioAnalyzer()
         result = analyzer.analyze(sys.argv[2])
         print(json.dumps(result, indent=2))
         return
-    
+
     # Normal worker mode
     worker = AnalysisWorker()
     worker.start()
