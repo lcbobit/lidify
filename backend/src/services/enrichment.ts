@@ -481,6 +481,7 @@ export class EnrichmentService {
         if (data.coverUrl) updateData.coverUrl = data.coverUrl;
         if (data.releaseDate) {
             updateData.year = data.releaseDate.getFullYear();
+            updateData.releaseDate = data.releaseDate;
         }
         if (data.label) updateData.label = data.label;
         if (data.genres && data.genres.length > 0) {

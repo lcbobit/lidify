@@ -1140,7 +1140,7 @@ router.get("/artists/:id", async (req, res) => {
 
         const artistInclude = {
             albums: {
-                orderBy: { year: "desc" },
+                orderBy: [{ year: "desc" }, { title: "asc" }],
                 include: {
                     tracks: {
                         orderBy: [{ discNo: "asc" }, { trackNo: "asc" }],
@@ -1357,6 +1357,7 @@ router.get("/artists/:id", async (req, res) => {
                                       rg["first-release-date"].substring(0, 4)
                                   )
                                 : null,
+                            releaseDate: rg["first-release-date"] || null,
                             type: rg["primary-type"],
                             coverUrl,
                             coverArt: coverUrl,
@@ -1460,6 +1461,7 @@ router.get("/artists/:id", async (req, res) => {
                                           )
                                       )
                                     : null,
+                                releaseDate: rg["first-release-date"] || null,
                                 type: rg["primary-type"],
                                 coverUrl,
                                 coverArt: coverUrl,

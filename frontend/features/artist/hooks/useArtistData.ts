@@ -110,12 +110,32 @@ export function useArtistData() {
     const albums = useMemo(() => {
         if (!artist?.albums) return [];
 
-        return [...artist.albums].sort((a, b) => {
-            if (a.year == null && b.year == null) return 0;
-            if (a.year == null) return 1;
-            if (b.year == null) return -1;
-            return b.year - a.year;
+        const sorted = [...artist.albums].sort((a, b) => {
+            const aYear = typeof a.year === "number" ? a.year : Number(a.year);
+            const bYear = typeof b.year === "number" ? b.year : Number(b.year);
+            const aHasYear = Number.isFinite(aYear);
+            const bHasYear = Number.isFinite(bYear);
+
+            if (!aHasYear && !bHasYear) {
+                return a.title.localeCompare(b.title);
+            }
+            if (!aHasYear) return 1;
+            if (!bHasYear) return -1;
+            if (aYear !== bYear) return bYear - aYear;
+
+            const aRelease = a.releaseDate ? Date.parse(a.releaseDate as string) : Number.NaN;
+            const bRelease = b.releaseDate ? Date.parse(b.releaseDate as string) : Number.NaN;
+            const aHasRelease = Number.isFinite(aRelease);
+            const bHasRelease = Number.isFinite(bRelease);
+
+            if (aHasRelease && bHasRelease && aRelease !== bRelease) {
+                return bRelease - aRelease;  // Descending (newer first) to match year sort
+            }
+
+            return a.title.localeCompare(b.title);
         });
+
+        return sorted;
     }, [artist?.albums]);
 
     // Handle errors - only show toast once, don't auto-navigate

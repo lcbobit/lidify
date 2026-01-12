@@ -160,6 +160,7 @@ model Album {
   artistId     String
   title        String
   year         Int?
+  releaseDate  DateTime?                // Full release date for proper sorting within same year
   coverUrl     String?
   primaryType  String // Album, EP, Single, Live, Compilation
   label        String? // Record label (from MusicBrainz)
