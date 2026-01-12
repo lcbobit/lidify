@@ -570,7 +570,12 @@ export class MusicScannerService {
 
         const rawAlbumTitle = sanitizeMetadataString(metadata.common.album) || "Unknown Album";
         const albumTitle = this.stripDiscSuffix(rawAlbumTitle);
-        const year = metadata.common.year || null;
+        // Prefer originalyear (original release) over year (may be remaster date)
+        // Some files have year=1 from invalid DATE tags like "0001-01-01"
+        const rawYear = metadata.common.originalyear || metadata.common.year || null;
+        // Validate year is reasonable (between 1900 and current year + 1)
+        const currentYear = new Date().getFullYear();
+        const year = (rawYear && rawYear >= 1900 && rawYear <= currentYear + 1) ? rawYear : null;
         // Sanitize each genre string to remove null bytes
         const genres = (metadata.common.genre || []).map(g => sanitizeMetadataString(g)).filter(g => g.length > 0);
 
