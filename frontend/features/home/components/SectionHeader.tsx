@@ -6,6 +6,7 @@ import { memo } from "react";
 interface SectionHeaderProps {
     title: string;
     showAllHref?: string;
+    showAllText?: string;
     rightAction?: React.ReactNode;
     badge?: string;
 }
@@ -13,6 +14,7 @@ interface SectionHeaderProps {
 const SectionHeader = memo(function SectionHeader({
     title,
     showAllHref,
+    showAllText = "Show all",
     rightAction,
     badge,
 }: SectionHeaderProps) {
@@ -29,7 +31,7 @@ const SectionHeader = memo(function SectionHeader({
                     href={showAllHref}
                     className="flex items-center gap-1 text-sm text-gray-400 hover:text-white transition-colors font-semibold group"
                 >
-                    Show all
+                    {showAllText}
                     <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                 </Link>
             ) : null}

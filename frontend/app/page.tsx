@@ -120,7 +120,12 @@ export default function HomePage() {
                     {/* Recommended For You - #4 Priority */}
                     {recommended.length > 0 && (
                         <section>
-                            <SectionHeader title="Recommended For You" showAllHref="/discover" badge="Last.FM" />
+                            <SectionHeader
+                                title="Recommended For You"
+                                showAllHref="/discover"
+                                showAllText="Explore albums"
+                                badge="Last.FM"
+                            />
                             <ArtistsGrid artists={recommended} />
                         </section>
                     )}

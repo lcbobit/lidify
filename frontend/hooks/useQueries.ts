@@ -300,12 +300,59 @@ export function useRecentlyAddedQuery(limit: number = 10) {
 // RECOMMENDATION QUERIES
 // ============================================================================
 
+// Shared cache key with /discover page (24 hour TTL)
+const DISCOVER_CACHE_KEY = "lidify_discover_recommendations_cache";
+const DISCOVER_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+interface DiscoverCacheData {
+    recommendations: Array<{
+        artistName: string;
+        artistMbid?: string;
+        albumTitle: string;
+        albumMbid: string;
+        similarity: number;
+        tier: "high" | "medium" | "explore" | "wildcard";
+        coverUrl?: string;
+        year?: number;
+    }>;
+    seedArtists: string[];
+    generatedAt: string;
+}
+
+function getDiscoverCache(): DiscoverCacheData | null {
+    if (typeof window === "undefined") return null;
+    try {
+        const cached = localStorage.getItem(DISCOVER_CACHE_KEY);
+        if (!cached) return null;
+        const { data, timestamp } = JSON.parse(cached);
+        if (Date.now() - timestamp > DISCOVER_CACHE_TTL_MS) {
+            localStorage.removeItem(DISCOVER_CACHE_KEY);
+            return null;
+        }
+        return data;
+    } catch {
+        return null;
+    }
+}
+
+function setDiscoverCache(data: DiscoverCacheData) {
+    if (typeof window === "undefined") return;
+    try {
+        localStorage.setItem(DISCOVER_CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
+    } catch {
+        // Ignore storage errors
+    }
+}
+
 /**
- * Hook to fetch personalized recommendations
+ * Hook to fetch personalized recommendations from discover endpoint
  *
- * Cache time: 5 minutes
+ * Uses live Last.fm API data (same source as /discover page) and transforms
+ * album recommendations into unique artists for the main page grid.
  *
- * @param limit - Number of recommendations (default: 10)
+ * Shares localStorage cache with /discover page so both show same artists.
+ *
+ * @param limit - Number of artist recommendations (default: 10)
  * @returns Query result with recommended artists
  *
  * @example
@@ -314,7 +361,48 @@ export function useRecentlyAddedQuery(limit: number = 10) {
 export function useRecommendationsQuery(limit: number = 10) {
     return useQuery({
         queryKey: queryKeys.recommendations(limit),
-        queryFn: () => api.getRecommendationsForYou(limit),
+        queryFn: async () => {
+            // Check shared localStorage cache first (same as /discover page)
+            let discoverData = getDiscoverCache();
+
+            if (!discoverData) {
+                // Cache miss - fetch fresh data
+                discoverData = await api.getDiscoverRecommendations(15);
+                // Cache for both this page and /discover
+                setDiscoverCache(discoverData);
+            }
+
+            // Transform album recommendations to unique artists
+            const seenArtists = new Set<string>();
+            const artists: Array<{
+                id: string;
+                mbid?: string;
+                name: string;
+                coverArt?: string;
+            }> = [];
+
+            for (const rec of discoverData.recommendations) {
+                // Skip artists without valid MBID (can't link to artist page)
+                if (!rec.artistMbid) continue;
+
+                const artistKey = rec.artistName.toLowerCase();
+                if (seenArtists.has(artistKey)) continue;
+                seenArtists.add(artistKey);
+
+                artists.push({
+                    // Use artistMbid as id for artist page navigation
+                    id: rec.artistMbid,
+                    mbid: rec.artistMbid,
+                    name: rec.artistName,
+                    // Use album cover as artist image (Last.fm URL, will be proxied)
+                    coverArt: rec.coverUrl,
+                });
+
+                if (artists.length >= limit) break;
+            }
+
+            return { artists };
+        },
         staleTime: 5 * 60 * 1000, // 5 minutes
     });
 }

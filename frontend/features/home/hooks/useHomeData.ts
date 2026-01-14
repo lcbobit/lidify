@@ -93,6 +93,18 @@ export function useHomeData(): UseHomeDataReturn {
             window.removeEventListener("mixes-updated", handleMixesUpdated);
     }, [queryClient]);
 
+    // Listen for discover recommendations refresh (fired from /discover page)
+    useEffect(() => {
+        const handleDiscoverUpdated = () => {
+            // Refetch recommendations to pick up new localStorage cache
+            queryClient.refetchQueries({ queryKey: queryKeys.recommendations(10) });
+        };
+
+        window.addEventListener("discover-recommendations-updated", handleDiscoverUpdated);
+        return () =>
+            window.removeEventListener("discover-recommendations-updated", handleDiscoverUpdated);
+    }, [queryClient]);
+
     // React Query hooks - these automatically handle caching, refetching, and loading states
     const { data: recentlyListenedData, isLoading: isLoadingListened } =
         useRecentlyListenedQuery(10);
