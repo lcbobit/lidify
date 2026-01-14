@@ -156,27 +156,30 @@ export async function runDataIntegrityCheck(): Promise<IntegrityReport> {
         },
     });
     
-    // Build sets of discovery album titles AND artist names (normalized)
-    const discoveryAlbumTitles = new Set<string>();
-    const discoveryArtistNames = new Set<string>();
+    // Build map of discovery album+artist combos and artist MBIDs (normalized)
+    // IMPORTANT: We track album+artist pairs to avoid false positives
+    // (e.g., "Above & Beyond - Acoustic" should NOT match "Above - Acoustic")
+    const discoveryAlbumArtistPairs = new Set<string>(); // "albumtitle|artistname"
     const discoveryArtistMbids = new Set<string>();
-    
+
     for (const job of discoveryJobs) {
         const metadata = job.metadata as any;
         const albumTitle = (metadata?.albumTitle || "").toLowerCase().trim();
         const artistName = (metadata?.artistName || "").toLowerCase().trim();
         const artistMbid = metadata?.artistMbid;
-        if (albumTitle) discoveryAlbumTitles.add(albumTitle);
-        if (artistName) discoveryArtistNames.add(artistName);
+        if (albumTitle && artistName) {
+            discoveryAlbumArtistPairs.add(`${albumTitle}|${artistName}`);
+        }
         if (artistMbid) discoveryArtistMbids.add(artistMbid);
     }
-    
+
     // Also check DiscoveryAlbum table for ALL discoveries (not just active)
     // This catches albums where Lidarr downloaded a different album than requested
     const allDiscoveryAlbums = await prisma.discoveryAlbum.findMany();
     for (const da of allDiscoveryAlbums) {
-        discoveryAlbumTitles.add(da.albumTitle.toLowerCase().trim());
-        discoveryArtistNames.add(da.artistName.toLowerCase().trim());
+        const albumTitle = da.albumTitle.toLowerCase().trim();
+        const artistName = da.artistName.toLowerCase().trim();
+        discoveryAlbumArtistPairs.add(`${albumTitle}|${artistName}`);
         if (da.artistMbid) discoveryArtistMbids.add(da.artistMbid);
     }
     
@@ -190,16 +193,16 @@ export async function runDataIntegrityCheck(): Promise<IntegrityReport> {
     for (const album of libraryAlbums) {
         const normalizedTitle = album.title.toLowerCase().trim();
         const normalizedArtist = album.artist.name.toLowerCase().trim();
-        
-        // Match criteria:
-        // 1. Album title matches a discovery download, OR
-        // 2. Artist name matches a discovery download (catches Lidarr downloading wrong album), OR
-        // 3. Artist MBID matches a discovery download
-        const albumMatches = discoveryAlbumTitles.has(normalizedTitle);
-        const artistNameMatches = discoveryArtistNames.has(normalizedArtist);
+
+        // Match criteria (must be specific to avoid false positives):
+        // 1. BOTH album title AND artist name match a discovery download, OR
+        // 2. Artist MBID matches a discovery download
+        // NOTE: We no longer match by title-only or artist-only to prevent
+        // false positives like "Above & Beyond - Acoustic" matching "Above - Acoustic"
+        const albumAndArtistMatch = discoveryAlbumArtistPairs.has(`${normalizedTitle}|${normalizedArtist}`);
         const artistMbidMatches = album.artist.mbid ? discoveryArtistMbids.has(album.artist.mbid) : false;
-        
-        if (!albumMatches && !artistNameMatches && !artistMbidMatches) continue;
+
+        if (!albumAndArtistMatch && !artistMbidMatches) continue;
         
         // KEY FIX: Check if artist has ANY protected OwnedAlbum records:
         // - native_scan = real user library from before discovery
@@ -229,11 +232,9 @@ export async function runDataIntegrityCheck(): Promise<IntegrityReport> {
             continue;
         }
         
-        const reason = albumMatches 
-            ? `album title "${album.title}" matches discovery` 
-            : artistNameMatches
-                ? `artist "${album.artist.name}" matches discovery`
-                : `artist MBID matches discovery`;
+        const reason = albumAndArtistMatch
+            ? `album "${album.artist.name} - ${album.title}" matches discovery`
+            : `artist MBID matches discovery`;
         console.log(
             `     Fixing mislocated album: ${album.artist.name} - ${album.title} (LIBRARY -> DISCOVER, ${reason})`
         );

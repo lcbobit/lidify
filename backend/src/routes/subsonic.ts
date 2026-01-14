@@ -277,7 +277,7 @@ router.get("/getArtist.view", async (req: Request, res: Response) => {
                         _count: { select: { tracks: true } },
                         tracks: { select: { duration: true, id: true } },
                     },
-                    orderBy: { year: "desc" },
+                    orderBy: [{ year: "desc" }, { title: "asc" }],
                 },
                 _count: { select: { albums: true } },
             },

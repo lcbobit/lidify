@@ -183,27 +183,43 @@ async function findTracksByGenrePatterns(
         return tracks;
     }
 
-    // Strategy 2: Query albums with non-empty genres and filter in memory
-    const albumTracks = await prisma.track.findMany({
-        where: {
-            album: {
-                genres: { not: { equals: null } },
-            },
-        },
-        include: { album: { select: { coverUrl: true, genres: true, artist: { select: { id: true } } } } },
-        take: limit * 3, // Get more to filter down
-    });
+    // Strategy 2: Scan albums with non-empty genres in pages to avoid skewed sampling
+    const genreMatched: TrackWithAlbumCover[] = [];
+    const batchSize = 1000;
+    let cursorId: string | null = null;
 
-    // Filter by genre patterns (case-insensitive partial match)
-    const genreMatched = albumTracks.filter((t) => {
-        const albumGenres = t.album.genres as string[] | null;
-        if (!albumGenres || !Array.isArray(albumGenres)) return false;
-        return albumGenres.some((ag) =>
-            genrePatterns.some((gp) =>
-                ag.toLowerCase().includes(gp.toLowerCase())
-            )
-        );
-    });
+    while (true) {
+        const albumTracks = await prisma.track.findMany({
+            where: {
+                album: {
+                    genres: { not: { equals: null } },
+                },
+            },
+            include: { album: { select: { coverUrl: true, genres: true, artist: { select: { id: true } } } } },
+            orderBy: { id: "asc" },
+            take: batchSize,
+            ...(cursorId
+                ? { cursor: { id: cursorId }, skip: 1 }
+                : {}),
+        });
+
+        if (albumTracks.length === 0) break;
+
+        for (const track of albumTracks) {
+            const albumGenres = track.album.genres as string[] | null;
+            if (!albumGenres || !Array.isArray(albumGenres)) continue;
+            const isMatch = albumGenres.some((ag) =>
+                genrePatterns.some((gp) =>
+                    ag.toLowerCase().includes(gp.toLowerCase())
+                )
+            );
+            if (isMatch) {
+                genreMatched.push(track);
+            }
+        }
+
+        cursorId = albumTracks[albumTracks.length - 1].id;
+    }
 
     // Merge unique tracks
     const existingIds = new Set(tracks.map((t) => t.id));
