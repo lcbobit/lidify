@@ -184,3 +184,45 @@ npm run build      # Production build
 3. The Howler engine's `cleanup()` method has an intentional 12ms fade delay before unloading to reduce audio pops. This delay may cause race conditions with rapid reloads.
 
 4. The `seekOperationIdRef` counter was intended to abort stale seek operations but the logic may have bugs in how it's checked across async boundaries.
+
+---
+
+## Technical Debt: Legacy Discovery System Cleanup
+
+**Date Added:** 2026-01-14
+
+### Background
+The original "Discover Weekly" feature auto-downloaded albums via Lidarr and marked them with `location: 'DISCOVER'`. This was dangerous for private tracker users (hit-and-run risk) and has been replaced with a preview-only mode.
+
+### What Was Fixed
+1. **Scanner cascade bug removed** - Albums no longer inherit DISCOVER status from artist
+2. **All DISCOVER albums converted to LIBRARY** - 19 albums updated
+3. **Recommendations filtering fixed** - Now uses `Album.location` instead of empty `OwnedAlbum` table
+
+### Legacy Code Still Present
+The following code remains but is no longer actively used:
+
+#### `OwnedAlbum` Table References
+- `backend/src/routes/discover.ts` - Multiple references for like/unlike functionality
+- `backend/src/routes/library.ts` - Used in artist filtering, album counts
+- `backend/src/routes/enrichment.ts` - Updates OwnedAlbum when rgMbid changes
+
+#### Old Auto-Download Endpoints (discover.ts)
+- `POST /discover/generate` - Triggers auto-download batch
+- `POST /discover/like` / `DELETE /discover/unlike` - Like/unlike discovery albums
+- `DELETE /discover/clear` - Clears non-liked discovery albums
+- `DiscoveryBatch`, `DiscoveryAlbum` table operations
+
+#### Scanner Discovery Detection
+- `isDiscoveryByPath()` - Checks for `discovery/` folder (still valid)
+- `isDiscoveryByJob()` - Checks DownloadJob table (still valid)
+- `isDiscoveryArtist` - **REMOVED** (was the cascade bug)
+
+### Cleanup Tasks
+1. **Remove `OwnedAlbum` table usage** - Replace with `Album.location = 'LIBRARY'` checks
+2. **Remove or deprecate old download endpoints** - Keep only `/discover/recommendations`
+3. **Clean up DiscoveryBatch/DiscoveryAlbum tables** - May contain orphaned data
+4. **Simplify library.ts filtering** - Remove OwnedAlbum-based logic
+
+### Priority
+Low - The bugs are fixed and the old code is dormant. Cleanup is for code hygiene only.
