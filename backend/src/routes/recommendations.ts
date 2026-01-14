@@ -87,12 +87,12 @@ router.get("/for-you", async (req, res) => {
             ).values()
         );
 
-        // Filter out artists user already owns (from native library)
-        const ownedArtists = await prisma.ownedAlbum.findMany({
-            select: { artistId: true },
-            distinct: ["artistId"],
+        // Filter out artists user already owns (from library albums)
+        const ownedArtists = await prisma.artist.findMany({
+            where: { albums: { some: { location: "LIBRARY" } } },
+            select: { id: true },
         });
-        const ownedArtistIds = new Set(ownedArtists.map((a) => a.artistId));
+        const ownedArtistIds = new Set(ownedArtists.map((a) => a.id));
 
         console.log(
             `Filtering recommendations: ${ownedArtistIds.size} owned artists to exclude`
@@ -184,8 +184,9 @@ router.get("/", async (req, res) => {
                     take: 3,
                 });
 
-                const ownedAlbums = await prisma.ownedAlbum.findMany({
-                    where: { artistId: similar.toArtistId },
+                const ownedAlbums = await prisma.album.findMany({
+                    where: { artistId: similar.toArtistId, location: "LIBRARY" },
+                    select: { rgMbid: true },
                 });
 
                 const ownedRgMbids = new Set(ownedAlbums.map((o) => o.rgMbid));
@@ -311,8 +312,9 @@ router.get("/albums", async (req, res) => {
         // Check ownership
         const recommendations = await Promise.all(
             uniqueAlbums.slice(0, 20).map(async (album) => {
-                const ownedAlbums = await prisma.ownedAlbum.findMany({
-                    where: { artistId: album.artistId },
+                const ownedAlbums = await prisma.album.findMany({
+                    where: { artistId: album.artistId, location: "LIBRARY" },
+                    select: { rgMbid: true },
                 });
 
                 const ownedRgMbids = new Set(ownedAlbums.map((o) => o.rgMbid));
@@ -510,18 +512,11 @@ router.get("/ai-weekly", async (req, res) => {
             }
         }
 
-        // Sort by play count, then randomly sample from top 20 for variety
-        const allArtistsSorted = Array.from(artistStats.values())
+        // Take top 5 most played artists (deterministic, no randomization)
+        // Aligned with /discover endpoint algorithm
+        const topArtists = Array.from(artistStats.values())
             .sort((a, b) => b.playCount - a.playCount)
-            .slice(0, 20); // Take top 20 candidates
-
-        // Randomly sample 10 from top 20 (weighted by play count)
-        const shuffled = [...allArtistsSorted].sort(() => Math.random() - 0.5);
-        const selectedArtists = shuffled.slice(0, Math.min(10, shuffled.length));
-
-        // Re-sort selected by play count for display
-        const topArtists = selectedArtists
-            .sort((a, b) => b.playCount - a.playCount)
+            .slice(0, 5)
             .map(a => ({
                 name: a.name,
                 playCount: a.playCount,

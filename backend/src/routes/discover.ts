@@ -2,7 +2,8 @@ import { Router } from "express";
 import { requireAuthOrToken } from "../middleware/auth";
 import { prisma } from "../utils/db";
 import { lastFmService } from "../services/lastfm";
-import { startOfWeek, endOfWeek } from "date-fns";
+import { musicBrainzService } from "../services/musicbrainz";
+import { startOfWeek, endOfWeek, subWeeks } from "date-fns";
 import axios from "axios";
 import fs from "fs";
 import path from "path";
@@ -13,9 +14,251 @@ import { discoverQueue, scanQueue } from "../workers/queues";
 import { getSystemSettings } from "../utils/systemSettings";
 import { lidarrService } from "../services/lidarr";
 
+// Types for recommendation-only mode
+interface RecommendedAlbum {
+    artistName: string;
+    artistMbid?: string;
+    albumTitle: string;
+    albumMbid: string;
+    similarity: number;
+    tier: "high" | "medium" | "explore" | "wildcard";
+    coverUrl?: string;
+    year?: number;
+}
+
 const router = Router();
 
 router.use(requireAuthOrToken);
+
+// =============================================================================
+// RECOMMENDATION-ONLY ENDPOINT (No Auto-Download)
+// =============================================================================
+
+/**
+ * GET /discover/recommendations - Get album recommendations for browsing
+ *
+ * This is a preview-only mode that returns recommendations without downloading.
+ * Users can browse artists, check top tracks, then manually download if interested.
+ */
+router.get("/recommendations", async (req, res) => {
+    try {
+        const userId = req.user!.id;
+        const targetCount = parseInt(req.query.limit as string) || 15;
+
+        console.log(`\n[DISCOVER] Generating recommendations for user ${userId} (preview mode)`);
+
+        // Step 1: Get seed artists from listening history (top 5 most played in last 7 days)
+        const oneWeekAgo = subWeeks(new Date(), 1);
+        const recentPlays = await prisma.play.groupBy({
+            by: ["trackId"],
+            where: {
+                userId,
+                playedAt: { gte: oneWeekAgo },
+                source: { in: ["LIBRARY", "DISCOVERY_KEPT"] },
+            },
+            _count: { id: true },
+            orderBy: { _count: { id: "desc" } },
+            take: 50,
+        });
+
+        let seedArtists: { name: string; mbid: string | null }[] = [];
+
+        if (recentPlays.length >= 3) {
+            const tracks = await prisma.track.findMany({
+                where: {
+                    id: { in: recentPlays.map((p) => p.trackId) },
+                    album: { location: "LIBRARY" },
+                },
+                include: { album: { include: { artist: true } } },
+            });
+
+            // Count plays per artist to get proper ordering
+            const artistPlayCounts = new Map<string, { artist: any; count: number }>();
+            for (const track of tracks) {
+                const play = recentPlays.find(p => p.trackId === track.id);
+                const playCount = play?._count.id || 1;
+                const existing = artistPlayCounts.get(track.album.artistId);
+                if (existing) {
+                    existing.count += playCount;
+                } else {
+                    artistPlayCounts.set(track.album.artistId, {
+                        artist: track.album.artist,
+                        count: playCount,
+                    });
+                }
+            }
+
+            // Sort by play count and take top 5 (no randomization)
+            const topArtists = Array.from(artistPlayCounts.values())
+                .sort((a, b) => b.count - a.count)
+                .slice(0, 5);
+
+            seedArtists = topArtists.map((a) => ({ name: a.artist.name, mbid: a.artist.mbid }));
+        } else {
+            // Fallback: get artists with most albums in library (top 5)
+            const albums = await prisma.album.groupBy({
+                by: ["artistId"],
+                where: { location: "LIBRARY" },
+                _count: { id: true },
+                orderBy: { _count: { id: "desc" } },
+                take: 5,
+            });
+            const artistIds = albums.map((a) => a.artistId);
+            const artists = await prisma.artist.findMany({
+                where: { id: { in: artistIds } },
+            });
+            // Maintain order by album count
+            seedArtists = artistIds
+                .map((id) => artists.find((a) => a.id === id))
+                .filter((a): a is NonNullable<typeof a> => a !== undefined)
+                .map((a) => ({ name: a.name, mbid: a.mbid }));
+        }
+
+        if (seedArtists.length === 0) {
+            return res.status(400).json({
+                error: "No seed artists found",
+                message: "Listen to some music first to get personalized recommendations",
+            });
+        }
+
+        console.log(`   Seed artists: ${seedArtists.map(a => a.name).join(", ")}`);
+
+        // Step 2: Get similar artists from Last.fm
+        const allSimilarArtists: any[] = [];
+        for (const seed of seedArtists.slice(0, 5)) { // Limit to first 5 seeds for speed
+            try {
+                const similar = await lastFmService.getSimilarArtists(
+                    seed.mbid || "",
+                    seed.name,
+                    15
+                );
+                for (const sim of similar) {
+                    allSimilarArtists.push({
+                        ...sim,
+                        seedArtist: seed.name,
+                    });
+                }
+            } catch (e) {
+                console.log(`   Failed to get similar for ${seed.name}`);
+            }
+        }
+
+        console.log(`   Found ${allSimilarArtists.length} similar artists`);
+
+        // Step 3: Filter out artists already in library and deduplicate
+        const seenArtists = new Set<string>();
+        const ownedArtistNames = new Set<string>();
+
+        // Get owned artists
+        const ownedArtists = await prisma.artist.findMany({
+            where: { albums: { some: { location: "LIBRARY" } } },
+            select: { name: true, mbid: true },
+        });
+        for (const a of ownedArtists) {
+            ownedArtistNames.add(a.name.toLowerCase());
+        }
+
+        const filteredArtists = allSimilarArtists.filter((a) => {
+            const key = a.name.toLowerCase();
+            if (seenArtists.has(key)) return false;
+            if (ownedArtistNames.has(key)) return false;
+            seenArtists.add(key);
+            return true;
+        });
+
+        console.log(`   After filtering: ${filteredArtists.length} new artists`);
+
+        // Step 4: Get album recommendations for each similar artist (parallel with limit)
+        const recommendations: RecommendedAlbum[] = [];
+
+        // Sort by similarity and take top candidates
+        const sortedArtists = filteredArtists
+            .sort((a, b) => (b.match || 0) - (a.match || 0))
+            .slice(0, targetCount + 5); // Get a few extra for fallbacks
+
+        // Process artists: Get TOP album from Last.fm (by popularity) - includes cover art!
+        const processArtist = async (artist: any): Promise<RecommendedAlbum | null> => {
+            try {
+                // Get top albums from Last.fm (sorted by listener count - most popular first)
+                const topAlbums = await lastFmService.getArtistTopAlbums("", artist.name, 5);
+
+                // Find first non-compilation album
+                const topAlbum = topAlbums?.find((a: any) =>
+                    a.name &&
+                    !a.name.toLowerCase().includes("greatest hits") &&
+                    !a.name.toLowerCase().includes("best of") &&
+                    !a.name.toLowerCase().includes("collection") &&
+                    !a.name.toLowerCase().includes("anthology")
+                ) || topAlbums?.[0];
+
+                if (!topAlbum?.name) return null;
+
+                // Get cover art directly from Last.fm response (extralarge or large)
+                const lastfmImages = topAlbum.image || [];
+                const coverUrl = lastfmImages.find((img: any) => img.size === "extralarge")?.["#text"] ||
+                                 lastfmImages.find((img: any) => img.size === "large")?.["#text"] ||
+                                 lastfmImages.find((img: any) => img.size === "medium")?.["#text"] ||
+                                 undefined;
+
+                // Get MusicBrainz artist ID (for "View Artist" link)
+                const mbArtists = await musicBrainzService.searchArtist(artist.name, 1);
+                const mbArtist = mbArtists?.[0];
+
+                // Determine tier based on similarity
+                const similarity = artist.match || 0.5;
+                let tier: "high" | "medium" | "explore" | "wildcard";
+                if (similarity >= 0.7) tier = "high";
+                else if (similarity >= 0.5) tier = "medium";
+                else if (similarity >= 0.3) tier = "explore";
+                else tier = "wildcard";
+
+                console.log(`   ✓ ${artist.name} - ${topAlbum.name} (${tier}, ${(similarity * 100).toFixed(0)}%)${coverUrl ? '' : ' [no cover]'}`);
+
+                return {
+                    artistName: artist.name,
+                    artistMbid: mbArtist?.id || "",
+                    albumTitle: topAlbum.name,
+                    albumMbid: "", // Not needed - using Last.fm cover directly
+                    similarity,
+                    tier,
+                    coverUrl: coverUrl && !coverUrl.includes("2a96cbd8b46e442fc41c2b86b821562f") ? coverUrl : undefined, // Filter out Last.fm placeholder
+                    year: undefined,
+                };
+            } catch (e) {
+                return null;
+            }
+        };
+
+        // Process artists in parallel (MusicBrainz lookups)
+        const results = await Promise.all(sortedArtists.map(processArtist));
+
+        // Filter out nulls and take target count
+        for (const result of results) {
+            if (result && recommendations.length < targetCount) {
+                recommendations.push(result);
+            }
+        }
+
+        // Cover art already included from Last.fm - no extra fetching needed!
+        console.log(`   Generated ${recommendations.length} recommendations`);
+
+        res.json({
+            recommendations,
+            seedArtists: seedArtists.map(a => a.name),
+            generatedAt: new Date().toISOString(),
+        });
+    } catch (error: any) {
+        console.error("[DISCOVER] Recommendations error:", error?.message || error);
+        res.status(500).json({
+            error: "Failed to generate recommendations",
+            details: error?.message,
+        });
+    }
+});
+
+// =============================================================================
+// LEGACY ENDPOINTS (Download-based - kept for backwards compatibility)
+// =============================================================================
 
 // GET /discover/batch-status - Check if there's an active batch being processed
 router.get("/batch-status", async (req, res) => {

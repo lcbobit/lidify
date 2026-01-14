@@ -565,10 +565,11 @@ Return ONLY valid JSON:
             .join("\n");
 
         // Sort library artists alphabetically for easier AI lookup
+        // Send ALL artists - ~500 artists ≈ 1500 tokens, well within context limits
         const sortedLibrary = [...libraryArtists].sort((a, b) =>
             a.toLowerCase().localeCompare(b.toLowerCase())
         );
-        const libraryJson = JSON.stringify(sortedLibrary.slice(0, 150));
+        const libraryJson = JSON.stringify(sortedLibrary);
 
         const prompt = `Help this user DISCOVER new artists who SOUND similar to their recent listening.
 
