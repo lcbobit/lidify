@@ -15,7 +15,7 @@ const playSchema = z.object({
 // POST /plays
 router.post("/", async (req, res) => {
     try {
-        const userId = req.session.userId!;
+        const userId = req.user!.id;
         const { trackId, playedSeconds } = playSchema.parse(req.body);
         const minPlaySeconds = 30;
         const effectivePlayedSeconds = playedSeconds ?? 0;
@@ -68,7 +68,7 @@ router.post("/", async (req, res) => {
 // GET /plays (recent plays for user)
 router.get("/", async (req, res) => {
     try {
-        const userId = req.session.userId!;
+        const userId = req.user!.id;
         const { limit = "50" } = req.query;
 
         const plays = await prisma.play.findMany({

@@ -455,16 +455,19 @@ export class MusicScannerService {
                 }
             }
 
-            // Pass 4: Check DiscoveryAlbum table (for already processed albums) by album title
-            const discoveryAlbumByTitle = await prisma.discoveryAlbum.findFirst({
+            // Pass 4: Check DiscoveryAlbum table (for already processed albums) by album title AND artist
+            // IMPORTANT: Must match BOTH title and artist to avoid false positives
+            // (e.g., "Above & Beyond - Acoustic" should NOT match "Above - Acoustic")
+            const discoveryAlbumByTitleAndArtist = await prisma.discoveryAlbum.findFirst({
                 where: {
                     albumTitle: { equals: albumTitle, mode: "insensitive" },
+                    artistName: { equals: artistName, mode: "insensitive" },
                     status: { in: ["ACTIVE", "LIKED"] },
                 },
             });
 
-            if (discoveryAlbumByTitle) {
-                console.log(`[Scanner] DiscoveryAlbum match (by title): ${discoveryAlbumByTitle.id}`);
+            if (discoveryAlbumByTitleAndArtist) {
+                console.log(`[Scanner] DiscoveryAlbum match (by title+artist): ${discoveryAlbumByTitleAndArtist.id}`);
                 return true;
             }
             
@@ -797,30 +800,12 @@ export class MusicScannerService {
                 // Determine if this is a discovery album:
                 // 1. Check file path (legacy: /music/discovery/ folder)
                 // 2. Check if artist+album matches a discovery download job
-                // 3. Check if artist is a discovery-only artist (has DISCOVER albums but no LIBRARY albums)
+                // NOTE: Removed "isDiscoveryArtist" cascade logic - it caused bugs where
+                //       legitimate library albums got permanently marked as DISCOVER
                 const isDiscoveryByPath = this.isDiscoveryPath(relativePath);
                 const isDiscoveryByJob = await this.isDiscoveryDownload(artistName, albumTitle);
-                
-                // Check if this artist is discovery-only (has no LIBRARY albums)
-                // If so, any new albums from them should also be DISCOVER
-                let isDiscoveryArtist = false;
-                if (!isDiscoveryByPath && !isDiscoveryByJob) {
-                    const artistAlbums = await prisma.album.findMany({
-                        where: { artistId: artist.id },
-                        select: { location: true },
-                    });
-                    
-                    // Artist is discovery-only if they have albums but NONE are LIBRARY
-                    if (artistAlbums.length > 0) {
-                        const hasLibraryAlbums = artistAlbums.some(a => a.location === "LIBRARY");
-                        isDiscoveryArtist = !hasLibraryAlbums;
-                        if (isDiscoveryArtist) {
-                            console.log(`[Scanner] Discovery-only artist detected: ${artistName}`);
-                        }
-                    }
-                }
-                
-                const isDiscoveryAlbum = isDiscoveryByPath || isDiscoveryByJob || isDiscoveryArtist;
+
+                const isDiscoveryAlbum = isDiscoveryByPath || isDiscoveryByJob;
 
                 // Only create album if not found by MBID lookup above
                 if (!album) {
