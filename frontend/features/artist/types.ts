@@ -22,6 +22,7 @@ export interface Album {
     id: string;
     title: string;
     year?: number;
+    releaseDate?: string | null;
     coverArt?: string;
     coverUrl?: string;
     trackCount?: number;

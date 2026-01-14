@@ -3,14 +3,13 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Home, Search, Settings, RefreshCw, Power, Menu, Bell } from "lucide-react";
+import { Home, Search, Settings, RefreshCw, Menu, Bell } from "lucide-react";
 import { ActivityPanelToggle } from "./ActivityPanel";
 import { cn } from "@/utils/cn";
 import { api } from "@/lib/api";
 import { useToast } from "@/lib/toast-context";
 import { useDownloadContext } from "@/lib/download-context";
 import { useIsMobile, useIsTablet } from "@/hooks/useMediaQuery";
-import { useAuth } from "@/lib/auth-context";
 import { useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
 
@@ -23,7 +22,6 @@ interface ScanStatus {
 export function TopBar() {
     const pathname = usePathname();
     const router = useRouter();
-    const { logout } = useAuth();
     const isMobile = useIsMobile();
     const isTablet = useIsTablet();
     const isMobileOrTablet = isMobile || isTablet;
@@ -115,16 +113,6 @@ export function TopBar() {
             console.error("Failed to trigger library scan:", error);
             setScanStatus({ active: false });
             scanStartedLocallyRef.current = 0; // Reset on error
-        }
-    };
-
-    const handleLogout = async () => {
-        try {
-            await logout();
-            toast.success("Logged out successfully");
-        } catch (error) {
-            console.error("Logout error:", error);
-            toast.error("Failed to logout");
         }
     };
 
@@ -377,13 +365,6 @@ export function TopBar() {
                         >
                             <Settings className="w-5 h-5" />
                         </Link>
-                        <button
-                            onClick={handleLogout}
-                            className="w-10 h-10 rounded-full flex items-center justify-center transition-all text-red-400 hover:text-red-300"
-                            title="Logout"
-                        >
-                            <Power className="w-5 h-5" />
-                        </button>
                     </div>
                 </>
             )}

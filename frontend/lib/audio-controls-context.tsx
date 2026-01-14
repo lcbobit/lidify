@@ -303,11 +303,28 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
                 isVibeQueue,
             });
 
+            const isSameQueue =
+                state.queue.length === tracks.length &&
+                state.queue.every((track, index) => track.id === tracks[index]?.id);
+            const isSameTrack =
+                state.currentTrack?.id !== undefined &&
+                tracks[startIndex]?.id !== undefined &&
+                state.currentTrack.id === tracks[startIndex].id;
+            const isSameIndex = state.currentIndex === startIndex;
+
             // If not a vibe queue and vibe mode is on, disable it
             if (!isVibeQueue && state.vibeMode) {
                 state.setVibeMode(false);
                 state.setVibeSourceFeatures(null);
                 state.setVibeQueueIds([]);
+            }
+
+            if (isSameQueue && isSameTrack && isSameIndex) {
+                state.setPlaybackType("track");
+                state.setCurrentAudiobook(null);
+                state.setCurrentPodcast(null);
+                playback.setIsPlaying(true);
+                return;
             }
 
             state.setPlaybackType("track");

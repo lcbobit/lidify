@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 import {
     Settings,
     RefreshCw,
-    LogOut,
     Compass,
     X,
     Radio,
@@ -19,7 +18,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/utils/cn";
 import { api } from "@/lib/api";
-import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/lib/toast-context";
 import Image from "next/image";
 
@@ -30,7 +28,6 @@ interface MobileSidebarProps {
 
 export function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
     const pathname = usePathname();
-    const { logout } = useAuth();
     const { toast } = useToast();
     const [isSyncing, setIsSyncing] = useState(false);
 
@@ -54,18 +51,6 @@ export function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
             toast.error("Failed to start scan. Please try again.");
         } finally {
             setTimeout(() => setIsSyncing(false), 2000);
-        }
-    };
-
-    // Handle logout
-    const handleLogout = async () => {
-        try {
-            await logout();
-            toast.success("Logged out successfully");
-            onClose();
-        } catch (error) {
-            console.error("Logout error:", error);
-            toast.error("Failed to logout");
         }
     };
 
@@ -290,17 +275,6 @@ export function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
                         </Link>
                     </div>
                 </nav>
-
-                {/* Footer - Logout */}
-                <div className="border-t border-white/[0.06] p-3">
-                    <button
-                        onClick={handleLogout}
-                        className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors"
-                    >
-                        <LogOut className="w-5 h-5" />
-                        <span className="text-[15px] font-medium">Logout</span>
-                    </button>
-                </div>
             </div>
         </>
     );

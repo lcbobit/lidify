@@ -1,15 +1,18 @@
 "use client";
 
 import { useState } from "react";
+import { LogOut } from "lucide-react";
 import { SettingsSection, SettingsRow, SettingsInput } from "../ui";
 import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api";
 import { useTwoFactor } from "../../hooks/useTwoFactor";
 import { Modal } from "@/components/ui/Modal";
 import { InlineStatus, StatusType } from "@/components/ui/InlineStatus";
+import { useToast } from "@/lib/toast-context";
 
 export function AccountSection() {
-    const { user } = useAuth();
+    const { user, logout } = useAuth();
+    const { toast } = useToast();
     
     // Password change state
     const [currentPassword, setCurrentPassword] = useState("");
@@ -109,6 +112,17 @@ export function AccountSection() {
         } catch (error: any) {
             setTfaStatus("error");
             setTfaMessage(error.message || "Failed");
+        }
+    };
+
+    // Handle logout
+    const handleLogout = async () => {
+        try {
+            await logout();
+            toast.success("Logged out successfully");
+        } catch (error) {
+            console.error("Logout error:", error);
+            toast.error("Failed to logout");
         }
     };
 
@@ -292,14 +306,28 @@ export function AccountSection() {
                             >
                                 Cancel
                             </button>
-                            <InlineStatus 
-                                status={tfaStatus} 
+                            <InlineStatus
+                                status={tfaStatus}
                                 message={tfaMessage}
                                 onClear={() => setTfaStatus("idle")}
                             />
                         </div>
                     </div>
                 )}
+
+                {/* Logout */}
+                <SettingsRow
+                    label="Sign out"
+                    description="End your current session"
+                >
+                    <button
+                        onClick={handleLogout}
+                        className="flex items-center gap-2 px-4 py-2 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-full transition-colors"
+                    >
+                        <LogOut className="w-4 h-4" />
+                        Logout
+                    </button>
+                </SettingsRow>
             </SettingsSection>
 
             {/* Recovery Codes Modal */}

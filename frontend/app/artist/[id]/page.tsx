@@ -68,7 +68,6 @@ export default function ArtistPage() {
           artist: albumData.artist,
         }));
         playTracks(tracksWithAlbum, 0);
-        toast.success(`Playing ${albumTitle}`);
       }
     } catch (error) {
       console.error("Failed to play album:", error);
