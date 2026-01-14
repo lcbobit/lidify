@@ -1659,6 +1659,26 @@ class ApiClient {
         );
     }
 
+    /**
+     * Get album recommendations for browsing (no auto-download)
+     */
+    async getDiscoverRecommendations(limit = 15) {
+        return this.request<{
+            recommendations: Array<{
+                artistName: string;
+                artistMbid?: string;
+                albumTitle: string;
+                albumMbid: string;
+                similarity: number;
+                tier: "high" | "medium" | "explore" | "wildcard";
+                coverUrl?: string;
+                year?: number;
+            }>;
+            seedArtists: string[];
+            generatedAt: string;
+        }>(`/discover/recommendations?limit=${limit}`);
+    }
+
     // API Keys Management
     async createApiKey(deviceName: string): Promise<{
         apiKey: string;

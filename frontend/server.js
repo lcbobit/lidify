@@ -84,7 +84,8 @@ app.prepare().then(() => {
         // Proxy long-running AI endpoints with extended timeout
         if (pathname.startsWith("/api/recommendations/ai-weekly") ||
             pathname.startsWith("/api/artists/ai-chat") ||
-            pathname.startsWith("/api/search/discover")) {
+            pathname.startsWith("/api/search/discover") ||
+            pathname.startsWith("/api/discover/recommendations")) {
             longRunningProxy(req, res);
             return;
         }

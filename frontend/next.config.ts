@@ -60,6 +60,16 @@ const nextConfig: NextConfig = {
                 hostname: "is1-ssl.mzstatic.com",
                 pathname: "/**",
             },
+            {
+                protocol: "http",
+                hostname: "coverartarchive.org",
+                pathname: "/**",
+            },
+            {
+                protocol: "https",
+                hostname: "coverartarchive.org",
+                pathname: "/**",
+            },
         ],
         formats: ["image/avif", "image/webp"],
         deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
