@@ -1,22 +1,74 @@
 # Lidify
 
-[![Docker Image](https://img.shields.io/docker/v/chevron7locked/lidify?label=Docker&sort=semver)](https://hub.docker.com/r/chevron7locked/lidify)
-[![GitHub Release](https://img.shields.io/github/v/release/Chevron7Locked/lidify?label=Release)](https://github.com/Chevron7Locked/lidify/releases)
+[![Docker Image](https://img.shields.io/github/v/release/fjordnode/lidify?label=ghcr.io&logo=github)](https://github.com/fjordnode/lidify/pkgs/container/lidify)
+[![GitHub Release](https://img.shields.io/github/v/release/fjordnode/lidify?label=Release)](https://github.com/fjordnode/lidify/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
+> **A maintained fork of [Lidify](https://github.com/Chevron7Locked/lidify)** focused on stability, bug fixes, and new features.
 
 A self-hosted, on-demand audio streaming platform that brings the Spotify experience to your personal music library.
 
 Lidify is built for music lovers who want the convenience of streaming services without sacrificing ownership of their library. Point it at your music collection, and Lidify handles the rest: artist discovery, personalized playlists, podcast subscriptions, and seamless integration with tools you already use like Lidarr and Audiobookshelf.
 
+## Why This Fork?
+
+This fork includes numerous bug fixes, performance improvements, and features not yet available upstream:
+
+- **Remote Playback** — Control playback across devices (phone controls desktop, etc.)
+- **Subsonic API** — Use mobile apps like Symfonium, Feishin, DSub, Ultrasonic, etc.
+- **AI Recommendations** — Powered by [OpenRouter](https://openrouter.ai) (~$0.0003/request with DeepSeek V3.2, ~$0.002-0.003 with Gemini 3.0 Flash)
+  - "AI Weekly" — Weighted artist recommendations based on your listening history
+  - Per-artist similar recommendations with interactive chat to refine results (e.g., "similar style but heavier and more aggressive")
+- **ML Analysis Fixes** — Corrected mood/energy detection with proper model outputs
+- **Playlist Diversity** — Better artist distribution in generated playlists
+- **Lidarr Improvements** — Quality profile selection, interactive album search, fixed metadata refresh race conditions
+- **UI Polish** — Various fixes and improvements throughout
+
+See [CHANGELOG.md](CHANGELOG.md) for full details.
+
+### ML Audio Analysis
+
+Lidify uses machine learning models to analyze your music library for mood, energy, and danceability. This powers features like the Vibe System, Mood Mixer, and intelligent playlist generation.
+
+**Resource usage:** ML analysis is CPU-intensive. Each worker loads TensorFlow models (~1-1.5 GB RAM each) and processes audio files through neural networks.
+
+| Workers | RAM Usage | CPU Usage | Throughput | Best For |
+|---------|-----------|-----------|------------|----------|
+| 2 (default) | ~3-4 GB | ~200-400% | ~0.25 tracks/sec | Low-power systems, NAS |
+| 4 | ~5-6 GB | ~400-600% | ~0.5 tracks/sec | Mid-range servers |
+| 6 | ~8-10 GB | ~600-900% | ~0.7 tracks/sec | **Sweet spot for most systems** |
+| 8+ | ~12+ GB | ~1000%+ | ~0.7 tracks/sec | Diminishing returns |
+
+> **Note:** These benchmarks are from an Intel i5-13500 (20 threads, 64GB RAM). Beyond 6 workers, throughput plateaus due to disk I/O bottlenecks when reading audio files. More workers just consume more RAM without processing faster.
+
+**Tuning for your system:**
+
+```yaml
+environment:
+  - NUM_WORKERS=6        # Increase for faster analysis (default: 2)
+  - BATCH_SIZE=10        # Tracks per batch (default: 10, don't increase)
+```
+
+**Initial analysis time estimates (20,000 tracks):**
+- 2 workers: ~22 hours
+- 6 workers: ~8 hours
+
+**To disable ML analysis entirely:**
+
+```yaml
+environment:
+  - DISABLE_ML_ANALYSIS=true
+```
+
+**What you lose with ML disabled:**
+- Mood Mixer (creating playlists by mood sliders)
+- Vibe matching (finding similar-feeling tracks)
+- Mood-based radio stations (Workout, Chill, etc.)
+- Accurate energy/danceability scores
+
+Basic playback, library browsing, playlists, and Lidarr integration all work normally without ML.
+
 ![Lidify Home Screen](assets/screenshots/desktop-home.png)
-
----
-
-## A Note on Native Apps
-
-I got a little and PWA are the priority. Once the core experience is solid and properly tested, a native mobile app (likely React Native) is on the roadmap. The PWA works great for most cases for now.
-
-Thanks for your patience while I work through this.
 
 ---
 
@@ -199,7 +251,7 @@ docker run -d \
   -p 3030:3030 \
   -v /path/to/your/music:/music \
   -v lidify_data:/data \
-  chevron7locked/lidify:latest
+  ghcr.io/fjordnode/lidify:latest
 ```
 
 That's it! Open http://localhost:3030 and create your account.
@@ -224,7 +276,7 @@ docker run -d \
   -e SESSION_SECRET=your-secret-key \
   -e TZ=America/New_York \
   --add-host=host.docker.internal:host-gateway \
-  chevron7locked/lidify:latest
+  ghcr.io/fjordnode/lidify:latest
 ```
 
 | Variable         | Description            | Default        |
@@ -239,7 +291,7 @@ Create a `docker-compose.yml` file:
 ```yaml
 services:
     lidify:
-        image: chevron7locked/lidify:latest
+        image: ghcr.io/fjordnode/lidify:latest
         container_name: lidify
         ports:
             - "3030:3030"
@@ -659,6 +711,8 @@ You are free to use, modify, and distribute this software under the terms of the
 
 ## Acknowledgments
 
+This fork is based on the original [Lidify](https://github.com/Chevron7Locked/lidify) by [Chevron7Locked](https://github.com/Chevron7Locked). Thank you for creating this excellent project!
+
 Lidify wouldn't be possible without these services and projects:
 
 -   [Last.fm](https://www.last.fm/) - Artist recommendations and music metadata
@@ -675,9 +729,11 @@ Lidify wouldn't be possible without these services and projects:
 
 If you encounter issues or have questions:
 
-1. Check the [Issues](https://github.com/chevron7locked/lidify/issues) page for known problems
+1. Check the [Issues](https://github.com/fjordnode/lidify/issues) page for known problems
 2. Open a new issue with details about your setup and the problem you're experiencing
 3. Include logs from `docker compose logs` if relevant
+
+For issues specific to upstream Lidify, see the [original repository](https://github.com/Chevron7Locked/lidify).
 
 ---
 

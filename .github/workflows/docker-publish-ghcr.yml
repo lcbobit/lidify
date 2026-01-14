@@ -90,39 +90,39 @@ jobs:
               with:
                   fetch-depth: 0  # Need full history for changelog
 
-            - name: Generate changelog
+            - name: Extract changelog for version
               id: changelog
               run: |
-                  # Get the previous tag
-                  PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
                   CURRENT_TAG=${GITHUB_REF#refs/tags/}
+                  VERSION=${CURRENT_TAG#v}
 
-                  echo "Previous tag: $PREV_TAG"
-                  echo "Current tag: $CURRENT_TAG"
-
-                  # Generate changelog from commits
-                  if [ -n "$PREV_TAG" ]; then
-                      CHANGES=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges)
+                  # Try to extract section for this version from CHANGELOG.md
+                  # Falls back to [Unreleased] section if version not found
+                  if grep -q "## \[${VERSION}\]" CHANGELOG.md; then
+                      # Extract the section for this specific version
+                      sed -n "/## \[${VERSION}\]/,/## \[/p" CHANGELOG.md | sed '$d' > version_notes.md
+                  elif grep -q "## \[Unreleased\]" CHANGELOG.md; then
+                      # Use Unreleased section
+                      sed -n "/## \[Unreleased\]/,/## \[/p" CHANGELOG.md | sed '$d' > version_notes.md
                   else
-                      CHANGES=$(git log --pretty=format:"- %s" --no-merges -20)
+                      echo "See CHANGELOG.md for details." > version_notes.md
                   fi
 
-                  # Write to file for multiline support
-                  cat > changelog.md << EOF
-                  ## What's Changed
+                  # Append docker pull instructions
+                  cat >> version_notes.md << EOF
 
-                  $CHANGES
+                  ---
 
-                  ## Docker Image
+                  ## Docker
 
                   \`\`\`bash
-                  docker pull ghcr.io/${{ github.repository }}:${CURRENT_TAG#v}
+                  docker pull ghcr.io/${{ github.repository }}:${VERSION}
                   # or
                   docker pull ghcr.io/${{ github.repository }}:latest
                   \`\`\`
-
-                  **Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${CURRENT_TAG}
                   EOF
+
+                  mv version_notes.md changelog.md
 
             - name: Create Release
               uses: softprops/action-gh-release@v2

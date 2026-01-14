@@ -1,17 +1,16 @@
 # Lidify All-in-One Docker Compose
 # Single container with embedded PostgreSQL, Redis, and audio analyzer
 #
-# Usage: Place this file in a folder, then run:
-#   docker compose up -d --build
+# Usage:
+#   1. Copy to your compose folder
+#   2. Edit paths below (/path/to/...)
+#   3. Run: docker compose up -d
 
 services:
   lidify:
-    # Build from source (default)
-    build: ../
-    image: lidify:latest
-    #
-    # Or use pre-built image (when available):
-    # image: ghcr.io/fjordnode/lidify:latest
+    image: ghcr.io/fjordnode/lidify:latest
+    # Or build from source:
+    # build: https://github.com/fjordnode/lidify.git
     container_name: lidify
     restart: unless-stopped
     ports:
@@ -23,11 +22,18 @@ services:
       # Persistent data (database, cache, logs)
       - /path/to/appdata/lidify:/data:rw
     environment:
-      - TZ=Europe/Oslo
+      - TZ=America/New_York  # Your timezone
       # Optional: AI-powered recommendations (get key at https://openrouter.ai)
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       # Optional: Last.fm integration (get key at https://www.last.fm/api)
       - LASTFM_API_KEY=${LASTFM_API_KEY:-}
+      # --- ML Audio Analysis options ---
+      # Number of parallel analysis workers (default: 2, increase if you have CPU headroom)
+      - NUM_WORKERS=2
+      # Disable ML analysis entirely (saves CPU, loses mood-based playlists)
+      # - DISABLE_ML_ANALYSIS=true
+      # Skip files larger than this (MB) to prevent timeouts on hi-res audio
+      # - MAX_FILE_SIZE_MB=100
     extra_hosts:
       # Allows container to reach host services (e.g., Lidarr on host)
       - "host.docker.internal:host-gateway"

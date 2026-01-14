@@ -35,6 +35,62 @@ Frontend (from `frontend/`):
 - Keep commits focused and imperative; one logical change per commit when possible.
 - PRs should describe the user impact, list key files touched, and include logs or screenshots when relevant (see README support guidance for `docker compose logs`).
 
+## Docker Operations (Production)
+
+**Build & Deploy** (from repo directory `/mnt/cache/appdata/compose/lidify/repo`):
+```bash
+# Build new image after code changes
+docker build -t lidify-remote:latest .
+
+# Deploy updated container (from compose directory)
+cd /mnt/cache/appdata/compose/lidify
+docker compose up -d --force-recreate
+
+# Force clean rebuild (if cached layers cause issues)
+docker rmi lidify-remote:latest
+docker build --no-cache -t lidify-remote:latest .
+```
+
+**Logs & Debugging**:
+```bash
+# View container logs (all services: postgres, redis, backend, frontend, audio-analyzer)
+docker logs lidify --tail 100 -f
+
+# Check specific service output
+docker exec lidify supervisorctl status
+
+# Verify frontend was rebuilt (check BUILD_ID changed)
+docker exec lidify cat /app/frontend/.next/BUILD_ID
+
+# Interactive shell in container
+docker exec -it lidify bash
+```
+
+**Database Operations**:
+```bash
+# Query database directly
+docker exec lidify psql -U lidify -d lidify -c "SELECT * FROM \"Album\" LIMIT 5;"
+
+# Clear Redis cache (playlists, API responses)
+docker exec lidify /usr/bin/redis-cli FLUSHALL
+
+# Re-analyze all tracks (after ML model changes)
+docker exec lidify psql -U lidify -d lidify -c \
+  "UPDATE \"Track\" SET \"analysisStatus\" = 'pending' WHERE \"analysisMode\" = 'standard';"
+```
+
+**Troubleshooting**:
+```bash
+# Check if code changes are in container
+docker exec lidify grep -n "pattern" /app/backend/src/routes/library.ts
+
+# Test API endpoint (from inside container, needs auth)
+docker exec lidify curl -s "http://localhost:3006/api/library/stats"
+
+# Check container resource usage
+docker stats lidify --no-stream
+```
+
 ## Security & Configuration Tips
 - Use `.env.example` as the baseline; avoid committing secrets.
 - Services run via Docker Compose; update `docker-compose*.yml` consistently when adding ports or services.

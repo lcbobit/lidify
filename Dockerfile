@@ -42,8 +42,9 @@ RUN mkdir -p /app/backend /app/frontend /app/audio-analyzer /app/models \
 # ============================================
 WORKDIR /app/audio-analyzer
 
-# Install Python dependencies for audio analysis
-RUN pip3 install --no-cache-dir --break-system-packages \
+# Install Python dependencies for audio analysis (with cache mount for speed)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --break-system-packages \
     essentia-tensorflow \
     redis \
     psycopg2-binary
@@ -84,11 +85,12 @@ COPY services/audio-analyzer/analyzer.py /app/audio-analyzer/
 # ============================================
 WORKDIR /app/backend
 
-# Copy backend package files and install dependencies
+# Copy backend package files and install dependencies (with cache mount for speed)
 COPY backend/package*.json ./
 COPY backend/prisma ./prisma/
 RUN echo "=== Migrations copied ===" && ls -la prisma/migrations/ && echo "=== End migrations ==="
-RUN npm ci && npm cache clean --force
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
 RUN npx prisma generate
 
 # Copy backend source
@@ -104,16 +106,18 @@ RUN mkdir -p /app/backend/logs
 # ============================================
 WORKDIR /app/frontend
 
-# Copy frontend package files and install dependencies
+# Copy frontend package files and install dependencies (with cache mount for speed)
 COPY frontend/package*.json ./
-RUN npm ci && npm cache clean --force
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
 
 # Copy frontend source and build
 COPY frontend/ ./
 
-# Build Next.js (production)
+# Build Next.js (production) with cache for faster rebuilds
 ENV NEXT_PUBLIC_API_URL=
-RUN npm run build
+RUN --mount=type=cache,target=/app/frontend/.next/cache \
+    npm run build
 
 # ============================================
 # SECURITY HARDENING

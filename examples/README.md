@@ -2,39 +2,50 @@
 
 All-in-one Docker deployment with embedded PostgreSQL, Redis, and audio analyzer.
 
-## Setup
+## Quick Start (Pre-built Image)
 
 ```bash
-# 1. Copy example files
-cp docker-compose.yml /path/to/your/compose/lidify/
-cp .env.example /path/to/your/compose/lidify/.env
+# 1. Create a folder for Lidify
+mkdir -p ~/compose/lidify && cd ~/compose/lidify
 
-# 2. Edit docker-compose.yml
-#    - Set your music library path
-#    - Set your data directory path
+# 2. Download docker-compose.yml
+curl -O https://raw.githubusercontent.com/fjordnode/lidify/main/examples/docker-compose.yml
 
-# 3. Edit .env (optional)
-#    - Add OPENROUTER_API_KEY for AI recommendations
-#    - Add LASTFM_API_KEY for artist bios and scrobbling
+# 3. Edit docker-compose.yml
+#    - Set your music library path (/path/to/your/music)
+#    - Set your data directory path (/path/to/appdata/lidify)
+#    - Set your timezone
 
 # 4. Start Lidify
-cd /path/to/your/compose/lidify
 docker compose up -d
 
 # 5. Open http://localhost:3030
 ```
 
-## Building from Source
+## Optional: API Keys
+
+For AI recommendations and artist bios, create a `.env` file:
 
 ```bash
-# Clone the repository
+curl -O https://raw.githubusercontent.com/fjordnode/lidify/main/examples/.env.example
+mv .env.example .env
+# Edit .env and add your API keys
+```
+
+| Key | Purpose | Get it at |
+|-----|---------|-----------|
+| `OPENROUTER_API_KEY` | AI Weekly recommendations | [openrouter.ai/keys](https://openrouter.ai/keys) |
+| `LASTFM_API_KEY` | Artist/album bios | [last.fm/api](https://www.last.fm/api/account/create) |
+
+## Building from Source (Optional)
+
+```bash
+# Clone and build
 git clone https://github.com/fjordnode/lidify.git
 cd lidify
-
-# Build the all-in-one image
 docker build -t lidify:latest .
 
-# Update docker-compose.yml to use local image:
+# Then in docker-compose.yml, change image line to:
 # image: lidify:latest
 ```
 
