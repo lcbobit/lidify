@@ -137,7 +137,7 @@ export default function AIWeeklyPage() {
         }
 
         try {
-            const result = await api.getAIWeeklyArtists(7);
+            const result = await api.getAIWeeklyArtists(28);
             setData(result);
             setCachedData(result);
 
@@ -645,7 +645,7 @@ export default function AIWeeklyPage() {
                     </div>
                     <h3 className="text-lg font-medium text-white mb-1">Discover New Artists</h3>
                     <p className="text-sm text-gray-500 max-w-md">
-                        AI will analyze your listening history from the past 7 days and recommend
+                        AI will analyze your listening history from the past 4 weeks and recommend
                         new artists you might enjoy. Tap any artist to preview their top tracks.
                     </p>
                 </div>

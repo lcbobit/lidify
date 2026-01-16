@@ -443,7 +443,7 @@ router.get("/tracks", async (req, res) => {
 router.get("/ai-weekly", async (req, res) => {
     try {
         const userId = req.user!.id;
-        const { days = "7" } = req.query;
+        const { days = "28" } = req.query;
         const daysNum = parseInt(days as string, 10);
 
         // Check if OpenRouter is available

@@ -593,7 +593,7 @@ class ApiClient {
         );
     }
 
-    async getAIWeeklyArtists(days = 7) {
+    async getAIWeeklyArtists(days = 28) {
         return this.request<{
             period: string;
             totalPlays: number;

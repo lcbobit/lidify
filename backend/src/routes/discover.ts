@@ -47,13 +47,13 @@ router.get("/recommendations", async (req, res) => {
 
         console.log(`\n[DISCOVER] Generating recommendations for user ${userId} (preview mode)`);
 
-        // Step 1: Get seed artists from listening history (top 5 most played in last 7 days)
-        const oneWeekAgo = subWeeks(new Date(), 1);
+        // Step 1: Get seed artists from listening history (top 5 most played in last 4 weeks)
+        const fourWeeksAgo = subWeeks(new Date(), 4);
         const recentPlays = await prisma.play.groupBy({
             by: ["trackId"],
             where: {
                 userId,
-                playedAt: { gte: oneWeekAgo },
+                playedAt: { gte: fourWeeksAgo },
                 source: { in: ["LIBRARY", "DISCOVERY_KEPT"] },
             },
             _count: { id: true },
