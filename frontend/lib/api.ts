@@ -994,12 +994,18 @@ class ApiClient {
             playlistSize: number;
             enabled: boolean;
             lastGeneratedAt: string | null;
+            discoveryMode: "safe" | "adjacent" | "adventurous" | "mix";
+            discoveryTimeframe: "7d" | "28d" | "90d" | "all";
+            includeLibraryArtists: boolean;
         }>("/discover/config");
     }
 
     async updateDiscoverConfig(config: {
         playlistSize?: number;
         enabled?: boolean;
+        discoveryMode?: "safe" | "adjacent" | "adventurous" | "mix";
+        includeLibraryArtists?: boolean;
+        discoveryTimeframe?: "7d" | "28d" | "90d" | "all";
     }) {
         return this.request<{
             id: string;
@@ -1007,6 +1013,8 @@ class ApiClient {
             playlistSize: number;
             enabled: boolean;
             lastGeneratedAt: string | null;
+            discoveryMode: "safe" | "adjacent" | "adventurous" | "mix";
+            discoveryTimeframe: "7d" | "28d" | "90d" | "all";
         }>("/discover/config", {
             method: "PATCH",
             body: JSON.stringify(config),
@@ -1661,8 +1669,19 @@ class ApiClient {
 
     /**
      * Get album recommendations for browsing (no auto-download)
+     * @param limit - number of recommendations (default: 16)
+     * @param timeframe - "7d" | "28d" | "90d" | "all" (default: "28d")
+     * @param mode - "safe" | "adjacent" | "adventurous" | "mix" (default: "mix")
+     * @param includeLibrary - include artists already in library (default: false)
+     * @param source - "auto" | "ai" | "lastfm" - force recommendation source (default: "auto")
      */
-    async getDiscoverRecommendations(limit = 15) {
+    async getDiscoverRecommendations(
+        limit = 16,
+        timeframe: "7d" | "28d" | "90d" | "all" = "28d",
+        mode: "safe" | "adjacent" | "adventurous" | "mix" = "mix",
+        includeLibrary = false,
+        source: "auto" | "ai" | "lastfm" = "auto"
+    ) {
         return this.request<{
             recommendations: Array<{
                 artistName: string;
@@ -1673,10 +1692,45 @@ class ApiClient {
                 tier: "high" | "medium" | "explore" | "wildcard";
                 coverUrl?: string;
                 year?: number;
+                reason?: string;
             }>;
+            sections?: {
+                safe: Array<{
+                    artistName: string;
+                    artistMbid?: string;
+                    albumTitle: string;
+                    albumMbid: string;
+                    similarity: number;
+                    tier: "high" | "medium" | "explore" | "wildcard";
+                    coverUrl?: string;
+                    reason?: string;
+                }>;
+                adjacent: Array<{
+                    artistName: string;
+                    artistMbid?: string;
+                    albumTitle: string;
+                    albumMbid: string;
+                    similarity: number;
+                    tier: "high" | "medium" | "explore" | "wildcard";
+                    coverUrl?: string;
+                    reason?: string;
+                }>;
+                wildcard: Array<{
+                    artistName: string;
+                    artistMbid?: string;
+                    albumTitle: string;
+                    albumMbid: string;
+                    similarity: number;
+                    tier: "high" | "medium" | "explore" | "wildcard";
+                    coverUrl?: string;
+                    reason?: string;
+                }>;
+            };
             seedArtists: string[];
+            mode: "safe" | "adjacent" | "adventurous" | "mix";
+            timeframe: "7d" | "28d" | "90d" | "all";
             generatedAt: string;
-        }>(`/discover/recommendations?limit=${limit}`);
+        }>(`/discover/recommendations?limit=${limit}&timeframe=${timeframe}&mode=${mode}&includeLibrary=${includeLibrary}&source=${source}`);
     }
 
     // API Keys Management

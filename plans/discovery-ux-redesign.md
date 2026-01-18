@@ -1,5 +1,18 @@
 # Discovery UX Redesign
 
+> **Status: ALL PHASES COMPLETE** ✅ (January 2026)
+>
+> Full implementation complete. Users can now:
+> - Select discovery mode (Safe/Adjacent/Adventurous/Mix)
+> - Choose timeframe (7d/28d/90d/All time)
+> - View sectioned output in Mix mode with tier labels
+> - See AI-generated explanations for each recommendation
+> - Preferences are persisted to database across sessions
+> - Click "Why this?" for full AI explanation
+> - One-click "Add to Library" via Lidarr integration
+
+---
+
 ## Problem Statement
 
 Current discovery has several issues:
@@ -203,25 +216,25 @@ Output JSON: {safe: [...], adjacent: [...], wildcard: [...]}
 
 ## Implementation Plan
 
-### Phase 1: Core UX
-- [ ] Add timeframe dropdown to /discover page
-- [ ] Add discovery mode selector (Safe/Adjacent/Adventurous/Mix)
-- [ ] Update backend to accept `timeframe` and `mode` parameters
-- [ ] Create 4 prompt templates
-- [ ] Sectioned output display for Mix mode
-- [ ] Show "Based on: X, Y, Z..." transparency
+### Phase 1: Core UX ✅ COMPLETE
+- [x] Add timeframe dropdown to /discover page
+- [x] Add discovery mode selector (Safe/Adjacent/Adventurous/Mix)
+- [x] Update backend to accept `timeframe` and `mode` parameters
+- [x] Create 4 prompt templates
+- [x] Sectioned output display for Mix mode
+- [x] Show "Based on: X, Y, Z..." transparency
 
-### Phase 2: Algorithm Refinement
-- [ ] Implement recency weighting for 28d/90d timeframes
-- [ ] Weighted random sampling from top 50 (instead of top 5)
-- [ ] Diversity constraints (max 2 per genre cluster)
-- [ ] Cache results per mode+timeframe combo (24h)
+### Phase 2: Algorithm Refinement ✅ COMPLETE
+- [x] Implement recency weighting for 28d/90d timeframes
+- [x] Weighted random sampling from top 50 (instead of top 5)
+- [ ] Diversity constraints (max 2 per genre cluster) — deferred
+- [x] Cache results per mode+timeframe combo (24h)
 
-### Phase 3: Polish
-- [ ] Persist user's preferred mode/timeframe in settings
-- [ ] Add "Why this?" tooltip explaining each recommendation
-- [ ] Album previews (Deezer) for each recommended artist
-- [ ] "Add to Library" quick action via Lidarr
+### Phase 3: Polish ✅ COMPLETE
+- [x] Persist user's preferred mode/timeframe in settings (database + API)
+- [x] Add "Why this?" tooltip explaining each recommendation
+- [x] Album previews (Deezer) for each recommended artist (already existed)
+- [x] "Add to Library" quick action via Lidarr
 
 ---
 

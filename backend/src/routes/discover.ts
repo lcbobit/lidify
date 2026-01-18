@@ -3,7 +3,8 @@ import { requireAuthOrToken } from "../middleware/auth";
 import { prisma } from "../utils/db";
 import { lastFmService } from "../services/lastfm";
 import { musicBrainzService } from "../services/musicbrainz";
-import { startOfWeek, endOfWeek, subWeeks } from "date-fns";
+import { openRouterService } from "../services/openrouter";
+import { startOfWeek, endOfWeek, subWeeks, subDays } from "date-fns";
 import axios from "axios";
 import fs from "fs";
 import path from "path";
@@ -24,6 +25,29 @@ interface RecommendedAlbum {
     tier: "high" | "medium" | "explore" | "wildcard";
     coverUrl?: string;
     year?: number;
+    reason?: string; // AI-generated explanation
+}
+
+// Discovery mode types
+type DiscoveryMode = "safe" | "adjacent" | "adventurous" | "mix";
+type DiscoveryTimeframe = "7d" | "28d" | "90d" | "all";
+
+// Sectioned response for Mix mode
+interface SectionedRecommendations {
+    safe: RecommendedAlbum[];
+    adjacent: RecommendedAlbum[];
+    wildcard: RecommendedAlbum[];
+}
+
+// Helper to get timeframe in days
+function getTimeframeDays(timeframe: DiscoveryTimeframe): number {
+    switch (timeframe) {
+        case "7d": return 7;
+        case "28d": return 28;
+        case "90d": return 90;
+        case "all": return 365 * 10; // Effectively all time
+        default: return 28;
+    }
 }
 
 const router = Router();
@@ -37,31 +61,57 @@ router.use(requireAuthOrToken);
 /**
  * GET /discover/recommendations - Get album recommendations for browsing
  *
+ * Query params:
+ * - limit: number of recommendations (default: 16)
+ * - timeframe: "7d" | "28d" | "90d" | "all" (default: "28d")
+ * - mode: "safe" | "adjacent" | "adventurous" | "mix" (default: "mix")
+ *
  * This is a preview-only mode that returns recommendations without downloading.
  * Users can browse artists, check top tracks, then manually download if interested.
  */
 router.get("/recommendations", async (req, res) => {
     try {
         const userId = req.user!.id;
-        const targetCount = parseInt(req.query.limit as string) || 15;
+        const targetCount = parseInt(req.query.limit as string) || 16;
+        const timeframe = (req.query.timeframe as DiscoveryTimeframe) || "28d";
+        const mode = (req.query.mode as DiscoveryMode) || "mix";
+        const includeLibrary = req.query.includeLibrary === "true";
+        const source = (req.query.source as string) || "auto"; // "auto", "ai", "lastfm"
 
-        console.log(`\n[DISCOVER] Generating recommendations for user ${userId} (preview mode)`);
+        console.log(`\n[DISCOVER] Generating recommendations for user ${userId}`);
+        console.log(`   Mode: ${mode}, Timeframe: ${timeframe}, Target: ${targetCount}, Include Library: ${includeLibrary}, Source: ${source}`);
 
-        // Step 1: Get seed artists from listening history (top 5 most played in last 4 weeks)
-        const fourWeeksAgo = subWeeks(new Date(), 4);
+        // Check if AI is available for mode-specific recommendations
+        // If source=lastfm, skip AI entirely
+        const aiAvailable = source === "lastfm" ? false : await openRouterService.isAvailable();
+        console.log(`   AI available: ${aiAvailable}${source === "lastfm" ? " (forced Last.fm)" : ""}`);
+
+        // Step 1: Get seed artists from listening history with configurable timeframe
+        const days = getTimeframeDays(timeframe);
+        const startDate = subDays(new Date(), days);
+
         const recentPlays = await prisma.play.groupBy({
             by: ["trackId"],
             where: {
                 userId,
-                playedAt: { gte: fourWeeksAgo },
+                playedAt: { gte: startDate },
                 source: { in: ["LIBRARY", "DISCOVERY_KEPT"] },
             },
             _count: { id: true },
             orderBy: { _count: { id: "desc" } },
-            take: 50,
+            take: 200, // Get more for weighted sampling
         });
 
-        let seedArtists: { name: string; mbid: string | null }[] = [];
+        // Build artist pool with play counts and recency weighting
+        interface ArtistWithStats {
+            name: string;
+            mbid: string | null;
+            playCount: number;
+            weightedScore: number;
+            genres: string[];
+        }
+
+        let artistPool: ArtistWithStats[] = [];
 
         if (recentPlays.length >= 3) {
             const tracks = await prisma.track.findMany({
@@ -69,182 +119,213 @@ router.get("/recommendations", async (req, res) => {
                     id: { in: recentPlays.map((p) => p.trackId) },
                     album: { location: "LIBRARY" },
                 },
-                include: { album: { include: { artist: true } } },
+                include: {
+                    album: {
+                        include: {
+                            artist: true
+                        }
+                    }
+                },
             });
 
-            // Count plays per artist to get proper ordering
-            const artistPlayCounts = new Map<string, { artist: any; count: number }>();
+            // Get play dates for recency weighting
+            const playDates = await prisma.play.findMany({
+                where: {
+                    userId,
+                    trackId: { in: recentPlays.map(p => p.trackId) },
+                    playedAt: { gte: startDate },
+                },
+                select: { trackId: true, playedAt: true },
+            });
+
+            // Build map of trackId -> most recent play date
+            const trackLastPlayed = new Map<string, Date>();
+            for (const play of playDates) {
+                const existing = trackLastPlayed.get(play.trackId);
+                if (!existing || play.playedAt > existing) {
+                    trackLastPlayed.set(play.trackId, play.playedAt);
+                }
+            }
+
+            // Count plays per artist with recency weighting
+            const artistStats = new Map<string, ArtistWithStats>();
+            const now = new Date();
+
             for (const track of tracks) {
                 const play = recentPlays.find(p => p.trackId === track.id);
                 const playCount = play?._count.id || 1;
-                const existing = artistPlayCounts.get(track.album.artistId);
+                const lastPlayed = trackLastPlayed.get(track.id) || now;
+
+                // Recency weight: more recent = higher weight
+                // For 28d/90d timeframes, apply recency weighting
+                let recencyMultiplier = 1;
+                if (timeframe === "28d" || timeframe === "90d") {
+                    const daysAgo = (now.getTime() - lastPlayed.getTime()) / (1000 * 60 * 60 * 24);
+                    const totalDays = days;
+                    // Week 1: 45%, Week 2: 25%, Week 3: 18%, Week 4+: 12%
+                    if (daysAgo <= 7) recencyMultiplier = 1.45;
+                    else if (daysAgo <= 14) recencyMultiplier = 1.25;
+                    else if (daysAgo <= 21) recencyMultiplier = 1.18;
+                    else recencyMultiplier = 1.12;
+                }
+
+                const existing = artistStats.get(track.album.artistId);
                 if (existing) {
-                    existing.count += playCount;
+                    existing.playCount += playCount;
+                    existing.weightedScore += playCount * recencyMultiplier;
                 } else {
-                    artistPlayCounts.set(track.album.artistId, {
-                        artist: track.album.artist,
-                        count: playCount,
+                    artistStats.set(track.album.artistId, {
+                        name: track.album.artist.name,
+                        mbid: track.album.artist.mbid,
+                        playCount: playCount,
+                        weightedScore: playCount * recencyMultiplier,
+                        genres: [], // Will be populated if available
                     });
                 }
             }
 
-            // Sort by play count and take top 5 (no randomization)
-            const topArtists = Array.from(artistPlayCounts.values())
-                .sort((a, b) => b.count - a.count)
-                .slice(0, 5);
-
-            seedArtists = topArtists.map((a) => ({ name: a.artist.name, mbid: a.artist.mbid }));
+            // Sort by weighted score and take top 50 for the pool
+            artistPool = Array.from(artistStats.values())
+                .sort((a, b) => b.weightedScore - a.weightedScore)
+                .slice(0, 50);
         } else {
-            // Fallback: get artists with most albums in library (top 5)
+            // Fallback: get artists with most albums in library
             const albums = await prisma.album.groupBy({
                 by: ["artistId"],
                 where: { location: "LIBRARY" },
                 _count: { id: true },
                 orderBy: { _count: { id: "desc" } },
-                take: 5,
+                take: 50,
             });
             const artistIds = albums.map((a) => a.artistId);
             const artists = await prisma.artist.findMany({
                 where: { id: { in: artistIds } },
             });
-            // Maintain order by album count
-            seedArtists = artistIds
-                .map((id) => artists.find((a) => a.id === id))
-                .filter((a): a is NonNullable<typeof a> => a !== undefined)
-                .map((a) => ({ name: a.name, mbid: a.mbid }));
+
+            artistPool = artistIds
+                .map((id, idx) => {
+                    const artist = artists.find((a) => a.id === id);
+                    if (!artist) return null;
+                    const albumCount = albums[idx]._count.id;
+                    return {
+                        name: artist.name,
+                        mbid: artist.mbid,
+                        playCount: albumCount,
+                        weightedScore: albumCount,
+                        genres: [],
+                    };
+                })
+                .filter((a): a is ArtistWithStats => a !== null);
         }
 
-        if (seedArtists.length === 0) {
+        if (artistPool.length === 0) {
             return res.status(400).json({
                 error: "No seed artists found",
                 message: "Listen to some music first to get personalized recommendations",
             });
         }
 
-        console.log(`   Seed artists: ${seedArtists.map(a => a.name).join(", ")}`);
+        // Step 2: Weighted random sampling from artist pool
+        // Ranks 1-5: 50% chance, Ranks 6-15: 35% chance, Ranks 16-50: 15% chance
+        const sampleSeeds = (pool: ArtistWithStats[], count: number): ArtistWithStats[] => {
+            const selected: ArtistWithStats[] = [];
+            const availablePool = [...pool];
 
-        // Step 2: Get similar artists from Last.fm
-        const allSimilarArtists: any[] = [];
-        for (const seed of seedArtists.slice(0, 5)) { // Limit to first 5 seeds for speed
-            try {
-                const similar = await lastFmService.getSimilarArtists(
-                    seed.mbid || "",
-                    seed.name,
-                    15
-                );
-                for (const sim of similar) {
-                    allSimilarArtists.push({
-                        ...sim,
-                        seedArtist: seed.name,
-                    });
+            while (selected.length < count && availablePool.length > 0) {
+                // Calculate weights based on rank
+                const weights = availablePool.map((_, idx) => {
+                    if (idx < 5) return 0.50;
+                    if (idx < 15) return 0.35;
+                    return 0.15;
+                });
+
+                // Weighted random selection
+                const totalWeight = weights.reduce((a, b) => a + b, 0);
+                let random = Math.random() * totalWeight;
+                let selectedIdx = 0;
+
+                for (let i = 0; i < weights.length; i++) {
+                    random -= weights[i];
+                    if (random <= 0) {
+                        selectedIdx = i;
+                        break;
+                    }
                 }
-            } catch (e) {
-                console.log(`   Failed to get similar for ${seed.name}`);
+
+                selected.push(availablePool[selectedIdx]);
+                availablePool.splice(selectedIdx, 1);
             }
-        }
 
-        console.log(`   Found ${allSimilarArtists.length} similar artists`);
-
-        // Step 3: Filter out artists already in library and deduplicate
-        const seenArtists = new Set<string>();
-        const ownedArtistNames = new Set<string>();
-
-        // Get owned artists
-        const ownedArtists = await prisma.artist.findMany({
-            where: { albums: { some: { location: "LIBRARY" } } },
-            select: { name: true, mbid: true },
-        });
-        for (const a of ownedArtists) {
-            ownedArtistNames.add(a.name.toLowerCase());
-        }
-
-        const filteredArtists = allSimilarArtists.filter((a) => {
-            const key = a.name.toLowerCase();
-            if (seenArtists.has(key)) return false;
-            if (ownedArtistNames.has(key)) return false;
-            seenArtists.add(key);
-            return true;
-        });
-
-        console.log(`   After filtering: ${filteredArtists.length} new artists`);
-
-        // Step 4: Get album recommendations for each similar artist (parallel with limit)
-        const recommendations: RecommendedAlbum[] = [];
-
-        // Sort by similarity and take top candidates
-        const sortedArtists = filteredArtists
-            .sort((a, b) => (b.match || 0) - (a.match || 0))
-            .slice(0, targetCount + 5); // Get a few extra for fallbacks
-
-        // Process artists: Get TOP album from Last.fm (by popularity) - includes cover art!
-        const processArtist = async (artist: any): Promise<RecommendedAlbum | null> => {
-            try {
-                // Get top albums from Last.fm (sorted by listener count - most popular first)
-                const topAlbums = await lastFmService.getArtistTopAlbums("", artist.name, 5);
-
-                // Find first non-compilation album
-                const topAlbum = topAlbums?.find((a: any) =>
-                    a.name &&
-                    !a.name.toLowerCase().includes("greatest hits") &&
-                    !a.name.toLowerCase().includes("best of") &&
-                    !a.name.toLowerCase().includes("collection") &&
-                    !a.name.toLowerCase().includes("anthology")
-                ) || topAlbums?.[0];
-
-                if (!topAlbum?.name) return null;
-
-                // Get cover art directly from Last.fm response (extralarge or large)
-                const lastfmImages = topAlbum.image || [];
-                const coverUrl = lastfmImages.find((img: any) => img.size === "extralarge")?.["#text"] ||
-                                 lastfmImages.find((img: any) => img.size === "large")?.["#text"] ||
-                                 lastfmImages.find((img: any) => img.size === "medium")?.["#text"] ||
-                                 undefined;
-
-                // Get MusicBrainz artist ID (for "View Artist" link)
-                const mbArtists = await musicBrainzService.searchArtist(artist.name, 1);
-                const mbArtist = mbArtists?.[0];
-
-                // Determine tier based on similarity
-                const similarity = artist.match || 0.5;
-                let tier: "high" | "medium" | "explore" | "wildcard";
-                if (similarity >= 0.7) tier = "high";
-                else if (similarity >= 0.5) tier = "medium";
-                else if (similarity >= 0.3) tier = "explore";
-                else tier = "wildcard";
-
-                console.log(`   ✓ ${artist.name} - ${topAlbum.name} (${tier}, ${(similarity * 100).toFixed(0)}%)${coverUrl ? '' : ' [no cover]'}`);
-
-                return {
-                    artistName: artist.name,
-                    artistMbid: mbArtist?.id || "",
-                    albumTitle: topAlbum.name,
-                    albumMbid: "", // Not needed - using Last.fm cover directly
-                    similarity,
-                    tier,
-                    coverUrl: coverUrl && !coverUrl.includes("2a96cbd8b46e442fc41c2b86b821562f") ? coverUrl : undefined, // Filter out Last.fm placeholder
-                    year: undefined,
-                };
-            } catch (e) {
-                return null;
-            }
+            return selected;
         };
 
-        // Process artists in parallel (MusicBrainz lookups)
-        const results = await Promise.all(sortedArtists.map(processArtist));
+        // Sample 8-12 seeds for variety
+        const seedCount = Math.min(Math.max(8, Math.floor(artistPool.length / 4)), 12);
+        const seedArtists = sampleSeeds(artistPool, seedCount);
 
-        // Filter out nulls and take target count
-        for (const result of results) {
-            if (result && recommendations.length < targetCount) {
-                recommendations.push(result);
+        console.log(`   Seed artists (${seedArtists.length}): ${seedArtists.map(a => a.name).join(", ")}`);
+
+        // Get owned artists for filtering
+        const ownedArtists = await prisma.artist.findMany({
+            where: { albums: { some: { location: "LIBRARY" } } },
+            select: { name: true },
+        });
+        const ownedArtistNames = ownedArtists.map(a => a.name);
+
+        // Step 3: Generate recommendations based on mode
+        let recommendations: RecommendedAlbum[] = [];
+        let sections: SectionedRecommendations | null = null;
+
+        if (aiAvailable) {
+            // Use AI for mode-specific recommendations
+            try {
+                const aiRecommendations = await generateAIRecommendations(
+                    seedArtists,
+                    ownedArtistNames,
+                    mode,
+                    targetCount,
+                    timeframe,
+                    includeLibrary
+                );
+
+                if (mode === "mix" && aiRecommendations.sections) {
+                    sections = aiRecommendations.sections;
+                    // Flatten for backwards compatibility
+                    recommendations = [
+                        ...aiRecommendations.sections.safe,
+                        ...aiRecommendations.sections.adjacent,
+                        ...aiRecommendations.sections.wildcard,
+                    ];
+                } else {
+                    recommendations = aiRecommendations.recommendations;
+                }
+
+                console.log(`   AI generated ${recommendations.length} recommendations`);
+            } catch (aiError: any) {
+                console.error(`   AI recommendations failed: ${aiError.message}, falling back to Last.fm`);
+                recommendations = await generateLastFmRecommendations(
+                    seedArtists,
+                    ownedArtistNames,
+                    targetCount
+                );
             }
+        } else {
+            // Fallback to Last.fm-based recommendations
+            recommendations = await generateLastFmRecommendations(
+                seedArtists,
+                ownedArtistNames,
+                targetCount
+            );
         }
 
-        // Cover art already included from Last.fm - no extra fetching needed!
-        console.log(`   Generated ${recommendations.length} recommendations`);
+        console.log(`   Final: ${recommendations.length} recommendations`);
 
         res.json({
             recommendations,
+            sections: mode === "mix" ? sections : undefined,
             seedArtists: seedArtists.map(a => a.name),
+            mode,
+            timeframe,
             generatedAt: new Date().toISOString(),
         });
     } catch (error: any) {
@@ -255,6 +336,344 @@ router.get("/recommendations", async (req, res) => {
         });
     }
 });
+
+/**
+ * Generate AI-powered recommendations using OpenRouter
+ */
+async function generateAIRecommendations(
+    seedArtists: { name: string; playCount: number; genres: string[] }[],
+    libraryArtists: string[],
+    mode: DiscoveryMode,
+    targetCount: number,
+    timeframe: DiscoveryTimeframe,
+    includeLibrary: boolean = false
+): Promise<{ recommendations: RecommendedAlbum[]; sections?: SectionedRecommendations }> {
+    const settings = await getSystemSettings();
+    const model = settings?.openrouterModel || "openai/gpt-4o-mini";
+
+    // Build the prompt based on mode
+    const prompt = buildDiscoveryPrompt(seedArtists, libraryArtists, mode, targetCount, timeframe, includeLibrary);
+
+    const client = await createOpenRouterClient();
+    const response = await client.post("/chat/completions", {
+        model,
+        messages: [
+            {
+                role: "system",
+                content: "You are an expert music curator. Respond with valid JSON only, no markdown formatting.",
+            },
+            { role: "user", content: prompt },
+        ],
+        max_tokens: 3000,
+        temperature: 0.7,
+    });
+
+    const content = response.data.choices[0].message.content.trim();
+    let jsonContent = content;
+    if (content.startsWith("```json")) {
+        jsonContent = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    } else if (content.startsWith("```")) {
+        jsonContent = content.replace(/```\n?/g, "").trim();
+    }
+
+    const result = JSON.parse(jsonContent);
+
+    // Process recommendations and fetch album covers
+    if (mode === "mix" && result.safe && result.adjacent && result.wildcard) {
+        const sections: SectionedRecommendations = {
+            safe: await processAIArtists(result.safe, "high"),
+            adjacent: await processAIArtists(result.adjacent, "medium"),
+            wildcard: await processAIArtists(result.wildcard, "wildcard"),
+        };
+        return { recommendations: [], sections };
+    } else {
+        const recs = result.recommendations || result;
+        const tier = mode === "safe" ? "high" : mode === "adjacent" ? "medium" : "explore";
+        return { recommendations: await processAIArtists(recs, tier) };
+    }
+}
+
+/**
+ * Build the AI prompt based on discovery mode
+ */
+function buildDiscoveryPrompt(
+    seedArtists: { name: string; playCount: number; genres: string[] }[],
+    libraryArtists: string[],
+    mode: DiscoveryMode,
+    targetCount: number,
+    timeframe: DiscoveryTimeframe,
+    includeLibrary: boolean = false
+): string {
+    const timeframeLabel = timeframe === "7d" ? "last week" :
+                          timeframe === "28d" ? "last month" :
+                          timeframe === "90d" ? "last 3 months" : "all time";
+
+    const seedList = seedArtists
+        .map(a => `${a.name} (${a.playCount} plays)`)
+        .join("\n");
+
+    // Only include exclusion list if not including library artists
+    const exclusionSection = includeLibrary
+        ? "\nNote: User wants recommendations that MAY include artists already in their library (to discover new albums from known artists).\n"
+        : `\nARTISTS ALREADY IN LIBRARY (do NOT recommend these):\n${JSON.stringify(libraryArtists.slice(0, 500))}\n`;
+
+    const baseContext = `User's top artists (${timeframeLabel}):
+${seedList}
+${exclusionSection}
+`;
+
+    const libraryRequirement = includeLibrary
+        ? "- May include artists from user's library (to discover new albums)"
+        : "- Must NOT be in the library list above";
+
+    switch (mode) {
+        case "safe":
+            return `${baseContext}
+TASK: Recommend ${targetCount} artists who sound VERY SIMILAR to these seeds.
+
+REQUIREMENTS:
+- Same genre, same era, same production style
+- Direct sonic matches only
+- High similarity in instrumentation, vocals, and energy
+${libraryRequirement}
+
+Output JSON array:
+{
+  "recommendations": [
+    { "name": "Artist Name", "reason": "Brief explanation", "startWith": "Best album to start" }
+  ]
+}`;
+
+        case "adjacent":
+            return `${baseContext}
+TASK: Recommend ${targetCount} artists who share the same ENERGY and MOOD.
+
+REQUIREMENTS:
+- Can cross genres if the vibe matches
+- Same feeling, new sounds
+- Artists who "fit the same playlist"
+${libraryRequirement}
+
+Output JSON array:
+{
+  "recommendations": [
+    { "name": "Artist Name", "reason": "Brief explanation", "startWith": "Best album to start" }
+  ]
+}`;
+
+        case "adventurous":
+            return `${baseContext}
+TASK: Recommend ${targetCount} artists with UNEXPECTED but COHERENT connections.
+
+REQUIREMENTS:
+- Find the thread that links across genres
+- Stretch boundaries but stay connected
+- Think: "If they like X, they might not expect Y, but they'd love it"
+${libraryRequirement}
+
+Output JSON array:
+{
+  "recommendations": [
+    { "name": "Artist Name", "reason": "Brief explanation", "startWith": "Best album to start" }
+  ]
+}`;
+
+        case "mix":
+        default:
+            const safeCount = Math.ceil(targetCount * 0.35);
+            const adjacentCount = Math.ceil(targetCount * 0.35);
+            const wildcardCount = targetCount - safeCount - adjacentCount;
+
+            const mixLibraryRequirement = includeLibrary
+                ? "- May include artists from user's library (to discover new albums)"
+                : "- Must NOT recommend any artist from the library list above";
+
+            return `${baseContext}
+TASK: Recommend ${targetCount} artists in 3 tiers:
+
+SAFE (${safeCount} artists):
+- Direct sonic matches, same genre/era/production
+- Very similar in sound and style
+
+ADJACENT (${adjacentCount} artists):
+- Same energy/mood, can cross genres if vibe matches
+- "Fits the same playlist" feeling
+
+WILDCARD (${wildcardCount} artists):
+- Unexpected connections, stretch but stay coherent
+- "They'd never expect this but would love it"
+
+REQUIREMENTS:
+${mixLibraryRequirement}
+- Each recommendation needs a brief reason
+
+Output JSON:
+{
+  "safe": [{ "name": "Artist Name", "reason": "Brief explanation", "startWith": "Album" }],
+  "adjacent": [{ "name": "Artist Name", "reason": "Brief explanation", "startWith": "Album" }],
+  "wildcard": [{ "name": "Artist Name", "reason": "Brief explanation", "startWith": "Album" }]
+}`;
+    }
+}
+
+/**
+ * Process AI artist recommendations: fetch album covers and MusicBrainz IDs
+ */
+async function processAIArtists(
+    artists: { name: string; reason?: string; startWith?: string }[],
+    defaultTier: "high" | "medium" | "explore" | "wildcard"
+): Promise<RecommendedAlbum[]> {
+    const results: RecommendedAlbum[] = [];
+
+    for (const artist of artists) {
+        try {
+            // Get top album from Last.fm
+            const topAlbums = await lastFmService.getArtistTopAlbums("", artist.name, 5);
+
+            // Prefer the suggested album, otherwise use most popular non-compilation
+            let selectedAlbum = topAlbums?.find((a: any) =>
+                artist.startWith && a.name.toLowerCase().includes(artist.startWith.toLowerCase())
+            );
+
+            if (!selectedAlbum) {
+                selectedAlbum = topAlbums?.find((a: any) =>
+                    a.name &&
+                    !a.name.toLowerCase().includes("greatest hits") &&
+                    !a.name.toLowerCase().includes("best of") &&
+                    !a.name.toLowerCase().includes("collection")
+                ) || topAlbums?.[0];
+            }
+
+            if (!selectedAlbum?.name) continue;
+
+            // Get cover art from Last.fm
+            const lastfmImages = selectedAlbum.image || [];
+            const coverUrl = lastfmImages.find((img: any) => img.size === "extralarge")?.["#text"] ||
+                             lastfmImages.find((img: any) => img.size === "large")?.["#text"] ||
+                             undefined;
+
+            // Get MusicBrainz ID
+            const mbArtists = await musicBrainzService.searchArtist(artist.name, 1);
+            const mbArtist = mbArtists?.[0];
+
+            results.push({
+                artistName: artist.name,
+                artistMbid: mbArtist?.id || "",
+                albumTitle: selectedAlbum.name,
+                albumMbid: "",
+                similarity: defaultTier === "high" ? 0.85 : defaultTier === "medium" ? 0.6 : 0.35,
+                tier: defaultTier,
+                coverUrl: coverUrl && !coverUrl.includes("2a96cbd8b46e442fc41c2b86b821562f") ? coverUrl : undefined,
+                reason: artist.reason,
+            });
+        } catch (e) {
+            console.log(`   Failed to process AI recommendation: ${artist.name}`);
+        }
+    }
+
+    return results;
+}
+
+/**
+ * Generate Last.fm-based recommendations (fallback when AI unavailable)
+ */
+async function generateLastFmRecommendations(
+    seedArtists: { name: string; mbid: string | null }[],
+    ownedArtistNames: string[],
+    targetCount: number
+): Promise<RecommendedAlbum[]> {
+    const ownedSet = new Set(ownedArtistNames.map(n => n.toLowerCase()));
+    const seenArtists = new Set<string>();
+    const allSimilarArtists: any[] = [];
+
+    // Get similar artists from Last.fm for each seed
+    for (const seed of seedArtists.slice(0, 8)) {
+        try {
+            const similar = await lastFmService.getSimilarArtists(seed.mbid || "", seed.name, 15);
+            for (const sim of similar) {
+                allSimilarArtists.push({ ...sim, seedArtist: seed.name });
+            }
+        } catch (e) {
+            console.log(`   Failed to get similar for ${seed.name}`);
+        }
+    }
+
+    // Filter and deduplicate
+    const filteredArtists = allSimilarArtists.filter((a) => {
+        const key = a.name.toLowerCase();
+        if (seenArtists.has(key)) return false;
+        if (ownedSet.has(key)) return false;
+        seenArtists.add(key);
+        return true;
+    });
+
+    // Sort by similarity and process top candidates
+    const sortedArtists = filteredArtists
+        .sort((a, b) => (b.match || 0) - (a.match || 0))
+        .slice(0, targetCount + 5);
+
+    const recommendations: RecommendedAlbum[] = [];
+
+    for (const artist of sortedArtists) {
+        if (recommendations.length >= targetCount) break;
+
+        try {
+            const topAlbums = await lastFmService.getArtistTopAlbums("", artist.name, 5);
+            const topAlbum = topAlbums?.find((a: any) =>
+                a.name &&
+                !a.name.toLowerCase().includes("greatest hits") &&
+                !a.name.toLowerCase().includes("best of")
+            ) || topAlbums?.[0];
+
+            if (!topAlbum?.name) continue;
+
+            const lastfmImages = topAlbum.image || [];
+            const coverUrl = lastfmImages.find((img: any) => img.size === "extralarge")?.["#text"] ||
+                             lastfmImages.find((img: any) => img.size === "large")?.["#text"] ||
+                             undefined;
+
+            const mbArtists = await musicBrainzService.searchArtist(artist.name, 1);
+            const mbArtist = mbArtists?.[0];
+
+            const similarity = artist.match || 0.5;
+            let tier: "high" | "medium" | "explore" | "wildcard";
+            if (similarity >= 0.7) tier = "high";
+            else if (similarity >= 0.5) tier = "medium";
+            else if (similarity >= 0.3) tier = "explore";
+            else tier = "wildcard";
+
+            recommendations.push({
+                artistName: artist.name,
+                artistMbid: mbArtist?.id || "",
+                albumTitle: topAlbum.name,
+                albumMbid: "",
+                similarity,
+                tier,
+                coverUrl: coverUrl && !coverUrl.includes("2a96cbd8b46e442fc41c2b86b821562f") ? coverUrl : undefined,
+            });
+        } catch (e) {
+            // Skip failed artists
+        }
+    }
+
+    return recommendations;
+}
+
+/**
+ * Create OpenRouter client
+ */
+async function createOpenRouterClient() {
+    return axios.create({
+        baseURL: "https://openrouter.ai/api/v1",
+        timeout: 90000,
+        headers: {
+            Authorization: `Bearer ${config.openrouter.apiKey}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://lidify.app",
+            "X-Title": "Lidify Music",
+        },
+    });
+}
 
 // =============================================================================
 // LEGACY ENDPOINTS (Download-based - kept for backwards compatibility)
@@ -810,6 +1229,9 @@ router.get("/config", async (req, res) => {
                     exclusionMonths: 6,
                     downloadRatio: 1.3,
                     enabled: true,
+                    discoveryMode: "mix",
+                    discoveryTimeframe: "28d",
+                    includeLibraryArtists: false,
                 },
             });
         }
@@ -825,7 +1247,7 @@ router.get("/config", async (req, res) => {
 router.patch("/config", async (req, res) => {
     try {
         const userId = req.user!.id;
-        const { playlistSize, maxRetryAttempts, exclusionMonths, downloadRatio, enabled } = req.body;
+        const { playlistSize, maxRetryAttempts, exclusionMonths, downloadRatio, enabled, discoveryMode, discoveryTimeframe, includeLibraryArtists } = req.body;
 
         // Validate playlist size
         if (playlistSize !== undefined) {
@@ -867,6 +1289,26 @@ router.patch("/config", async (req, res) => {
             }
         }
 
+        // Validate discovery mode
+        if (discoveryMode !== undefined) {
+            const validModes = ["safe", "adjacent", "adventurous", "mix"];
+            if (!validModes.includes(discoveryMode)) {
+                return res.status(400).json({
+                    error: "Invalid discovery mode. Must be one of: safe, adjacent, adventurous, mix.",
+                });
+            }
+        }
+
+        // Validate discovery timeframe
+        if (discoveryTimeframe !== undefined) {
+            const validTimeframes = ["7d", "28d", "90d", "all"];
+            if (!validTimeframes.includes(discoveryTimeframe)) {
+                return res.status(400).json({
+                    error: "Invalid discovery timeframe. Must be one of: 7d, 28d, 90d, all.",
+                });
+            }
+        }
+
         const config = await prisma.userDiscoverConfig.upsert({
             where: { userId },
             create: {
@@ -876,6 +1318,9 @@ router.patch("/config", async (req, res) => {
                 exclusionMonths: exclusionMonths ?? 6,
                 downloadRatio: downloadRatio ?? 1.3,
                 enabled: enabled ?? true,
+                discoveryMode: discoveryMode ?? "mix",
+                discoveryTimeframe: discoveryTimeframe ?? "28d",
+                includeLibraryArtists: includeLibraryArtists ?? false,
             },
             update: {
                 ...(playlistSize !== undefined && {
@@ -891,6 +1336,9 @@ router.patch("/config", async (req, res) => {
                     downloadRatio: parseFloat(downloadRatio),
                 }),
                 ...(enabled !== undefined && { enabled }),
+                ...(discoveryMode !== undefined && { discoveryMode }),
+                ...(discoveryTimeframe !== undefined && { discoveryTimeframe }),
+                ...(includeLibraryArtists !== undefined && { includeLibraryArtists }),
             },
         });
 

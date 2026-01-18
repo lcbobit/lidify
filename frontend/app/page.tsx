@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { LoadingScreen } from "@/components/ui/LoadingScreen";
-import { RefreshCw, AudioWaveform } from "lucide-react";
+import { RefreshCw, AudioWaveform, Compass } from "lucide-react";
 import { GradientSpinner } from "@/components/ui/GradientSpinner";
 import { Badge } from "@/components/ui/Badge";
 import { useHomeData } from "@/features/home/hooks/useHomeData";
@@ -17,6 +17,70 @@ import { AudiobooksGrid } from "@/features/home/components/AudiobooksGrid";
 import { FeaturedPlaylistsGrid } from "@/features/home/components/FeaturedPlaylistsGrid";
 import { LibraryRadioStations } from "@/features/home/components/LibraryRadioStations";
 import { MoodMixer } from "@/components/MoodMixer";
+
+// Helper to read AI recommendations from discover page cache
+type TierType = "high" | "medium" | "explore" | "wildcard";
+
+interface AiArtist {
+    id: string;
+    mbid?: string;
+    name: string;
+    coverArt?: string;
+    tier?: TierType;
+    reason?: string;
+}
+
+function getAiRecommendationsFromCache(): AiArtist[] {
+    if (typeof window === "undefined") return [];
+
+    // Try to find any discover cache (check common combinations)
+    const cacheKeys = [
+        "lidify_discover_mix_28d_exclib",
+        "lidify_discover_mix_28d_inclib",
+        "lidify_discover_mix_90d_exclib",
+        "lidify_discover_safe_28d_exclib",
+        "lidify_discover_adjacent_28d_exclib",
+    ];
+
+    for (const key of cacheKeys) {
+        try {
+            const cached = localStorage.getItem(key);
+            if (!cached) continue;
+
+            const { data, timestamp } = JSON.parse(cached);
+            // Check if cache is still valid (24 hours)
+            if (Date.now() - timestamp > 24 * 60 * 60 * 1000) continue;
+
+            if (!data?.recommendations?.length) continue;
+
+            // Transform album recommendations to unique artists with tier
+            const seenArtists = new Set<string>();
+            const artists: AiArtist[] = [];
+
+            for (const rec of data.recommendations) {
+                if (!rec.artistMbid) continue;
+                const artistKey = rec.artistName.toLowerCase();
+                if (seenArtists.has(artistKey)) continue;
+                seenArtists.add(artistKey);
+
+                artists.push({
+                    id: rec.artistMbid,
+                    mbid: rec.artistMbid,
+                    name: rec.artistName,
+                    coverArt: rec.coverUrl,
+                    tier: rec.tier,
+                    reason: rec.reason,
+                });
+            }
+
+            return artists;
+        } catch {
+            continue;
+        }
+    }
+
+    return [];
+}
 
 // Loading skeleton for playlist cards
 function PlaylistSkeleton() {
@@ -35,6 +99,22 @@ function PlaylistSkeleton() {
 
 export default function HomePage() {
     const [showMoodMixer, setShowMoodMixer] = useState(false);
+    const [aiRecommendations, setAiRecommendations] = useState<AiArtist[]>([]);
+
+    // Load AI recommendations from discover cache on mount
+    useEffect(() => {
+        const cached = getAiRecommendationsFromCache();
+        setAiRecommendations(cached);
+
+        // Listen for discover page updates
+        const handleUpdate = () => {
+            const updated = getAiRecommendationsFromCache();
+            setAiRecommendations(updated);
+        };
+        window.addEventListener("discover-recommendations-updated", handleUpdate);
+        return () => window.removeEventListener("discover-recommendations-updated", handleUpdate);
+    }, []);
+
     const {
         recentlyListened,
         recentlyAdded,
@@ -117,13 +197,41 @@ export default function HomePage() {
                         </section>
                     )}
 
-                    {/* Recommended For You - #4 Priority */}
+                    {/* Discover New Artists - AI-powered */}
+                    <section>
+                        <SectionHeader
+                            title="Discover New Artists"
+                            showAllHref="/discover"
+                            showAllText="Explore"
+                            badge="AI"
+                        />
+                        {aiRecommendations.length > 0 ? (
+                            <ArtistsGrid artists={aiRecommendations} />
+                        ) : (
+                            <div className="flex items-center gap-4 py-4">
+                                <a
+                                    href="/discover"
+                                    className="flex items-center gap-3 px-5 py-3 bg-gradient-to-r from-fuchsia-600/20 to-purple-600/20 hover:from-fuchsia-600/30 hover:to-purple-600/30 border border-fuchsia-500/30 rounded-xl transition-all group"
+                                >
+                                    <div className="w-10 h-10 bg-fuchsia-500/20 rounded-lg flex items-center justify-center">
+                                        <Compass className="w-5 h-5 text-fuchsia-400" />
+                                    </div>
+                                    <div>
+                                        <p className="text-sm font-medium text-white group-hover:text-fuchsia-300 transition-colors">AI-Powered Discovery</p>
+                                        <p className="text-xs text-gray-400">Safe, Adjacent, or Adventurous recommendations</p>
+                                    </div>
+                                </a>
+                            </div>
+                        )}
+                    </section>
+
+                    {/* Similar to Your Favorites - Last.fm */}
                     {recommended.length > 0 && (
                         <section>
                             <SectionHeader
-                                title="Recommended For You"
-                                showAllHref="/discover"
-                                showAllText="Explore albums"
+                                title="Similar to Your Favorites"
+                                showAllHref="/recommendations"
+                                showAllText="Explore"
                                 badge="Last.FM"
                             />
                             <ArtistsGrid artists={recommended} />

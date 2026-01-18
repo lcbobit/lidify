@@ -811,6 +811,11 @@ model UserDiscoverConfig {
   enabled          Boolean   @default(true)
   lastGeneratedAt  DateTime?
 
+  // Discovery UX preferences (for /discover page)
+  discoveryMode         String  @default("mix") // safe, adjacent, adventurous, mix
+  discoveryTimeframe    String  @default("28d") // 7d, 28d, 90d, all
+  includeLibraryArtists Boolean @default(false) // Include artists already in library
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 

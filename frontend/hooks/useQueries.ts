@@ -300,9 +300,15 @@ export function useRecentlyAddedQuery(limit: number = 10) {
 // RECOMMENDATION QUERIES
 // ============================================================================
 
-// Shared cache key with /discover page (24 hour TTL)
-const DISCOVER_CACHE_KEY = "lidify_discover_recommendations_cache";
+// Cache key format: lidify_discover_{mode}_{timeframe}
+// Default mode is "mix" and default timeframe is "28d"
 const DISCOVER_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+type DiscoveryMode = "safe" | "adjacent" | "adventurous" | "mix";
+type DiscoveryTimeframe = "7d" | "28d" | "90d" | "all";
+
+const getDiscoverCacheKey = (mode: DiscoveryMode, timeframe: DiscoveryTimeframe) =>
+    `lidify_discover_${mode}_${timeframe}`;
 
 interface DiscoverCacheData {
     recommendations: Array<{
@@ -314,19 +320,27 @@ interface DiscoverCacheData {
         tier: "high" | "medium" | "explore" | "wildcard";
         coverUrl?: string;
         year?: number;
+        reason?: string;
     }>;
+    sections?: {
+        safe: Array<any>;
+        adjacent: Array<any>;
+        wildcard: Array<any>;
+    };
     seedArtists: string[];
+    mode: DiscoveryMode;
+    timeframe: DiscoveryTimeframe;
     generatedAt: string;
 }
 
-function getDiscoverCache(): DiscoverCacheData | null {
+function getDiscoverCache(mode: DiscoveryMode = "mix", timeframe: DiscoveryTimeframe = "28d"): DiscoverCacheData | null {
     if (typeof window === "undefined") return null;
     try {
-        const cached = localStorage.getItem(DISCOVER_CACHE_KEY);
+        const cached = localStorage.getItem(getDiscoverCacheKey(mode, timeframe));
         if (!cached) return null;
         const { data, timestamp } = JSON.parse(cached);
         if (Date.now() - timestamp > DISCOVER_CACHE_TTL_MS) {
-            localStorage.removeItem(DISCOVER_CACHE_KEY);
+            localStorage.removeItem(getDiscoverCacheKey(mode, timeframe));
             return null;
         }
         return data;
@@ -335,10 +349,10 @@ function getDiscoverCache(): DiscoverCacheData | null {
     }
 }
 
-function setDiscoverCache(data: DiscoverCacheData) {
+function setDiscoverCache(mode: DiscoveryMode, timeframe: DiscoveryTimeframe, data: DiscoverCacheData) {
     if (typeof window === "undefined") return;
     try {
-        localStorage.setItem(DISCOVER_CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
+        localStorage.setItem(getDiscoverCacheKey(mode, timeframe), JSON.stringify({ data, timestamp: Date.now() }));
     } catch {
         // Ignore storage errors
     }
@@ -347,10 +361,8 @@ function setDiscoverCache(data: DiscoverCacheData) {
 /**
  * Hook to fetch personalized recommendations from discover endpoint
  *
- * Uses live Last.fm API data (same source as /discover page) and transforms
- * album recommendations into unique artists for the main page grid.
- *
- * Shares localStorage cache with /discover page so both show same artists.
+ * Uses Last.fm-based recommendations (faster, no AI cost) for the main page.
+ * The /discover page uses AI recommendations with mode/timeframe controls.
  *
  * @param limit - Number of artist recommendations (default: 10)
  * @returns Query result with recommended artists
@@ -362,14 +374,32 @@ export function useRecommendationsQuery(limit: number = 10) {
     return useQuery({
         queryKey: queryKeys.recommendations(limit),
         queryFn: async () => {
-            // Check shared localStorage cache first (same as /discover page)
-            let discoverData = getDiscoverCache();
+            // Use dedicated cache for main page (Last.fm source)
+            const cacheKey = "lidify_home_recommendations";
+            let discoverData: DiscoverCacheData | null = null;
+
+            // Check cache
+            if (typeof window !== "undefined") {
+                try {
+                    const cached = localStorage.getItem(cacheKey);
+                    if (cached) {
+                        const { data, timestamp } = JSON.parse(cached);
+                        if (Date.now() - timestamp < DISCOVER_CACHE_TTL_MS) {
+                            discoverData = data;
+                        }
+                    }
+                } catch { /* ignore */ }
+            }
 
             if (!discoverData) {
-                // Cache miss - fetch fresh data
-                discoverData = await api.getDiscoverRecommendations(15);
-                // Cache for both this page and /discover
-                setDiscoverCache(discoverData);
+                // Fetch with source=lastfm (fast, no AI cost)
+                discoverData = await api.getDiscoverRecommendations(16, "28d", "mix", false, "lastfm");
+                // Cache result
+                if (typeof window !== "undefined") {
+                    try {
+                        localStorage.setItem(cacheKey, JSON.stringify({ data: discoverData, timestamp: Date.now() }));
+                    } catch { /* ignore */ }
+                }
             }
 
             // Transform album recommendations to unique artists

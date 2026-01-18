@@ -3,16 +3,12 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { Compass, Play, Pause, RefreshCw, Music, ChevronDown, ChevronUp, Disc3, ExternalLink, Sparkles, Target, Lightbulb, Shuffle, Library } from "lucide-react";
+import { Music2, Play, Pause, RefreshCw, Music, ChevronDown, ChevronUp, Disc3, ExternalLink } from "lucide-react";
 import { api } from "@/lib/api";
 import { GradientSpinner } from "@/components/ui/GradientSpinner";
 import { cn } from "@/utils/cn";
 import { toast } from "sonner";
 import { howlerEngine } from "@/lib/howler-engine";
-
-// Types
-type DiscoveryMode = "safe" | "adjacent" | "adventurous" | "mix";
-type DiscoveryTimeframe = "7d" | "28d" | "90d" | "all";
 
 interface AlbumRecommendation {
     artistName: string;
@@ -20,22 +16,13 @@ interface AlbumRecommendation {
     albumTitle: string;
     albumMbid: string;
     similarity: number;
-    tier: "high" | "medium" | "explore" | "wildcard";
     coverUrl?: string;
     year?: number;
-    reason?: string;
 }
 
-interface DiscoverData {
+interface RecommendationsData {
     recommendations: AlbumRecommendation[];
-    sections?: {
-        safe: AlbumRecommendation[];
-        adjacent: AlbumRecommendation[];
-        wildcard: AlbumRecommendation[];
-    };
     seedArtists: string[];
-    mode: DiscoveryMode;
-    timeframe: DiscoveryTimeframe;
     generatedAt: string;
 }
 
@@ -54,19 +41,18 @@ interface TrackPreview {
     albumTitle: string | null;
 }
 
-// Cache helpers - include mode, timeframe, and includeLibrary in key
-const getCacheKey = (mode: DiscoveryMode, timeframe: DiscoveryTimeframe, includeLibrary: boolean) =>
-    `lidify_discover_${mode}_${timeframe}_${includeLibrary ? "inclib" : "exclib"}`;
+// Cache helpers
+const CACHE_KEY = "lidify_lastfm_recommendations";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-function getCachedData(mode: DiscoveryMode, timeframe: DiscoveryTimeframe, includeLibrary: boolean): DiscoverData | null {
+function getCachedData(): RecommendationsData | null {
     if (typeof window === "undefined") return null;
     try {
-        const cached = localStorage.getItem(getCacheKey(mode, timeframe, includeLibrary));
+        const cached = localStorage.getItem(CACHE_KEY);
         if (!cached) return null;
         const { data, timestamp } = JSON.parse(cached);
         if (Date.now() - timestamp > CACHE_TTL_MS) {
-            localStorage.removeItem(getCacheKey(mode, timeframe, includeLibrary));
+            localStorage.removeItem(CACHE_KEY);
             return null;
         }
         return data;
@@ -75,39 +61,19 @@ function getCachedData(mode: DiscoveryMode, timeframe: DiscoveryTimeframe, inclu
     }
 }
 
-function setCachedData(mode: DiscoveryMode, timeframe: DiscoveryTimeframe, includeLibrary: boolean, data: DiscoverData) {
+function setCachedData(data: RecommendationsData) {
     if (typeof window === "undefined") return;
     try {
-        localStorage.setItem(getCacheKey(mode, timeframe, includeLibrary), JSON.stringify({ data, timestamp: Date.now() }));
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
     } catch {
         // Ignore storage errors
     }
 }
 
-const modeConfig: Record<DiscoveryMode, { label: string; icon: typeof Target; description: string }> = {
-    safe: { label: "Safe", icon: Target, description: "More of what you love" },
-    adjacent: { label: "Adjacent", icon: Lightbulb, description: "Same vibe, new names" },
-    adventurous: { label: "Adventurous", icon: Sparkles, description: "Unexpected but still you" },
-    mix: { label: "Mix", icon: Shuffle, description: "A bit of everything" },
-};
-
-const timeframeConfig: Record<DiscoveryTimeframe, { label: string; description: string }> = {
-    "7d": { label: "7 days", description: "What you're into right now" },
-    "28d": { label: "28 days", description: "Your current taste" },
-    "90d": { label: "90 days", description: "Your stable preferences" },
-    "all": { label: "All time", description: "Your musical identity" },
-};
-
-export default function DiscoverPage() {
+export default function RecommendationsPage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [data, setData] = useState<DiscoverData | null>(null);
-    const [prefsLoaded, setPrefsLoaded] = useState(false);
-
-    // User controls - loaded from preferences
-    const [mode, setMode] = useState<DiscoveryMode>("mix");
-    const [timeframe, setTimeframe] = useState<DiscoveryTimeframe>("28d");
-    const [includeLibrary, setIncludeLibrary] = useState(false);
+    const [data, setData] = useState<RecommendationsData | null>(null);
 
     // Artist details (fetched on expand)
     const [artistDetails, setArtistDetails] = useState<Record<string, ArtistDetails>>({});
@@ -122,88 +88,16 @@ export default function DiscoverPage() {
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const noPreviewSet = useRef<Set<string>>(new Set());
 
-    // Load user preferences on mount (but don't auto-generate)
+    // Load cached data on mount
     useEffect(() => {
-        const loadPreferences = async () => {
-            try {
-                const config = await api.getDiscoverConfig();
-                if (config.discoveryMode) setMode(config.discoveryMode);
-                if (config.discoveryTimeframe) setTimeframe(config.discoveryTimeframe);
-                if (config.includeLibraryArtists !== undefined) setIncludeLibrary(config.includeLibraryArtists);
-
-                // Check if we have cached data for these settings
-                const cached = getCachedData(
-                    config.discoveryMode || "mix",
-                    config.discoveryTimeframe || "28d",
-                    config.includeLibraryArtists || false
-                );
-                if (cached) {
-                    setData(cached);
-                }
-            } catch (err) {
-                // Use defaults if preferences fail to load
-                console.error("Failed to load discovery preferences:", err);
-                // Check cache with defaults
-                const cached = getCachedData("mix", "28d", false);
-                if (cached) {
-                    setData(cached);
-                }
-            } finally {
-                setPrefsLoaded(true);
-            }
-        };
-        loadPreferences();
+        const cached = getCachedData();
+        if (cached) {
+            setData(cached);
+        } else {
+            // Auto-load on first visit
+            handleGenerate();
+        }
     }, []);
-
-    // Handle mode change - save preference and reload
-    const handleModeChange = async (newMode: DiscoveryMode) => {
-        if (newMode === mode || loading) return;
-        setMode(newMode);
-
-        // Save preference (fire and forget)
-        api.updateDiscoverConfig({ discoveryMode: newMode }).catch(() => {});
-
-        // Check cache or fetch new data
-        const cached = getCachedData(newMode, timeframe, includeLibrary);
-        if (cached) {
-            setData(cached);
-        } else {
-            handleGenerateWithSettings(newMode, timeframe, includeLibrary);
-        }
-    };
-
-    // Handle timeframe change - save preference and reload
-    const handleTimeframeChange = async (newTimeframe: DiscoveryTimeframe) => {
-        if (newTimeframe === timeframe || loading) return;
-        setTimeframe(newTimeframe);
-
-        // Save preference (fire and forget)
-        api.updateDiscoverConfig({ discoveryTimeframe: newTimeframe }).catch(() => {});
-
-        // Check cache or fetch new data
-        const cached = getCachedData(mode, newTimeframe, includeLibrary);
-        if (cached) {
-            setData(cached);
-        } else {
-            handleGenerateWithSettings(mode, newTimeframe, includeLibrary);
-        }
-    };
-
-    // Handle include library toggle - just update setting, don't auto-generate
-    const handleIncludeLibraryChange = async (newValue: boolean) => {
-        if (newValue === includeLibrary || loading) return;
-        setIncludeLibrary(newValue);
-
-        // Save preference (fire and forget)
-        api.updateDiscoverConfig({ includeLibraryArtists: newValue }).catch(() => {});
-
-        // Check if we have cached data for this setting - show it if available
-        const cached = getCachedData(mode, timeframe, newValue);
-        if (cached) {
-            setData(cached);
-        }
-        // Don't auto-generate - user will click Generate when ready
-    };
 
     // Stop preview when main player starts
     useEffect(() => {
@@ -225,24 +119,7 @@ export default function DiscoverPage() {
         };
     }, []);
 
-    const handleGenerate = async (forceRefresh = false) => {
-        handleGenerateWithSettings(mode, timeframe, includeLibrary, forceRefresh);
-    };
-
-    const handleGenerateWithSettings = async (
-        targetMode: DiscoveryMode,
-        targetTimeframe: DiscoveryTimeframe,
-        targetIncludeLibrary: boolean,
-        forceRefresh = false
-    ) => {
-        if (!forceRefresh) {
-            const cached = getCachedData(targetMode, targetTimeframe, targetIncludeLibrary);
-            if (cached) {
-                setData(cached);
-                return;
-            }
-        }
-
+    const handleGenerate = async () => {
         setLoading(true);
         setError(null);
         setExpandedAlbum(null);
@@ -255,16 +132,12 @@ export default function DiscoverPage() {
         }
 
         try {
-            const result = await api.getDiscoverRecommendations(16, targetTimeframe, targetMode, targetIncludeLibrary);
+            // Force Last.fm source
+            const result = await api.getDiscoverRecommendations(20, "28d", "mix", false, "lastfm");
             setData(result);
-            // Only cache if we got actual recommendations
-            if (result.recommendations && result.recommendations.length > 0) {
-                setCachedData(targetMode, targetTimeframe, targetIncludeLibrary, result);
-                // Notify other pages (main page) that recommendations were refreshed
-                window.dispatchEvent(new Event("discover-recommendations-updated"));
-            }
+            setCachedData(result);
         } catch (err: any) {
-            setError(err.data?.message || err.message || "Failed to generate recommendations");
+            setError(err.data?.message || err.message || "Failed to load recommendations");
         } finally {
             setLoading(false);
         }
@@ -278,13 +151,11 @@ export default function DiscoverPage() {
 
         setExpandedAlbum(albumKey);
 
-        // Check if we already have top tracks cached
         const existing = artistDetails[artistName];
         if (existing?.topTracks && existing.topTracks.length > 0) {
             return;
         }
 
-        // Fetch artist details (top tracks)
         setLoadingArtist(artistName);
         try {
             const details = await api.getArtistDiscovery(artistName);
@@ -299,7 +170,6 @@ export default function DiscoverPage() {
                 }
             }));
 
-            // Fetch album art for tracks
             if (topTracks.length > 0) {
                 const trackResults = await Promise.allSettled(
                     topTracks.slice(0, 5).map(async (track: any) => {
@@ -357,9 +227,7 @@ export default function DiscoverPage() {
             try {
                 await audioRef.current.play();
                 setPreviewPlaying(true);
-            } catch {
-                // Ignore
-            }
+            } catch { /* ignore */ }
             return;
         }
 
@@ -392,9 +260,7 @@ export default function DiscoverPage() {
             try {
                 await audio.play();
                 setPreviewPlaying(true);
-            } catch {
-                // Ignore abort errors
-            }
+            } catch { /* ignore */ }
             return;
         }
 
@@ -450,7 +316,6 @@ export default function DiscoverPage() {
         return "yesterday";
     };
 
-    // Render album card
     const renderAlbumCard = (album: AlbumRecommendation, idx: number) => {
         const albumKey = `${album.artistName}:${album.albumTitle}`;
         const details = artistDetails[album.artistName];
@@ -459,12 +324,10 @@ export default function DiscoverPage() {
 
         return (
             <div key={idx} className="bg-white/5 rounded-lg overflow-hidden">
-                {/* Album Header */}
                 <button
                     onClick={() => handleExpandAlbum(albumKey, album.artistName)}
                     className="w-full flex items-center gap-4 p-4 hover:bg-white/5 transition-colors text-left"
                 >
-                    {/* Album Cover */}
                     <div className="w-16 h-16 bg-[#282828] rounded shrink-0 overflow-hidden">
                         {album.coverUrl ? (
                             <Image
@@ -482,9 +345,7 @@ export default function DiscoverPage() {
                         )}
                     </div>
 
-                    {/* Album Info */}
                     <div className="flex-1 min-w-0">
-                        {/* Artist Name - Primary */}
                         <div className="flex items-center gap-2">
                             <p className="text-lg font-semibold text-white truncate">
                                 {album.artistName}
@@ -494,13 +355,12 @@ export default function DiscoverPage() {
                                     ? `/artist/${album.artistMbid}`
                                     : `/search?q=${encodeURIComponent(album.artistName)}`
                                 }
-                                className="text-xs text-fuchsia-400 hover:text-fuchsia-300 shrink-0 flex items-center gap-1"
+                                className="text-xs text-blue-400 hover:text-blue-300 shrink-0 flex items-center gap-1"
                                 onClick={(e) => e.stopPropagation()}
                             >
                                 <ExternalLink className="w-3 h-3" />
                             </Link>
                         </div>
-                        {/* Album Title - Secondary */}
                         <div className="flex items-center gap-2">
                             <p className="text-sm text-gray-200 truncate">
                                 {album.albumTitle}
@@ -509,15 +369,8 @@ export default function DiscoverPage() {
                                 <span className="text-xs text-gray-400">({album.year})</span>
                             )}
                         </div>
-                        {/* Reason */}
-                        {album.reason && (
-                            <p className="text-xs text-gray-400 line-clamp-1 mt-1">
-                                {album.reason}
-                            </p>
-                        )}
                     </div>
 
-                    {/* Expand Icon */}
                     <div className="shrink-0">
                         {isLoadingDetails ? (
                             <div className="w-5 h-5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
@@ -529,7 +382,6 @@ export default function DiscoverPage() {
                     </div>
                 </button>
 
-                {/* Expanded Top Tracks */}
                 {isExpanded && (
                     <div className="border-t border-white/10 px-4 pb-4">
                         <div className="pt-3 pb-2">
@@ -540,7 +392,7 @@ export default function DiscoverPage() {
 
                         {isLoadingDetails ? (
                             <div className="flex items-center justify-center py-4">
-                                <div className="w-5 h-5 border-2 border-fuchsia-400 border-t-transparent rounded-full animate-spin" />
+                                <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
                                 <span className="ml-2 text-sm text-gray-300">Loading tracks...</span>
                             </div>
                         ) : details?.topTracks && details.topTracks.length > 0 ? (
@@ -562,10 +414,10 @@ export default function DiscoverPage() {
                                         >
                                             <span className={cn(
                                                 "w-5 text-center text-sm",
-                                                isThisPlaying ? "text-fuchsia-400" : "text-gray-300"
+                                                isThisPlaying ? "text-blue-400" : "text-gray-300"
                                             )}>
                                                 {isThisPlaying && previewPlaying ? (
-                                                    <Music className="w-4 h-4 text-fuchsia-400 animate-pulse inline" />
+                                                    <Music className="w-4 h-4 text-blue-400 animate-pulse inline" />
                                                 ) : (
                                                     trackIdx + 1
                                                 )}
@@ -591,7 +443,7 @@ export default function DiscoverPage() {
                                             <div className="flex-1 min-w-0">
                                                 <p className={cn(
                                                     "text-sm truncate",
-                                                    isThisPlaying ? "text-fuchsia-400" : "text-white"
+                                                    isThisPlaying ? "text-blue-400" : "text-white"
                                                 )}>
                                                     {track.title}
                                                 </p>
@@ -611,7 +463,7 @@ export default function DiscoverPage() {
                                                 className={cn(
                                                     "p-2 rounded-full transition-all",
                                                     isThisPlaying
-                                                        ? "bg-fuchsia-500/20 text-fuchsia-400"
+                                                        ? "bg-blue-500/20 text-blue-400"
                                                         : "hover:bg-white/10 text-gray-300 hover:text-white",
                                                     isLoading && "opacity-50"
                                                 )}
@@ -644,21 +496,21 @@ export default function DiscoverPage() {
             <div
                 className="relative pt-16 pb-10 px-4 md:px-8"
                 style={{
-                    background: 'linear-gradient(to bottom, rgba(59, 130, 246, 0.4), #1a1a1a, transparent)'
+                    background: 'linear-gradient(to bottom, rgba(34, 197, 94, 0.4), #1a1a1a, transparent)'
                 }}
             >
                 <div className="flex items-end gap-6">
-                    <div className="w-[140px] h-[140px] md:w-[192px] md:h-[192px] bg-gradient-to-br from-fuchsia-600 to-purple-900 rounded shadow-2xl shrink-0 flex items-center justify-center">
-                        <Compass className="w-20 h-20 md:w-24 md:h-24 text-white" />
+                    <div className="w-[140px] h-[140px] md:w-[192px] md:h-[192px] bg-gradient-to-br from-green-600 to-emerald-900 rounded shadow-2xl shrink-0 flex items-center justify-center">
+                        <Music2 className="w-20 h-20 md:w-24 md:h-24 text-white" />
                     </div>
 
                     <div className="flex-1 min-w-0 pb-1">
-                        <p className="text-xs font-medium text-white/90 mb-1">Album Discovery</p>
+                        <p className="text-xs font-medium text-white/90 mb-1">Similar Artists</p>
                         <h1 className="text-2xl md:text-4xl lg:text-5xl font-bold text-white leading-tight mb-2">
-                            Discover Weekly
+                            Recommended For You
                         </h1>
                         <p className="text-sm text-white/60 mb-2">
-                            Top albums from artists similar to your favorites — preview before you download
+                            Albums from artists similar to your favorites — powered by Last.fm
                         </p>
                         {data && (
                             <div className="flex items-center gap-1 text-sm text-white/70 flex-wrap">
@@ -673,109 +525,29 @@ export default function DiscoverPage() {
                 </div>
             </div>
 
-            {/* Controls Section */}
+            {/* Action Bar */}
             <div className="bg-gradient-to-b from-[#1a1a1a]/60 to-transparent px-4 md:px-8 py-4">
-                {/* Mode Selector */}
-                <div className="mb-4">
-                    <label className="text-xs text-gray-500 uppercase tracking-wider mb-2 block">Discovery Mode</label>
-                    <div className="flex flex-wrap gap-2">
-                        {(Object.keys(modeConfig) as DiscoveryMode[]).map((m) => {
-                            const config = modeConfig[m];
-                            const Icon = config.icon;
-                            const isActive = mode === m;
-                            return (
-                                <button
-                                    key={m}
-                                    onClick={() => handleModeChange(m)}
-                                    disabled={loading}
-                                    className={cn(
-                                        "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all",
-                                        isActive
-                                            ? "bg-fuchsia-500 text-white"
-                                            : "bg-white/5 text-white/70 hover:bg-white/10 hover:text-white",
-                                        loading && "opacity-50 cursor-not-allowed"
-                                    )}
-                                    title={config.description}
-                                >
-                                    <Icon className="w-4 h-4" />
-                                    {config.label}
-                                </button>
-                            );
-                        })}
-                    </div>
-                </div>
-
-                {/* Timeframe Selector */}
-                <div className="mb-4">
-                    <label className="text-xs text-gray-500 uppercase tracking-wider mb-2 block">Taste Source</label>
-                    <div className="flex flex-wrap gap-2">
-                        {(Object.keys(timeframeConfig) as DiscoveryTimeframe[]).map((t) => {
-                            const config = timeframeConfig[t];
-                            const isActive = timeframe === t;
-                            return (
-                                <button
-                                    key={t}
-                                    onClick={() => handleTimeframeChange(t)}
-                                    disabled={loading}
-                                    className={cn(
-                                        "px-4 py-2 rounded-full text-sm font-medium transition-all",
-                                        isActive
-                                            ? "bg-white/20 text-white"
-                                            : "bg-white/5 text-white/70 hover:bg-white/10 hover:text-white",
-                                        loading && "opacity-50 cursor-not-allowed"
-                                    )}
-                                    title={config.description}
-                                >
-                                    {config.label}
-                                </button>
-                            );
-                        })}
-                    </div>
-                </div>
-
-                {/* Include Library Toggle */}
-                <div className="mb-4">
-                    <button
-                        onClick={() => handleIncludeLibraryChange(!includeLibrary)}
-                        disabled={loading}
-                        className={cn(
-                            "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all",
-                            includeLibrary
-                                ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
-                                : "bg-white/5 text-white/70 hover:bg-white/10 hover:text-white",
-                            loading && "opacity-50 cursor-not-allowed"
-                        )}
-                        title={includeLibrary
-                            ? "Recommendations may include artists you already own"
-                            : "Recommendations exclude artists you already own"
-                        }
-                    >
-                        <Library className="w-4 h-4" />
-                        <span>{includeLibrary ? "Including library artists" : "Excluding library artists"}</span>
-                    </button>
-                    <p className="text-xs text-gray-500 mt-1 ml-1">
-                        {includeLibrary
-                            ? "May recommend albums from artists you already have"
-                            : "Only recommends new artists you don't own yet"
-                        }
-                    </p>
-                </div>
-
-                {/* Action Buttons */}
                 <div className="flex items-center gap-4">
                     <button
-                        onClick={() => handleGenerate(true)}
+                        onClick={handleGenerate}
                         disabled={loading}
                         className={cn(
                             "flex items-center gap-2 h-10 px-4 rounded-full text-sm font-medium transition-all",
                             loading
-                                ? "bg-fuchsia-500/50 text-white/70"
-                                : "bg-fuchsia-500 hover:bg-fuchsia-400 text-white"
+                                ? "bg-green-500/50 text-white/70"
+                                : "bg-green-500 hover:bg-green-400 text-white"
                         )}
                     >
                         <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
-                        <span>{loading ? "Generating..." : "Generate"}</span>
+                        <span>{loading ? "Loading..." : "Refresh"}</span>
                     </button>
+
+                    <Link
+                        href="/discover"
+                        className="flex items-center gap-2 h-10 px-4 rounded-full text-sm font-medium bg-white/5 hover:bg-white/10 text-white/70 hover:text-white transition-all"
+                    >
+                        Try AI Discovery
+                    </Link>
                 </div>
                 {error && <p className="text-red-400 mt-3 text-sm">{error}</p>}
             </div>
@@ -784,74 +556,16 @@ export default function DiscoverPage() {
             {loading && !data && (
                 <div className="flex flex-col items-center justify-center py-24">
                     <GradientSpinner size="lg" />
-                    <p className="text-gray-200 mt-4">Analyzing your listening history...</p>
-                    <p className="text-gray-400 text-sm mt-1">
-                        {mode === "safe" && "Finding artists who sound just like your favorites"}
-                        {mode === "adjacent" && "Finding artists with the same energy and mood"}
-                        {mode === "adventurous" && "Finding unexpected connections you'll love"}
-                        {mode === "mix" && "Building a balanced mix of familiar and new"}
-                    </p>
+                    <p className="text-gray-200 mt-4">Finding similar artists...</p>
                 </div>
             )}
 
-            {/* Sectioned Output for Mix Mode */}
-            {data && mode === "mix" && data.sections && (
+            {/* Recommendations List */}
+            {data && data.recommendations.length > 0 && (
                 <div className="px-4 md:px-8 pb-32">
                     <div className="mb-4 text-sm text-gray-300">
-                        Click an album to preview top tracks • Visit artist page to add to library
+                        Click an album to preview top tracks
                     </div>
-
-                    {/* Safe Section */}
-                    {data.sections.safe.length > 0 && (
-                        <div className="mb-8">
-                            <div className="flex items-center gap-2 mb-3">
-                                <Target className="w-5 h-5 text-green-400" />
-                                <h2 className="text-lg font-semibold text-white">Safe Picks</h2>
-                                <span className="text-sm text-gray-400">— More of what you love</span>
-                            </div>
-                            <div className="space-y-3">
-                                {data.sections.safe.map((album, idx) => renderAlbumCard(album, idx))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Adjacent Section */}
-                    {data.sections.adjacent.length > 0 && (
-                        <div className="mb-8">
-                            <div className="flex items-center gap-2 mb-3">
-                                <Lightbulb className="w-5 h-5 text-yellow-400" />
-                                <h2 className="text-lg font-semibold text-white">Adjacent</h2>
-                                <span className="text-sm text-gray-400">— Same vibe, new names</span>
-                            </div>
-                            <div className="space-y-3">
-                                {data.sections.adjacent.map((album, idx) => renderAlbumCard(album, idx))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Wildcard Section */}
-                    {data.sections.wildcard.length > 0 && (
-                        <div className="mb-8">
-                            <div className="flex items-center gap-2 mb-3">
-                                <Sparkles className="w-5 h-5 text-purple-400" />
-                                <h2 className="text-lg font-semibold text-white">Wildcards</h2>
-                                <span className="text-sm text-gray-400">— Unexpected but still you</span>
-                            </div>
-                            <div className="space-y-3">
-                                {data.sections.wildcard.map((album, idx) => renderAlbumCard(album, idx))}
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {/* Flat List for Non-Mix Modes */}
-            {data && (mode !== "mix" || !data.sections) && data.recommendations.length > 0 && (
-                <div className="px-4 md:px-8 pb-32">
-                    <div className="mb-4 text-sm text-gray-300">
-                        Click an album to preview top tracks • Visit artist page to add to library
-                    </div>
-
                     <div className="space-y-3">
                         {data.recommendations.map((album, idx) => renderAlbumCard(album, idx))}
                     </div>
@@ -861,16 +575,12 @@ export default function DiscoverPage() {
             {/* Empty State */}
             {!loading && !data && (
                 <div className="flex flex-col items-center justify-center py-24 text-center px-4">
-                    <div className="w-20 h-20 bg-fuchsia-500/20 rounded-full flex items-center justify-center mb-4">
-                        <Compass className="w-10 h-10 text-fuchsia-400" />
+                    <div className="w-20 h-20 bg-green-500/20 rounded-full flex items-center justify-center mb-4">
+                        <Music2 className="w-10 h-10 text-green-400" />
                     </div>
-                    <h3 className="text-lg font-medium text-white mb-1">Discover New Music</h3>
-                    <p className="text-sm text-gray-300 max-w-md mb-2">
-                        Find albums from artists similar to your favorites.
-                        Preview tracks via Deezer, then add to your library if you like them.
-                    </p>
-                    <p className="text-xs text-gray-400 max-w-md">
-                        No automatic downloads — you decide what to keep.
+                    <h3 className="text-lg font-medium text-white mb-1">Discover Similar Artists</h3>
+                    <p className="text-sm text-gray-300 max-w-md">
+                        Find albums from artists similar to the ones you love, powered by Last.fm.
                     </p>
                 </div>
             )}
