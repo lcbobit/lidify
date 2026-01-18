@@ -36,9 +36,11 @@ const router = Router();
 router.use((req: Request, res: Response, next) => {
     const endpoint = req.path;
     const client = req.query.c || 'unknown';
-    // Skip noisy endpoints
-    if (!endpoint.includes('ping') && !endpoint.includes('stream') && !endpoint.includes('getCoverArt')) {
-        console.log(`[Subsonic] ${req.method} ${endpoint} from client=${client}`);
+    const user = req.query.u || 'no-user';
+    const type = req.query.type || '';
+    // Log key requests for debugging
+    if (endpoint.includes('AlbumList') || endpoint.includes('Scan') || endpoint.includes('scan')) {
+        console.log(`[Subsonic] ${req.method} ${endpoint} user=${user} client=${client} type=${type}`);
     }
     next();
 });
@@ -567,9 +569,10 @@ router.get("/getSong.view", async (req: Request, res: Response) => {
 });
 
 /**
- * getAlbumList2.view - Album list (ID3 mode) with sorting options
+ * getAlbumList.view / getAlbumList2.view - Album list with sorting options
+ * Both endpoints return the same ID3-based data (some clients use the non-ID3 endpoint name)
  */
-router.get("/getAlbumList2.view", async (req: Request, res: Response) => {
+const albumListHandler = async (req: Request, res: Response) => {
     const format = getResponseFormat(req.query);
     const {
         type = "alphabeticalByName",
@@ -811,7 +814,11 @@ router.get("/getAlbumList2.view", async (req: Request, res: Response) => {
             req.query.callback as string
         );
     }
-});
+};
+
+// Register both endpoint names for compatibility
+router.get("/getAlbumList.view", albumListHandler);
+router.get("/getAlbumList2.view", albumListHandler);
 
 /**
  * getRandomSongs.view - Random tracks
@@ -2279,7 +2286,8 @@ router.get("/getScanStatus.view", async (req: Request, res: Response) => {
     }
 });
 
-router.get("/startScan.view", async (req: Request, res: Response) => {
+// Support both GET and POST for startScan (some clients use POST)
+const startScanHandler = async (req: Request, res: Response) => {
     const format = getResponseFormat(req.query);
     if (!config.music.musicPath) {
         return sendSubsonicError(
@@ -2313,6 +2321,9 @@ router.get("/startScan.view", async (req: Request, res: Response) => {
             req.query.callback as string
         );
     }
-});
+};
+
+router.get("/startScan.view", startScanHandler);
+router.post("/startScan.view", startScanHandler);
 
 export default router;
