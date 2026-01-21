@@ -264,7 +264,7 @@ setTimeout(async () => {
     }, 30 * 1000) // 30 seconds after startup
 );
 
-// Podcast refresh: check all subscribed podcasts for new episodes every 24 hours
+// Podcast refresh: check all subscribed podcasts for new episodes every hour
 intervals.push(
     setInterval(async () => {
         try {
@@ -275,10 +275,10 @@ intervals.push(
         } catch (err) {
             console.error("Scheduled podcast refresh failed:", err);
         }
-    }, 24 * 60 * 60 * 1000) // Every 24 hours
+    }, 60 * 60 * 1000) // Every 1 hour
 );
 
-console.log("Podcast refresh scheduled (every 24 hours)");
+console.log("Podcast refresh scheduled (every 1 hour)");
 
 /**
  * Gracefully shutdown all workers and cleanup resources

@@ -3,6 +3,7 @@ import { requireAuth, requireAuthOrToken, generateToken } from "../middleware/au
 import { prisma } from "../utils/db";
 import { rssParserService } from "../services/rss-parser";
 import { podcastCacheService } from "../services/podcastCache";
+import { generatePodcastToken } from "../utils/podcastToken";
 import axios from "axios";
 import fs from "fs";
 
@@ -84,6 +85,8 @@ router.get("/", async (req, res) => {
                 // Per-subscription automation settings
                 autoDownload: sub.autoDownload,
                 autoRemoveAds: sub.autoRemoveAds,
+                // Per-subscription access token for M3U URLs
+                accessToken: sub.accessToken,
                 episodes: podcast.episodes.map((ep) => ({
                     id: ep.id,
                     title: ep.title,
@@ -460,7 +463,7 @@ router.get("/:id", async (req, res) => {
         const { id } = req.params;
 
         // Check if user is subscribed
-        const subscription = await prisma.podcastSubscription.findUnique({
+        let subscription = await prisma.podcastSubscription.findUnique({
             where: {
                 userId_podcastId: {
                     userId: req.user!.id,
@@ -473,6 +476,19 @@ router.get("/:id", async (req, res) => {
             return res
                 .status(404)
                 .json({ error: "Podcast not found or not subscribed" });
+        }
+
+        // Backfill: generate access token for existing subscriptions
+        if (!subscription.accessToken) {
+            subscription = await prisma.podcastSubscription.update({
+                where: {
+                    userId_podcastId: {
+                        userId: req.user!.id,
+                        podcastId: id,
+                    },
+                },
+                data: { accessToken: generatePodcastToken() },
+            });
         }
 
         const podcast = await prisma.podcast.findUnique({
@@ -536,6 +552,8 @@ router.get("/:id", async (req, res) => {
             // Per-subscription automation settings
             autoDownload: subscription.autoDownload,
             autoRemoveAds: subscription.autoRemoveAds,
+            // Per-subscription access token for M3U URLs
+            accessToken: subscription.accessToken,
             episodes: episodesWithProgress,
             isSubscribed: true,
         });
@@ -629,6 +647,7 @@ router.post("/subscribe", async (req, res) => {
                 data: {
                     userId: req.user!.id,
                     podcastId: podcast.id,
+                    accessToken: generatePodcastToken(),
                 },
             });
 
@@ -697,6 +716,7 @@ router.post("/subscribe", async (req, res) => {
             data: {
                 userId: req.user!.id,
                 podcastId: podcast.id,
+                accessToken: generatePodcastToken(),
             },
         });
 
@@ -1005,12 +1025,32 @@ router.get("/:podcastId/episodes/:episodeId/cache-status", async (req, res) => {
  * GET /podcasts/:podcastId/episodes/:episodeId/stream
  * Stream a podcast episode (from local cache or RSS URL)
  * Auto-caches episodes in background for better seeking support
+ *
+ * Supports authentication via:
+ * - Query param: ?token=ptkn_xxx (per-podcast token, preferred for external apps)
+ * - Query param: ?token=JWT (legacy, user-scoped)
+ * - Header: X-API-Key or Authorization: Bearer JWT
+ * - Session cookie (web)
  */
 router.get("/:podcastId/episodes/:episodeId/stream", async (req, res) => {
     try {
         const { podcastId, episodeId } = req.params;
-        const userId = req.user?.id;
+        const token = req.query.token as string;
         const podcastDebug = process.env.PODCAST_DEBUG === "1";
+
+        // Validate per-podcast token if provided
+        let userId = req.user?.id;
+        if (token?.startsWith("ptkn_")) {
+            const subscription = await prisma.podcastSubscription.findFirst({
+                where: { podcastId, accessToken: token },
+            });
+            if (!subscription) {
+                return res.status(401).json({ error: "Invalid or revoked token" });
+            }
+            userId = subscription.userId;
+        } else if (!userId) {
+            return res.status(401).json({ error: "Authentication required" });
+        }
 
         console.log(`\n [PODCAST STREAM] Request:`);
         console.log(`   Podcast ID: ${podcastId}`);
@@ -1041,7 +1081,59 @@ router.get("/:podcastId/episodes/:episodeId/stream", async (req, res) => {
         const { getCachedFilePath, downloadInBackground, isDownloading } =
             await import("../services/podcastDownload");
 
-        // Check if episode is cached locally (with full range support)
+        // PRIORITY 1: Check if user has an ad-removed version
+        // This takes precedence over the shared cache
+        const userDownload = await prisma.podcastDownload.findUnique({
+            where: {
+                userId_episodeId: { userId, episodeId },
+            },
+        });
+
+        if (userDownload?.adsRemoved && userDownload.localPath) {
+            try {
+                const stats = await fs.promises.stat(userDownload.localPath);
+                if (stats.size > 0) {
+                    console.log(`   Streaming ad-removed version: ${userDownload.localPath}`);
+
+                    const fileSize = stats.size;
+
+                    if (range) {
+                        const [startStr, endStr] = range.replace(/bytes=/, "").split("-");
+                        const start = parseInt(startStr, 10);
+                        const end = endStr ? parseInt(endStr, 10) : fileSize - 1;
+                        const chunkSize = end - start + 1;
+
+                        res.writeHead(206, {
+                            "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+                            "Accept-Ranges": "bytes",
+                            "Content-Length": chunkSize,
+                            "Content-Type": episode.mimeType || "audio/mpeg",
+                            "Cache-Control": "public, max-age=3600",
+                            "Access-Control-Allow-Origin": req.headers.origin || "*",
+                        });
+
+                        const readStream = fs.createReadStream(userDownload.localPath, { start, end });
+                        readStream.pipe(res);
+                    } else {
+                        res.writeHead(200, {
+                            "Content-Length": fileSize,
+                            "Content-Type": episode.mimeType || "audio/mpeg",
+                            "Accept-Ranges": "bytes",
+                            "Cache-Control": "public, max-age=3600",
+                            "Access-Control-Allow-Origin": req.headers.origin || "*",
+                        });
+
+                        fs.createReadStream(userDownload.localPath).pipe(res);
+                    }
+                    return;
+                }
+            } catch (err) {
+                // Ad-removed file doesn't exist or can't be read, fall through to shared cache
+                console.log(`   Ad-removed file not accessible, falling back to shared cache`);
+            }
+        }
+
+        // PRIORITY 2: Check shared cache (episode-level, all users)
         const cachedPath = await getCachedFilePath(episodeId);
 
         if (cachedPath) {
@@ -1956,42 +2048,72 @@ router.post("/episodes/:episodeId/remove-ads", requireAuth, async (req, res) => 
  * Export podcast episodes as M3U playlist for external podcast apps
  *
  * Supports authentication via:
- * - Query param: ?token=JWT
+ * - Query param: ?token=ptkn_xxx (per-podcast token, preferred for external apps)
+ * - Query param: ?token=JWT (legacy, user-scoped)
  * - Header: X-API-Key or Authorization: Bearer JWT
  * - Session cookie (web)
  *
  * Usage in external apps:
- *   https://lidify.example.com/api/podcasts/{id}/playlist.m3u?token={jwt}
+ *   https://lidify.example.com/api/podcasts/{id}/playlist.m3u?token={ptkn_xxx}
  */
 router.get("/:id/playlist.m3u", async (req, res) => {
     try {
-        const podcast = await prisma.podcast.findUnique({
-            where: { id: req.params.id },
-            include: {
-                episodes: {
-                    orderBy: { publishedAt: "desc" },
-                },
-                subscriptions: {
-                    where: { userId: req.user!.id },
-                },
-            },
-        });
+        const podcastId = req.params.id;
+        const token = req.query.token as string;
 
-        if (!podcast) {
-            res.set("Content-Type", "audio/mpegurl; charset=utf-8");
-            return res.status(404).send("#EXTM3U\n# Podcast not found\n");
-        }
+        let subscription;
+        let podcast;
 
-        // User must be subscribed to access the playlist
-        if (podcast.subscriptions.length === 0) {
+        // Dual-auth: support both per-podcast tokens (ptkn_) and existing JWT/session auth
+        if (token?.startsWith("ptkn_")) {
+            // Per-podcast token auth (for external podcast apps)
+            subscription = await prisma.podcastSubscription.findFirst({
+                where: { podcastId, accessToken: token },
+                include: {
+                    podcast: {
+                        include: {
+                            episodes: { orderBy: { publishedAt: "desc" } },
+                        },
+                    },
+                },
+            });
+
+            if (!subscription) {
+                res.set("Content-Type", "audio/mpegurl; charset=utf-8");
+                return res.status(401).send("#EXTM3U\n# Invalid or revoked token\n");
+            }
+
+            podcast = subscription.podcast;
+        } else if (req.user) {
+            // Session/JWT auth (web or mobile app)
+            podcast = await prisma.podcast.findUnique({
+                where: { id: podcastId },
+                include: {
+                    episodes: { orderBy: { publishedAt: "desc" } },
+                    subscriptions: { where: { userId: req.user.id } },
+                },
+            });
+
+            if (!podcast) {
+                res.set("Content-Type", "audio/mpegurl; charset=utf-8");
+                return res.status(404).send("#EXTM3U\n# Podcast not found\n");
+            }
+
+            if (podcast.subscriptions.length === 0) {
+                res.set("Content-Type", "audio/mpegurl; charset=utf-8");
+                return res.status(403).send("#EXTM3U\n# Not subscribed to this podcast\n");
+            }
+
+            subscription = podcast.subscriptions[0];
+        } else {
             res.set("Content-Type", "audio/mpegurl; charset=utf-8");
-            return res.status(403).send("#EXTM3U\n# Not subscribed to this podcast\n");
+            return res.status(401).send("#EXTM3U\n# Authentication required\n");
         }
 
         // Opportunistic refresh: if podcast is stale (>1 hour), refresh in background
         // This keeps Lidify in sync when external podcast apps fetch the M3U
         const { refreshIfStale } = await import("../services/podcastRefresh");
-        refreshIfStale(req.params.id); // Don't await - runs in background
+        refreshIfStale(podcastId); // Don't await - runs in background
 
         // Build absolute base URL for stream endpoints
         // Use X-Forwarded headers if behind reverse proxy
@@ -1999,11 +2121,12 @@ router.get("/:id/playlist.m3u", async (req, res) => {
         const host = req.headers["x-forwarded-host"] || req.get("host");
         const baseUrl = `${protocol}://${host}`;
 
-        // Use existing token from query param, or generate a fresh one for stream URLs
-        const token = (req.query.token as string) || generateToken({
-            id: req.user!.id,
-            username: req.user!.username,
-            role: req.user!.role,
+        // Use per-podcast token for stream URLs (preferred)
+        // Fall back to JWT if no accessToken (legacy subscriptions before migration)
+        const streamToken = subscription.accessToken || generateToken({
+            id: subscription.userId,
+            username: req.user?.username || "external",
+            role: req.user?.role || "user",
         });
 
         // Build M3U playlist
@@ -2020,7 +2143,7 @@ router.get("/:id/playlist.m3u", async (req, res) => {
             lines.push(`#EXTINF:${duration},${episode.title.replace(/,/g, " ")}`);
 
             // Stream URL with token auth
-            lines.push(`${baseUrl}/api/podcasts/${podcast.id}/episodes/${episode.id}/stream?token=${token}`);
+            lines.push(`${baseUrl}/api/podcasts/${podcast.id}/episodes/${episode.id}/stream?token=${streamToken}`);
         }
 
         // Sanitize filename (remove unsafe characters)
@@ -2041,6 +2164,207 @@ router.get("/:id/playlist.m3u", async (req, res) => {
         console.error("M3U playlist generation failed:", error);
         res.set("Content-Type", "audio/mpegurl; charset=utf-8");
         res.status(500).send("#EXTM3U\n# Error generating playlist\n");
+    }
+});
+
+/**
+ * GET /podcasts/:id/feed.xml
+ * Serve podcast as RSS feed for external podcast apps (AntennaPod, Pocket Casts, etc.)
+ *
+ * Supports authentication via:
+ * - Query param: ?token=ptkn_xxx (per-podcast token, preferred for external apps)
+ * - Query param: ?token=JWT (legacy, user-scoped)
+ * - Session cookie (web)
+ *
+ * Usage in podcast apps:
+ *   https://lidify.example.com/api/podcasts/{id}/feed.xml?token={ptkn_xxx}
+ */
+router.get("/:id/feed.xml", async (req, res) => {
+    try {
+        const podcastId = req.params.id;
+        const token = req.query.token as string;
+
+        let subscription;
+        let podcast;
+
+        // Dual-auth: support both per-podcast tokens (ptkn_) and existing JWT/session auth
+        if (token?.startsWith("ptkn_")) {
+            // Per-podcast token auth (for external podcast apps)
+            subscription = await prisma.podcastSubscription.findFirst({
+                where: { podcastId, accessToken: token },
+                include: {
+                    podcast: {
+                        include: {
+                            episodes: { orderBy: { publishedAt: "desc" } },
+                        },
+                    },
+                },
+            });
+
+            if (!subscription) {
+                res.set("Content-Type", "application/rss+xml; charset=utf-8");
+                return res.status(401).send(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Error</title><description>Invalid or revoked token</description></channel></rss>`);
+            }
+
+            podcast = subscription.podcast;
+        } else if (req.user) {
+            // Session/JWT auth (web or mobile app)
+            podcast = await prisma.podcast.findUnique({
+                where: { id: podcastId },
+                include: {
+                    episodes: { orderBy: { publishedAt: "desc" } },
+                    subscriptions: { where: { userId: req.user.id } },
+                },
+            });
+
+            if (!podcast) {
+                res.set("Content-Type", "application/rss+xml; charset=utf-8");
+                return res.status(404).send(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Error</title><description>Podcast not found</description></channel></rss>`);
+            }
+
+            if (podcast.subscriptions.length === 0) {
+                res.set("Content-Type", "application/rss+xml; charset=utf-8");
+                return res.status(403).send(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Error</title><description>Not subscribed to this podcast</description></channel></rss>`);
+            }
+
+            subscription = podcast.subscriptions[0];
+        } else {
+            res.set("Content-Type", "application/rss+xml; charset=utf-8");
+            return res.status(401).send(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Error</title><description>Authentication required</description></channel></rss>`);
+        }
+
+        // Opportunistic refresh: if podcast is stale (>1 hour), refresh in background
+        // This keeps Lidify in sync when external podcast apps refresh the feed
+        const { refreshIfStale } = await import("../services/podcastRefresh");
+        refreshIfStale(podcastId); // Don't await - runs in background
+
+        // Get user's ad-removed episodes
+        const userDownloads = await prisma.podcastDownload.findMany({
+            where: {
+                userId: subscription.userId,
+                episodeId: { in: podcast.episodes.map(e => e.id) },
+                adsRemoved: true,
+            },
+            select: { episodeId: true },
+        });
+        const adRemovedEpisodeIds = new Set(userDownloads.map(d => d.episodeId));
+
+        // Get episodes currently being processed (from DownloadJob queue)
+        const processingJobs = await prisma.downloadJob.findMany({
+            where: {
+                userId: subscription.userId,
+                type: "ad_removal",
+                status: "processing",
+            },
+            select: { metadata: true },
+        });
+        const processingEpisodeIds = new Set(
+            processingJobs
+                .map(j => (j.metadata as any)?.episodeId)
+                .filter(Boolean)
+        );
+
+        // Build absolute base URL for stream endpoints
+        const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
+        const host = req.headers["x-forwarded-host"] || req.get("host");
+        const baseUrl = `${protocol}://${host}`;
+
+        // Use per-podcast token for stream URLs
+        const streamToken = subscription.accessToken || token;
+
+        // Escape XML special characters
+        const escapeXml = (str: string | null | undefined): string => {
+            if (!str) return "";
+            return str
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&apos;");
+        };
+
+        // Format duration as HH:MM:SS for iTunes
+        const formatDuration = (seconds: number): string => {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            if (h > 0) {
+                return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+            }
+            return `${m}:${s.toString().padStart(2, "0")}`;
+        };
+
+        // Build RSS feed
+        const coverUrl = podcast.localCoverPath
+            ? `${baseUrl}/api/podcasts/${podcast.id}/cover`
+            : podcast.imageUrl;
+
+        let rss = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+<channel>
+  <title>${escapeXml(podcast.title)}</title>
+  <link>${escapeXml(podcast.feedUrl)}</link>
+  <description>${escapeXml(podcast.description)}</description>
+  <language>${escapeXml(podcast.language) || "en"}</language>
+  <itunes:author>${escapeXml(podcast.author)}</itunes:author>
+  <itunes:image href="${escapeXml(coverUrl)}"/>
+  <image>
+    <url>${escapeXml(coverUrl)}</url>
+    <title>${escapeXml(podcast.title)}</title>
+    <link>${escapeXml(podcast.feedUrl)}</link>
+  </image>
+`;
+
+        for (const episode of podcast.episodes) {
+            const streamUrl = `${baseUrl}/api/podcasts/${podcast.id}/episodes/${episode.id}/stream?token=${streamToken}`;
+            const pubDate = new Date(episode.publishedAt).toUTCString();
+            const episodeCover = episode.localCoverPath
+                ? `${baseUrl}/api/podcasts/episodes/${episode.id}/cover`
+                : episode.imageUrl;
+
+            // Mark episode status in title
+            const isAdRemoved = adRemovedEpisodeIds.has(episode.id);
+            const isProcessing = processingEpisodeIds.has(episode.id);
+            let displayTitle = episode.title;
+            if (isAdRemoved) {
+                displayTitle = `[Ad-free] ${episode.title}`;
+            } else if (isProcessing) {
+                displayTitle = `[Processing...] ${episode.title}`;
+            }
+
+            rss += `  <item>
+    <title>${escapeXml(displayTitle)}</title>
+    <description>${escapeXml(episode.description)}</description>
+    <enclosure url="${escapeXml(streamUrl)}" type="${episode.mimeType || "audio/mpeg"}"${episode.fileSize ? ` length="${episode.fileSize}"` : ""}/>
+    <guid isPermaLink="false">${escapeXml(episode.id)}</guid>
+    <pubDate>${pubDate}</pubDate>
+    <itunes:duration>${formatDuration(episode.duration || 0)}</itunes:duration>
+${episodeCover ? `    <itunes:image href="${escapeXml(episodeCover)}"/>` : ""}
+${episode.episodeNumber ? `    <itunes:episode>${episode.episodeNumber}</itunes:episode>` : ""}
+${episode.season ? `    <itunes:season>${episode.season}</itunes:season>` : ""}
+  </item>
+`;
+        }
+
+        rss += `</channel>
+</rss>`;
+
+        res.set({
+            "Content-Type": "application/rss+xml; charset=utf-8",
+            "Cache-Control": "no-cache",
+        });
+
+        res.send(rss);
+
+    } catch (error: any) {
+        console.error("RSS feed generation failed:", error);
+        res.set("Content-Type", "application/rss+xml; charset=utf-8");
+        res.status(500).send(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Error</title><description>Error generating feed</description></channel></rss>`);
     }
 });
 

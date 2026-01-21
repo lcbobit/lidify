@@ -28,6 +28,8 @@ export interface Podcast {
     // Per-subscription automation settings
     autoDownload: boolean;
     autoRemoveAds: boolean;
+    // Per-subscription access token for M3U URLs
+    accessToken?: string;
     genres?: string[];
     feedUrl?: string;
     episodes: Episode[];

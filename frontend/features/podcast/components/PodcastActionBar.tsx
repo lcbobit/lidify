@@ -18,6 +18,8 @@ interface PodcastActionBarProps {
     autoRemoveAds?: boolean;
     adRemovalAvailable?: boolean;
     onSetAutoMode?: (mode: "off" | "download" | "download_and_adfree") => void;
+    // Per-subscription access token for M3U URLs
+    accessToken?: string;
 }
 
 type AutoMode = "off" | "download" | "download_and_adfree";
@@ -35,24 +37,28 @@ export function PodcastActionBar({
     autoRemoveAds = false,
     adRemovalAvailable = false,
     onSetAutoMode,
+    accessToken,
 }: PodcastActionBarProps) {
     const [m3uCopied, setM3uCopied] = useState(false);
 
     // Derive current mode from props
     const currentMode: AutoMode = autoRemoveAds ? "download_and_adfree" : autoDownload ? "download" : "off";
 
-    const handleCopyM3U = async () => {
+    const handleCopyFeedUrl = async () => {
         if (!podcastId) return;
 
         const baseUrl = window.location.origin;
-        const m3uUrl = `${baseUrl}/api/podcasts/${podcastId}/playlist.m3u`;
+        // RSS feed URL for external podcast apps (AntennaPod, Pocket Casts, etc.)
+        const feedUrl = accessToken
+            ? `${baseUrl}/api/podcasts/${podcastId}/feed.xml?token=${accessToken}`
+            : `${baseUrl}/api/podcasts/${podcastId}/feed.xml`;
 
         try {
-            await navigator.clipboard.writeText(m3uUrl);
+            await navigator.clipboard.writeText(feedUrl);
             setM3uCopied(true);
             setTimeout(() => setM3uCopied(false), 2000);
         } catch (err) {
-            console.error("Failed to copy M3U URL:", err);
+            console.error("Failed to copy feed URL:", err);
         }
     };
 
@@ -135,16 +141,16 @@ export function PodcastActionBar({
                 </div>
             )}
 
-            {/* M3U Copy Button */}
+            {/* RSS Feed Copy Button */}
             {isSubscribed && podcastId && (
                 <button
-                    onClick={handleCopyM3U}
+                    onClick={handleCopyFeedUrl}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-all ${
                         m3uCopied
                             ? "bg-green-500/20 text-green-400"
                             : "bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/70"
                     }`}
-                    title="Copy M3U playlist URL for external podcast apps"
+                    title="Copy RSS feed URL for external podcast apps (AntennaPod, Pocket Casts, etc.)"
                 >
                     {m3uCopied ? (
                         <>
@@ -154,7 +160,7 @@ export function PodcastActionBar({
                     ) : (
                         <>
                             <Link2 className="w-4 h-4" />
-                            <span className="hidden md:inline">M3U</span>
+                            <span className="hidden md:inline">Feed</span>
                         </>
                     )}
                 </button>

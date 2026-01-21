@@ -739,6 +739,9 @@ model PodcastSubscription {
   autoDownload  Boolean @default(false)
   autoRemoveAds Boolean @default(false)
 
+  // Per-subscription access token for external podcast apps (M3U URLs)
+  accessToken   String?  @unique
+
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   podcast Podcast @relation(fields: [podcastId], references: [id], onDelete: Cascade)
 

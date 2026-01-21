@@ -164,6 +164,13 @@ export async function requireAuthOrToken(
     // Check for token in query param (for streaming URLs from audio elements)
     const tokenParam = req.query.token as string;
     if (tokenParam) {
+        // Per-podcast access tokens (ptkn_) are validated by the route handler
+        // Just pass them through - route handler will validate against DB
+        if (tokenParam.startsWith("ptkn_")) {
+            return next();
+        }
+
+        // JWT tokens are validated here
         try {
             const decoded = jwt.verify(tokenParam, JWT_SECRET) as JWTPayload;
             const user = await prisma.user.findUnique({

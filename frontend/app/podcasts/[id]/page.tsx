@@ -106,6 +106,7 @@ export default function PodcastDetailPage() {
                     autoRemoveAds={podcast?.autoRemoveAds}
                     adRemovalAvailable={adRemovalAvailable}
                     onSetAutoMode={handleSetAutoMode}
+                    accessToken={podcast?.accessToken}
                 />
             </PodcastHero>
 

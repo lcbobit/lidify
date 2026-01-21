@@ -76,17 +76,25 @@ export async function refreshPodcast(podcastId: string): Promise<{
             }
         }
 
-        // Auto-download for users with autoDownload enabled
+        // Auto-download for users with autoDownload OR autoRemoveAds enabled
+        // (ad removal is triggered automatically after download via hook in podcastDownload.ts)
         if (newEpisodes.length > 0) {
-            const autoDownloadSubs = await prisma.podcastSubscription.findMany({
-                where: { podcastId, autoDownload: true },
+            const autoSubs = await prisma.podcastSubscription.findMany({
+                where: {
+                    podcastId,
+                    OR: [
+                        { autoDownload: true },
+                        { autoRemoveAds: true },
+                    ],
+                },
             });
 
-            if (autoDownloadSubs.length > 0) {
-                console.log(`[PODCAST-REFRESH] Auto-downloading ${newEpisodes.length} episodes for ${autoDownloadSubs.length} user(s)`);
+            if (autoSubs.length > 0) {
+                console.log(`[PODCAST-REFRESH] Auto-downloading ${newEpisodes.length} episodes for ${autoSubs.length} user(s)`);
 
-                for (const sub of autoDownloadSubs) {
+                for (const sub of autoSubs) {
                     for (const episode of newEpisodes) {
+                        console.log(`[PODCAST-REFRESH] Auto-download: "${episode.title}" for user ${sub.userId}${sub.autoRemoveAds ? " (+ ad removal)" : ""}`);
                         downloadInBackground(episode.id, episode.audioUrl, sub.userId);
                     }
                 }
@@ -171,7 +179,10 @@ export async function refreshIfStale(podcastId: string): Promise<boolean> {
     if (!podcast) return false;
 
     const now = Date.now();
-    const lastRefreshed = podcast.lastRefreshed.getTime();
+    // Fix timezone: DB stores local time but Prisma reads as UTC
+    // Adjust by server's timezone offset to get correct age
+    const timezoneOffsetMs = new Date().getTimezoneOffset() * 60 * 1000;
+    const lastRefreshed = podcast.lastRefreshed.getTime() + timezoneOffsetMs;
     const isStale = now - lastRefreshed > REFRESH_THRESHOLD_MS;
 
     if (isStale) {
