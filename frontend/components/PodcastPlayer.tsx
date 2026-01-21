@@ -1,7 +1,9 @@
 "use client";
 
 import { useRef, useState, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { queryKeys } from "@/hooks/useQueries";
 import { useToast } from "@/lib/toast-context";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
@@ -47,6 +49,7 @@ export function PodcastPlayer({
     onClose,
     onEpisodeChange,
 }: PodcastPlayerProps) {
+    const queryClient = useQueryClient();
     const audioRef = useRef<HTMLAudioElement>(null);
     const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -83,21 +86,26 @@ export function PodcastPlayer({
 
         // Save progress every 10 seconds
         progressIntervalRef.current = setInterval(async () => {
-            if (audioRef.current && currentTime > 0) {
-                const duration =
-                    audioRef.current.duration || episode.duration || 0;
-                const isFinished = duration - currentTime < 30;
+            if (audioRef.current) {
+                const currentTimeValue = audioRef.current.currentTime;
+                if (currentTimeValue > 0) {
+                    const duration =
+                        audioRef.current.duration || episode.duration || 0;
+                    const isFinished = duration - currentTimeValue < 30;
 
-                try {
-                    await api.updatePodcastEpisodeProgress(
-                        podcastId,
-                        episode.id,
-                        currentTime,
-                        duration,
-                        isFinished
-                    );
-                } catch (error) {
-                    console.error("Failed to sync podcast progress:", error);
+                    try {
+                        await api.updatePodcastEpisodeProgress(
+                            podcastId,
+                            episode.id,
+                            currentTimeValue,
+                            duration,
+                            isFinished
+                        );
+                        // Invalidate podcast query to update Continue Listening
+                        queryClient.invalidateQueries({ queryKey: queryKeys.podcast(podcastId) });
+                    } catch (error) {
+                        console.error("Failed to sync podcast progress:", error);
+                    }
                 }
             }
         }, 10000);
@@ -107,7 +115,7 @@ export function PodcastPlayer({
                 clearInterval(progressIntervalRef.current);
             }
         };
-    }, [isPlaying, currentTime, podcastId, episode.id, episode.duration]);
+    }, [isPlaying, podcastId, episode.id, episode.duration, queryClient]);
 
     // Track time updates
     const handleTimeUpdate = () => {
@@ -146,6 +154,8 @@ export function PodcastPlayer({
                     audioRef.current.duration || duration,
                     false
                 );
+                // Invalidate podcast query to update Continue Listening
+                queryClient.invalidateQueries({ queryKey: queryKeys.podcast(podcastId) });
             } catch (error) {
                 console.error("Failed to save podcast progress on pause:", error);
             }
@@ -164,6 +174,8 @@ export function PodcastPlayer({
                     audioRef.current.duration,
                     true
                 );
+                // Invalidate podcast query to update Continue Listening
+                queryClient.invalidateQueries({ queryKey: queryKeys.podcast(podcastId) });
                 toast.success("Episode finished!");
                 onEpisodeChange?.(episode);
             } catch (error) {
@@ -218,6 +230,8 @@ export function PodcastPlayer({
                 audioRef.current.currentTime = 0;
                 setCurrentTime(0);
             }
+            // Invalidate podcast query to update Continue Listening
+            queryClient.invalidateQueries({ queryKey: queryKeys.podcast(podcastId) });
             toast.success("Progress removed");
             onEpisodeChange?.(episode);
         } catch (error) {

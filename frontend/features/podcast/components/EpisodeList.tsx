@@ -1,9 +1,14 @@
 "use client";
 
-import { Play, Pause, Check, ArrowUpDown } from "lucide-react";
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Play, Pause, Check, ArrowUpDown, MoreVertical, Sparkles, Download, Loader2, Cloud, Trash2 } from "lucide-react";
 import { cn } from "@/utils/cn";
+import { queryKeys } from "@/hooks/useQueries";
 import { Podcast, Episode } from "../types";
 import { formatDuration, formatDate } from "../utils";
+import { api } from "@/lib/api";
+import { toast } from "sonner";
 
 interface EpisodeListProps {
     podcast: Podcast;
@@ -26,6 +31,105 @@ export function EpisodeList({
     onPlayPause,
     onPlay,
 }: EpisodeListProps) {
+    const queryClient = useQueryClient();
+    const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+    const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
+
+    const invalidatePodcast = () => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.podcast(podcast.id) });
+    };
+
+    const handleRemoveAds = async (episode: Episode) => {
+        setOpenMenuId(null);
+        setProcessingIds(prev => new Set(prev).add(episode.id));
+
+        try {
+            const result = await api.removeAdsFromEpisode(episode.id);
+
+            if (result.success) {
+                if (result.status === "download_started") {
+                    toast.success("Downloading episode...", {
+                        description: "Ad removal will start automatically when download completes",
+                    });
+                } else if (result.status === "downloading") {
+                    toast.info("Episode is downloading", {
+                        description: "Ad removal will run when download completes",
+                    });
+                } else {
+                    toast.success("Ad removal started!", {
+                        description: "Processing may take a few minutes",
+                    });
+                }
+                // Invalidate immediately to show download status, then periodically check for completion
+                invalidatePodcast();
+                // Poll for ad removal completion (runs in background for several minutes)
+                const pollInterval = setInterval(() => {
+                    invalidatePodcast();
+                }, 30000); // Check every 30 seconds
+                // Stop polling after 10 minutes
+                setTimeout(() => clearInterval(pollInterval), 600000);
+            }
+        } catch (error: any) {
+            if (error.message?.includes("not available")) {
+                toast.error("Ad removal not available", {
+                    description: "Whishper service not running or not configured",
+                });
+            } else {
+                toast.error("Failed to start ad removal", {
+                    description: error.message,
+                });
+            }
+        } finally {
+            // Keep processing indicator for a bit since it's async
+            setTimeout(() => {
+                setProcessingIds(prev => {
+                    const next = new Set(prev);
+                    next.delete(episode.id);
+                    return next;
+                });
+            }, 3000);
+        }
+    };
+
+    const handleDownload = async (episode: Episode) => {
+        setOpenMenuId(null);
+
+        try {
+            const result = await api.downloadPodcastEpisode(episode.id);
+
+            if (result.status === "already_cached") {
+                toast.info("Episode already downloaded");
+                invalidatePodcast();
+            } else if (result.status === "downloading") {
+                toast.info("Download in progress", {
+                    description: `${result.progress || 0}% complete`,
+                });
+            } else {
+                toast.success("Download started!");
+                // Poll for completion and update UI
+                setTimeout(invalidatePodcast, 2000);
+            }
+        } catch (error: any) {
+            toast.error("Failed to download", {
+                description: error.message,
+            });
+        }
+    };
+
+    const handleDeleteDownload = async (episode: Episode) => {
+        setOpenMenuId(null);
+
+        try {
+            await api.deleteDownloadedEpisode(episode.id);
+            toast.success("Download deleted");
+            invalidatePodcast();
+        } catch (error: any) {
+            toast.error("Failed to delete download", {
+                description: error.message,
+            });
+        }
+    };
+
     return (
         <section>
             <div className="flex items-center justify-between mb-4">
@@ -44,12 +148,8 @@ export function EpisodeList({
             </div>
 
             <div className="space-y-1">
-                {episodes.map((episode, index) => {
+                {episodes.map((episode) => {
                     const isCurrentEpisode = isEpisodePlaying(episode.id);
-                    const isInProgress =
-                        episode.progress &&
-                        !episode.progress.isFinished &&
-                        episode.progress.currentTime > 0;
 
                     return (
                         <div
@@ -77,50 +177,33 @@ export function EpisodeList({
                                         onPlay(episode);
                                     }
                                 }}
-                                className="flex items-center gap-4 px-3 py-3 cursor-pointer"
+                                className="flex items-center gap-3 px-3 py-3 cursor-pointer"
                             >
-                                {/* Number / Play/Pause Icon */}
+                                {/* Play/Pause Icon */}
                                 <div className="w-8 flex items-center justify-center shrink-0">
                                     {episode.progress?.isFinished ? (
                                         <Check className="w-4 h-4 text-green-400" />
+                                    ) : isCurrentEpisode && isPlaying ? (
+                                        <Pause
+                                            className="w-4 h-4 text-[#ecb200] cursor-pointer"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onPlayPause(episode);
+                                            }}
+                                        />
                                     ) : (
-                                        <>
-                                            <span
-                                                className={cn(
-                                                    "text-sm",
-                                                    isCurrentEpisode && isPlaying
-                                                        ? "hidden"
-                                                        : "group-hover:hidden",
-                                                    isCurrentEpisode
-                                                        ? "text-[#ecb200] font-bold"
-                                                        : "text-white/40"
-                                                )}
-                                            >
-                                                {index + 1}
-                                            </span>
-                                            {isCurrentEpisode && isPlaying ? (
-                                                <Pause
-                                                    className="w-4 h-4 text-[#ecb200] cursor-pointer"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        onPlayPause(episode);
-                                                    }}
-                                                />
-                                            ) : (
-                                                <Play
-                                                    className={cn(
-                                                        "w-4 h-4 cursor-pointer",
-                                                        isCurrentEpisode
-                                                            ? "text-[#ecb200]"
-                                                            : "text-white hidden group-hover:block"
-                                                    )}
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        onPlayPause(episode);
-                                                    }}
-                                                />
+                                        <Play
+                                            className={cn(
+                                                "w-4 h-4 cursor-pointer",
+                                                isCurrentEpisode
+                                                    ? "text-[#ecb200]"
+                                                    : "text-white/40 group-hover:text-white"
                                             )}
-                                        </>
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onPlayPause(episode);
+                                            }}
+                                        />
                                     )}
                                 </div>
 
@@ -150,27 +233,105 @@ export function EpisodeList({
                                                 <span>E{episode.episodeNumber}</span>
                                             </>
                                         )}
+                                        <span>•</span>
+                                        <span>{formatDuration(episode.duration)}</span>
+                                        {episode.adsRemoved ? (
+                                            <>
+                                                <span>•</span>
+                                                <span title="Ad-free" className="text-[#ecb200]">
+                                                    <Sparkles className="w-3 h-3 inline" />
+                                                </span>
+                                            </>
+                                        ) : episode.isDownloaded ? (
+                                            <>
+                                                <span>•</span>
+                                                <span title="Downloaded" className="text-green-400/70">
+                                                    <Download className="w-3 h-3 inline" />
+                                                </span>
+                                            </>
+                                        ) : null}
                                         {episode.progress?.isFinished && (
                                             <>
                                                 <span>•</span>
                                                 <span className="text-green-400">Finished</span>
                                             </>
                                         )}
-                                        {isInProgress && episode.progress && (
-                                            <>
-                                                <span>•</span>
-                                                <span className="text-[#ecb200]">
-                                                    {Math.floor(episode.progress.progress)}%
-                                                </span>
-                                            </>
-                                        )}
                                     </div>
                                 </div>
 
-                                {/* Duration */}
-                                <span className="text-xs text-white/40 shrink-0">
-                                    {formatDuration(episode.duration)}
-                                </span>
+                                {/* Menu Button */}
+                                <div className="relative shrink-0 ml-2">
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setOpenMenuId(openMenuId === episode.id ? null : episode.id);
+                                        }}
+                                        className={cn(
+                                            "p-1.5 rounded-full transition-all",
+                                            openMenuId === episode.id
+                                                ? "bg-white/20 text-white"
+                                                : "text-white/30 hover:text-white hover:bg-white/10"
+                                        )}
+                                    >
+                                        {processingIds.has(episode.id) ? (
+                                            <Loader2 className="w-4 h-4 animate-spin text-[#ecb200]" />
+                                        ) : (
+                                            <MoreVertical className="w-4 h-4" />
+                                        )}
+                                    </button>
+
+                                    {/* Dropdown Menu */}
+                                    {openMenuId === episode.id && (
+                                        <>
+                                            {/* Backdrop to close menu */}
+                                            <div
+                                                className="fixed inset-0 z-10"
+                                                onClick={() => setOpenMenuId(null)}
+                                            />
+                                            <div className="absolute right-0 top-full mt-1 z-20 bg-zinc-900 border border-white/10 rounded-lg shadow-xl py-1 min-w-[160px]">
+                                                {/* Download - show if not downloaded */}
+                                                {!episode.isDownloaded && (
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDownload(episode);
+                                                        }}
+                                                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-white/80 hover:bg-white/10 hover:text-white transition-colors"
+                                                    >
+                                                        <Download className="w-4 h-4" />
+                                                        Download
+                                                    </button>
+                                                )}
+                                                {/* Remove Ads - show if ads not removed (will auto-download if needed) */}
+                                                {!episode.adsRemoved && (
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleRemoveAds(episode);
+                                                        }}
+                                                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-white/80 hover:bg-white/10 hover:text-white transition-colors"
+                                                    >
+                                                        <Sparkles className="w-4 h-4 text-[#ecb200]" />
+                                                        Remove Ads
+                                                    </button>
+                                                )}
+                                                {/* Delete - show if downloaded */}
+                                                {episode.isDownloaded && (
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDeleteDownload(episode);
+                                                        }}
+                                                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-400/80 hover:bg-white/10 hover:text-red-400 transition-colors"
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                        Delete
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     );

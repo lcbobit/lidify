@@ -8,6 +8,8 @@ export type NotificationType =
     | "download_failed"
     | "playlist_ready"
     | "import_complete"
+    | "ad_removal_progress"
+    | "ad_removal_complete"
     | "error";
 
 export interface CreateNotificationParams {
@@ -218,6 +220,49 @@ class NotificationService {
             type: "system",
             title,
             message,
+        });
+    }
+
+    /**
+     * Notify user that ad removal has started
+     */
+    async notifyAdRemovalProgress(
+        userId: string,
+        podcastName: string,
+        episodeTitle: string,
+        stage: "transcribing" | "detecting" | "splicing"
+    ) {
+        const stageMessages = {
+            transcribing: "Transcribing audio...",
+            detecting: "Detecting ads...",
+            splicing: "Removing ads...",
+        };
+
+        return this.create({
+            userId,
+            type: "ad_removal_progress",
+            title: `Removing ads from ${podcastName}`,
+            message: `${episodeTitle} - ${stageMessages[stage]}`,
+            metadata: { podcastName, episodeTitle, stage },
+        });
+    }
+
+    /**
+     * Notify user that ad removal is complete
+     */
+    async notifyAdRemovalComplete(
+        userId: string,
+        podcastName: string,
+        episodeTitle: string,
+        adsRemoved: number,
+        timeRemoved: string
+    ) {
+        return this.create({
+            userId,
+            type: "ad_removal_complete",
+            title: "Ads Removed",
+            message: `${podcastName} - ${episodeTitle}: ${adsRemoved} ads removed (${timeRemoved})`,
+            metadata: { podcastName, episodeTitle, adsRemoved, timeRemoved },
         });
     }
 }

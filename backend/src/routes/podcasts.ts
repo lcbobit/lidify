@@ -494,30 +494,34 @@ router.get("/:id", async (req, res) => {
             return res.status(404).json({ error: "Podcast not found" });
         }
 
-        const episodesWithProgress = podcast.episodes.map((episode) => ({
-            id: episode.id,
-            title: episode.title,
-            description: episode.description,
-            duration: episode.duration,
-            publishedAt: episode.publishedAt,
-            episodeNumber: episode.episodeNumber,
-            season: episode.season,
-            imageUrl: episode.imageUrl,
-            isDownloaded: episode.downloads.length > 0,
-            progress: episode.progress[0]
-                ? {
-                      currentTime: episode.progress[0].currentTime,
-                      progress:
-                          episode.progress[0].duration > 0
-                              ? (episode.progress[0].currentTime /
-                                    episode.progress[0].duration) *
-                                100
-                              : 0,
-                      isFinished: episode.progress[0].isFinished,
-                      lastPlayedAt: episode.progress[0].lastPlayedAt,
-                  }
-                : null,
-        }));
+        const episodesWithProgress = podcast.episodes.map((episode) => {
+            const download = episode.downloads[0];
+            return {
+                id: episode.id,
+                title: episode.title,
+                description: episode.description,
+                duration: episode.duration,
+                publishedAt: episode.publishedAt,
+                episodeNumber: episode.episodeNumber,
+                season: episode.season,
+                imageUrl: episode.imageUrl,
+                isDownloaded: !!download,
+                adsRemoved: download?.adsRemoved ?? false,
+                progress: episode.progress[0]
+                    ? {
+                          currentTime: episode.progress[0].currentTime,
+                          progress:
+                              episode.progress[0].duration > 0
+                                  ? (episode.progress[0].currentTime /
+                                        episode.progress[0].duration) *
+                                    100
+                                  : 0,
+                          isFinished: episode.progress[0].isFinished,
+                          lastPlayedAt: episode.progress[0].lastPlayedAt,
+                      }
+                    : null,
+            };
+        });
 
         res.json({
             id: podcast.id,
@@ -1552,6 +1556,292 @@ router.get("/episodes/:episodeId/cover", async (req, res) => {
         console.error("Error serving episode cover:", error);
         res.status(500).json({
             error: "Failed to serve cover",
+            message: error.message,
+        });
+    }
+});
+
+// ==============================================================================
+// AD REMOVAL ENDPOINTS
+// ==============================================================================
+
+import {
+    isAdRemovalAvailable,
+    removeAdsFromPodcast,
+    processDownloadedEpisode,
+    getAdRemovalModel,
+} from "../services/podcastAdRemoval";
+import { getCachedFilePath, downloadInBackground, isDownloading, getDownloadProgress } from "../services/podcastDownload";
+
+/**
+ * GET /podcasts/ad-removal/status
+ * Check if ad removal service is available and configured
+ */
+router.get("/ad-removal/status", requireAuth, async (req, res) => {
+    try {
+        const [available, model] = await Promise.all([
+            isAdRemovalAvailable(),
+            getAdRemovalModel(),
+        ]);
+
+        res.json({
+            enabled: process.env.PODCAST_AD_REMOVAL === "true",
+            available,
+            model,
+            whisperModel: process.env.WHISPER_MODEL || "medium",
+            whisperUrl: process.env.WHISHPER_URL || "http://whishper:8080",
+        });
+    } catch (error: any) {
+        res.status(500).json({
+            error: "Failed to check ad removal status",
+            message: error.message,
+        });
+    }
+});
+
+/**
+ * POST /podcasts/episodes/:episodeId/download
+ * Explicitly download/cache an episode for offline listening or ad removal
+ * Query params:
+ *   - removeAds=true: Also trigger ad removal after download completes
+ */
+router.post("/episodes/:episodeId/download", requireAuth, async (req, res) => {
+    try {
+        const { episodeId } = req.params;
+        const removeAds = req.query.removeAds === "true";
+
+        // Check if episode exists
+        const episode = await prisma.podcastEpisode.findUnique({
+            where: { id: episodeId },
+            select: { id: true, title: true, audioUrl: true },
+        });
+
+        if (!episode) {
+            return res.status(404).json({ error: "Episode not found" });
+        }
+
+        if (!episode.audioUrl) {
+            return res.status(400).json({ error: "Episode has no audio URL" });
+        }
+
+        // Check if already cached
+        const cachedPath = await getCachedFilePath(episodeId);
+        if (cachedPath) {
+            return res.json({
+                success: true,
+                status: "already_cached",
+                message: "Episode already downloaded",
+                episodeId,
+                title: episode.title,
+            });
+        }
+
+        // Check if already downloading
+        if (isDownloading(episodeId)) {
+            const progress = getDownloadProgress(episodeId);
+            return res.json({
+                success: true,
+                status: "downloading",
+                message: "Download already in progress",
+                episodeId,
+                title: episode.title,
+                progress: progress?.progress || 0,
+            });
+        }
+
+        // Start download
+        downloadInBackground(episodeId, episode.audioUrl, req.user!.id);
+
+        res.json({
+            success: true,
+            status: "started",
+            message: removeAds ? "Download started (ad removal will run after)" : "Download started",
+            episodeId,
+            title: episode.title,
+            removeAds,
+        });
+
+    } catch (error: any) {
+        console.error("Episode download trigger failed:", error);
+        res.status(500).json({
+            error: "Failed to start download",
+            message: error.message,
+        });
+    }
+});
+
+/**
+ * GET /podcasts/episodes/:episodeId/download/status
+ * Check download status for an episode
+ */
+router.get("/episodes/:episodeId/download/status", requireAuth, async (req, res) => {
+    try {
+        const { episodeId } = req.params;
+
+        const cachedPath = await getCachedFilePath(episodeId);
+        const downloading = isDownloading(episodeId);
+        const progress = getDownloadProgress(episodeId);
+
+        if (cachedPath) {
+            res.json({
+                status: "cached",
+                progress: 100,
+                cached: true,
+            });
+        } else if (downloading) {
+            res.json({
+                status: "downloading",
+                progress: progress?.progress || 0,
+                cached: false,
+            });
+        } else {
+            res.json({
+                status: "not_cached",
+                progress: 0,
+                cached: false,
+            });
+        }
+    } catch (error: any) {
+        res.status(500).json({
+            error: "Failed to check download status",
+            message: error.message,
+        });
+    }
+});
+
+/**
+ * DELETE /podcasts/episodes/:episodeId/download
+ * Delete a cached episode
+ */
+router.delete("/episodes/:episodeId/download", requireAuth, async (req, res) => {
+    try {
+        const { episodeId } = req.params;
+        const userId = req.user!.id;
+
+        // Find the download record
+        const download = await prisma.podcastDownload.findUnique({
+            where: {
+                userId_episodeId: { userId, episodeId },
+            },
+        });
+
+        if (!download) {
+            return res.status(404).json({ error: "Download not found" });
+        }
+
+        // Delete the cached file
+        const fs = await import("fs/promises");
+        try {
+            await fs.unlink(download.localPath);
+            console.log(`[PODCAST-DL] Deleted cached file: ${download.localPath}`);
+        } catch (err: any) {
+            // File might already be gone, that's OK
+            if (err.code !== "ENOENT") {
+                console.warn(`[PODCAST-DL] Failed to delete file: ${err.message}`);
+            }
+        }
+
+        // Delete the database record
+        await prisma.podcastDownload.delete({
+            where: { id: download.id },
+        });
+
+        res.json({
+            success: true,
+            message: "Download deleted",
+            episodeId,
+        });
+    } catch (error: any) {
+        console.error("Error deleting download:", error);
+        res.status(500).json({
+            error: "Failed to delete download",
+            message: error.message,
+        });
+    }
+});
+
+/**
+ * POST /podcasts/episodes/:episodeId/remove-ads
+ * Download (if needed) and remove ads from an episode
+ */
+router.post("/episodes/:episodeId/remove-ads", requireAuth, async (req, res) => {
+    try {
+        const { episodeId } = req.params;
+
+        // Check if ad removal is available
+        if (!await isAdRemovalAvailable()) {
+            return res.status(503).json({
+                error: "Ad removal not available",
+                message: "Whishper service not running or OpenRouter not configured",
+            });
+        }
+
+        // Check if episode exists
+        const episode = await prisma.podcastEpisode.findUnique({
+            where: { id: episodeId },
+            select: { id: true, title: true, audioUrl: true },
+        });
+
+        if (!episode) {
+            return res.status(404).json({ error: "Episode not found" });
+        }
+
+        // Check if cached
+        let cachedPath = await getCachedFilePath(episodeId);
+
+        // If not cached, trigger download first
+        if (!cachedPath) {
+            if (!episode.audioUrl) {
+                return res.status(400).json({ error: "Episode has no audio URL" });
+            }
+
+            // Check if already downloading
+            if (isDownloading(episodeId)) {
+                return res.json({
+                    success: true,
+                    status: "downloading",
+                    message: "Episode is downloading, ad removal will run automatically when complete",
+                    episodeId,
+                    title: episode.title,
+                });
+            }
+
+            // Start download - ad removal will trigger automatically after download
+            // (via the hook in podcastDownload.ts performDownload)
+            downloadInBackground(episodeId, episode.audioUrl, req.user!.id);
+
+            return res.json({
+                success: true,
+                status: "download_started",
+                message: "Download started, ad removal will run automatically when complete",
+                episodeId,
+                title: episode.title,
+            });
+        }
+
+        // Episode is cached - trigger ad removal
+        res.json({
+            success: true,
+            status: "processing",
+            message: "Ad removal started",
+            episodeId,
+            title: episode.title,
+        });
+
+        // Process in background with user ID for notifications
+        const userId = req.user!.id;
+        processDownloadedEpisode(episodeId, cachedPath, userId)
+            .then(removed => {
+                console.log(`[AD-REMOVAL] Manual removal for ${episodeId}: ${removed ? "success" : "no ads found"}`);
+            })
+            .catch(err => {
+                console.error(`[AD-REMOVAL] Manual removal failed for ${episodeId}:`, err.message);
+            });
+
+    } catch (error: any) {
+        console.error("Ad removal trigger failed:", error);
+        res.status(500).json({
+            error: "Failed to start ad removal",
             message: error.message,
         });
     }

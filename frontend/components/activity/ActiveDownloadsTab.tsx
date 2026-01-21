@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Download, Loader2, Music, Disc, X, Trash2 } from "lucide-react";
+import { Download, Loader2, Music, Disc, X, Trash2, Sparkles, Mic } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/utils/cn";
 import { GradientSpinner } from "../ui/GradientSpinner";
@@ -94,8 +94,8 @@ export function ActiveDownloadsTab() {
         return (
             <div className="flex flex-col items-center justify-center py-12 text-center">
                 <Download className="w-8 h-8 text-white/20 mb-3" />
-                <p className="text-sm text-white/40">No active downloads</p>
-                <p className="text-xs text-white/30 mt-1">Downloads will appear here</p>
+                <p className="text-sm text-white/40">No active tasks</p>
+                <p className="text-xs text-white/30 mt-1">Downloads and ad removal will appear here</p>
             </div>
         );
     }
@@ -105,7 +105,7 @@ export function ActiveDownloadsTab() {
             {/* Header */}
             <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
                 <span className="text-xs text-white/40">
-                    {downloads.length} downloading
+                    {downloads.length} active {downloads.length === 1 ? "task" : "tasks"}
                 </span>
                 <div className="flex items-center gap-3">
                     <button
@@ -150,12 +150,14 @@ export function ActiveDownloadsTab() {
                                     </span>
                                     <span className="text-xs text-white/30">•</span>
                                     <span className="text-xs text-white/30 capitalize flex items-center gap-1">
-                                        {download.type === "album" ? (
+                                        {download.type === "ad_removal" ? (
+                                            <Sparkles className="w-3 h-3 text-[#ecb200]" />
+                                        ) : download.type === "album" ? (
                                             <Disc className="w-3 h-3" />
                                         ) : (
                                             <Music className="w-3 h-3" />
                                         )}
-                                        {download.type}
+                                        {download.type === "ad_removal" ? "Removing Ads" : download.type}
                                     </span>
                                     <span className="text-xs text-white/30">•</span>
                                     <span className="text-xs text-white/30">

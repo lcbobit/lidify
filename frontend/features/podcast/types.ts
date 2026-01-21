@@ -14,6 +14,9 @@ export interface Episode {
     episodeNumber?: number;
     season?: number;
     progress?: EpisodeProgress;
+    // Download and ad removal status
+    isDownloaded?: boolean;
+    adsRemoved?: boolean;
 }
 
 export interface Podcast {

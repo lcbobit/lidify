@@ -452,9 +452,9 @@ model DownloadJob {
   id               String    @id @default(cuid())
   correlationId    String?   @unique // UUID for reliable webhook matching
   userId           String
-  subject          String // artist name or album title
-  type             String // artist, album
-  targetMbid       String // artist MBID or release group MBID
+  subject          String // artist name, album title, or episode title
+  type             String // artist, album, ad_removal
+  targetMbid       String? // artist MBID or release group MBID (optional for ad_removal)
   status           String // pending, processing, completed, failed, exhausted
   error            String? // error message if failed
   lidarrRef        String? // Lidarr's downloadId from webhook
@@ -764,13 +764,17 @@ model PodcastProgress {
 
 // Downloaded episodes for offline playback
 model PodcastDownload {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   userId         String
   episodeId      String
-  localPath      String // Where the file is stored locally
+  localPath      String    // Where the file is stored locally
   fileSizeMb     Float
-  downloadedAt   DateTime @default(now())
-  lastAccessedAt DateTime @default(now())
+  downloadedAt   DateTime  @default(now())
+  lastAccessedAt DateTime  @default(now())
+  // Ad removal tracking
+  adsRemoved     Boolean   @default(false)
+  adsRemovedAt   DateTime?
+  adSecondsRemoved Float?  // Total seconds of ads removed (for stats)
 
   user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   episode PodcastEpisode @relation(fields: [episodeId], references: [id], onDelete: Cascade)

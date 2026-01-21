@@ -282,10 +282,15 @@ class ApiClient {
     }
 
     // Generic POST method for convenience
-    async post<T = any>(endpoint: string, data?: any): Promise<T> {
+    async post<T = any>(
+        endpoint: string,
+        data?: any,
+        options?: { timeout?: number }
+    ): Promise<T> {
         return this.request<T>(endpoint, {
             method: "POST",
             body: data ? JSON.stringify(data) : undefined,
+            timeout: options?.timeout,
         });
     }
 
@@ -1379,26 +1384,20 @@ class ApiClient {
         );
     }
 
-    // Slskd (Soulseek) - P2P Music Search & Download
+    // Soulseek - P2P Music Search & Download
     async getSlskdStatus() {
         return this.request<{ connected: boolean; username?: string }>(
-            "/slskd/status"
+            "/soulseek/status"
         );
     }
 
     async searchSoulseek(query: string) {
-        return this.request<{ searchId: string; message: string }>(
-            "/slskd/search",
+        return this.request<{ results: any[]; count: number }>(
+            "/soulseek/search-query",
             {
                 method: "POST",
                 body: JSON.stringify({ query }),
             }
-        );
-    }
-
-    async getSoulseekResults(searchId: string) {
-        return this.request<{ results: any[]; count: number }>(
-            `/slskd/search/${searchId}`
         );
     }
 
@@ -1414,7 +1413,7 @@ class ApiClient {
             success: boolean;
             message: string;
             filename: string;
-        }>("/slskd/download", {
+        }>("/soulseek/download-file", {
             method: "POST",
             body: JSON.stringify({
                 username,
@@ -1425,12 +1424,6 @@ class ApiClient {
                 album,
             }),
         });
-    }
-
-    async getSlskdDownloads() {
-        return this.request<{ downloads: any[]; count: number }>(
-            "/slskd/downloads"
-        );
     }
 
     // Programmatic Mixes
@@ -1837,6 +1830,61 @@ class ApiClient {
         id: string
     ): Promise<{ success: boolean; newJobId?: string }> {
         return this.post(`/notifications/downloads/${id}/retry`);
+    }
+
+    // ============================================
+    // Podcast Ad Removal
+    // ============================================
+
+    async getAdRemovalStatus(): Promise<{
+        enabled: boolean;
+        available: boolean;
+        model: string;
+        whisperModel: string;
+        whisperUrl: string;
+    }> {
+        return this.get("/podcasts/ad-removal/status");
+    }
+
+    async downloadPodcastEpisode(
+        episodeId: string,
+        removeAds: boolean = false
+    ): Promise<{
+        success: boolean;
+        status: "started" | "downloading" | "already_cached";
+        message: string;
+        episodeId: string;
+        title: string;
+        progress?: number;
+        removeAds?: boolean;
+    }> {
+        return this.post(`/podcasts/episodes/${episodeId}/download${removeAds ? "?removeAds=true" : ""}`);
+    }
+
+    async getEpisodeDownloadStatus(episodeId: string): Promise<{
+        status: "cached" | "downloading" | "not_cached";
+        progress: number;
+        cached: boolean;
+    }> {
+        return this.get(`/podcasts/episodes/${episodeId}/download/status`);
+    }
+
+    async removeAdsFromEpisode(episodeId: string): Promise<{
+        success: boolean;
+        status: "processing" | "download_started" | "downloading";
+        message: string;
+        episodeId: string;
+        title: string;
+    }> {
+        return this.post(`/podcasts/episodes/${episodeId}/remove-ads`);
+    }
+
+    async deleteDownloadedEpisode(episodeId: string): Promise<{
+        success: boolean;
+        message: string;
+        episodeId: string;
+    }> {
+        return this.delete(`/podcasts/episodes/${episodeId}/download`);
     }
 }
 
