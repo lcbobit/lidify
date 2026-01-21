@@ -3,6 +3,10 @@ import { config } from "../config";
 import fs from "fs/promises";
 import path from "path";
 import axios from "axios";
+// Ad removal is triggered separately via the /remove-ads endpoint
+
+// Maximum cached episodes per podcast (FIFO cleanup when exceeded)
+const MAX_EPISODES_PER_PODCAST = parseInt(process.env.PODCAST_MAX_EPISODES_CACHED || "10", 10);
 
 /**
  * PodcastDownloadService - Background download and caching of podcast episodes
@@ -343,12 +347,44 @@ async function performDownload(
                 lastAccessedAt: new Date()
             }
         });
-        
+
         console.log(`[PODCAST-DL] Successfully cached episode ${episodeId} (${fileSizeMb.toFixed(1)}MB)`);
-        
+
+        // Enforce per-podcast limit (cleanup oldest if over limit)
+        await enforcePerPodcastLimit(episodeId);
+
+        // Check if user has autoRemoveAds enabled and trigger ad removal
+        try {
+            const episode = await prisma.podcastEpisode.findUnique({
+                where: { id: episodeId },
+                select: { podcastId: true },
+            });
+
+            if (episode) {
+                const subscription = await prisma.podcastSubscription.findUnique({
+                    where: {
+                        userId_podcastId: { userId, podcastId: episode.podcastId },
+                    },
+                });
+
+                if (subscription?.autoRemoveAds) {
+                    const { processDownloadedEpisode } = await import("./podcastAdRemoval");
+                    console.log(`[PODCAST-DL] Auto-removing ads for episode ${episodeId}`);
+
+                    // Run ad removal in background (don't await)
+                    processDownloadedEpisode(episodeId, finalPath, userId).catch(err => {
+                        console.error(`[PODCAST-DL] Auto ad removal failed for ${episodeId}:`, err.message);
+                    });
+                }
+            }
+        } catch (err: any) {
+            // Non-fatal - ad removal failure shouldn't fail the download
+            console.error(`[PODCAST-DL] Error checking autoRemoveAds:`, err.message);
+        }
+
         // Clean up progress tracking
         downloadProgress.delete(episodeId);
-        
+
     } catch (error: any) {
         // Clean up temp file and progress tracking on error
         await fs.unlink(tempPath).catch(() => {});
@@ -405,7 +441,72 @@ export async function cleanupExpiredCache(): Promise<{ deleted: number; freedMb:
     }
     
     console.log(`[PODCAST-DL] Cleanup complete: ${deleted} files deleted, ${freedMb.toFixed(1)}MB freed`);
-    
+
+    return { deleted, freedMb };
+}
+
+/**
+ * Enforce per-podcast episode limit (FIFO by downloadedAt)
+ * Deletes oldest episodes when a podcast exceeds MAX_EPISODES_PER_PODCAST
+ */
+export async function enforcePerPodcastLimit(episodeId: string): Promise<{ deleted: number; freedMb: number }> {
+    // Get the podcast ID for this episode
+    const episode = await prisma.podcastEpisode.findUnique({
+        where: { id: episodeId },
+        select: { podcastId: true }
+    });
+
+    if (!episode) {
+        return { deleted: 0, freedMb: 0 };
+    }
+
+    // Find all cached episodes for this podcast, ordered by downloadedAt (oldest first)
+    const downloads = await prisma.podcastDownload.findMany({
+        where: {
+            episode: { podcastId: episode.podcastId }
+        },
+        orderBy: { downloadedAt: 'asc' },
+        include: {
+            episode: { select: { title: true } }
+        }
+    });
+
+    const excessCount = downloads.length - MAX_EPISODES_PER_PODCAST;
+    if (excessCount <= 0) {
+        return { deleted: 0, freedMb: 0 };
+    }
+
+    console.log(`[PODCAST-DL] Podcast has ${downloads.length} cached episodes, limit is ${MAX_EPISODES_PER_PODCAST}, removing ${excessCount} oldest`);
+
+    let deleted = 0;
+    let freedMb = 0;
+
+    // Delete the oldest episodes that exceed the limit
+    const toDelete = downloads.slice(0, excessCount);
+
+    for (const download of toDelete) {
+        try {
+            // Delete file from disk
+            await fs.unlink(download.localPath).catch(() => {});
+
+            // Delete database record
+            await prisma.podcastDownload.delete({
+                where: { id: download.id }
+            });
+
+            deleted++;
+            freedMb += download.fileSizeMb;
+
+            console.log(`[PODCAST-DL] Removed old episode cache: "${download.episode?.title || download.episodeId}"`);
+        } catch (err: any) {
+            console.error(`[PODCAST-DL] Failed to delete ${download.localPath}:`, err.message);
+        }
+    }
+
+    if (deleted > 0) {
+        console.log(`[PODCAST-DL] Per-podcast cleanup: ${deleted} episodes removed, ${freedMb.toFixed(1)}MB freed`);
+    }
+
     return { deleted, freedMb };
 }
 

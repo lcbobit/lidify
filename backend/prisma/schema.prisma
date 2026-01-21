@@ -735,6 +735,10 @@ model PodcastSubscription {
   podcastId    String
   subscribedAt DateTime @default(now())
 
+  // Per-subscription automation settings
+  autoDownload  Boolean @default(false)
+  autoRemoveAds Boolean @default(false)
+
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   podcast Podcast @relation(fields: [podcastId], references: [id], onDelete: Cascade)
 

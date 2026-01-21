@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAudio } from "@/lib/audio-context";
@@ -16,6 +16,14 @@ export function usePodcastActions(podcastId: string) {
 
     const [isSubscribing, setIsSubscribing] = useState(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [adRemovalAvailable, setAdRemovalAvailable] = useState(false);
+
+    // Check if ad removal is available globally
+    useEffect(() => {
+        api.getAdRemovalStatus()
+            .then((status) => setAdRemovalAvailable(status.available))
+            .catch(() => setAdRemovalAvailable(false));
+    }, []);
 
     const handleSubscribe = useCallback(
         async (previewData: PodcastPreview | null) => {
@@ -91,6 +99,23 @@ export function usePodcastActions(podcastId: string) {
         [podcastId, currentPodcast]
     );
 
+    const handleSetAutoMode = useCallback(
+        async (mode: "off" | "download" | "download_and_adfree") => {
+            try {
+                const settings = {
+                    autoDownload: mode === "download" || mode === "download_and_adfree",
+                    autoRemoveAds: mode === "download_and_adfree",
+                };
+                await api.updatePodcastSubscription(podcastId, settings);
+                // Invalidate to refresh the podcast data with new settings
+                queryClient.invalidateQueries({ queryKey: queryKeys.podcast(podcastId) });
+            } catch (error) {
+                console.error("Failed to update auto mode:", error);
+            }
+        },
+        [podcastId, queryClient]
+    );
+
     return {
         isSubscribing,
         showDeleteConfirm,
@@ -103,6 +128,9 @@ export function usePodcastActions(podcastId: string) {
         isPlaying,
         pause,
         resume,
+        // Auto-download/ad-removal
+        adRemovalAvailable,
+        handleSetAutoMode,
     };
 }
 

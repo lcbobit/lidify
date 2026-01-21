@@ -45,6 +45,8 @@ export default function PodcastDetailPage() {
         handlePlayPauseEpisode,
         isEpisodePlaying,
         isPlaying,
+        adRemovalAvailable,
+        handleSetAutoMode,
     } = usePodcastActions(podcastId);
 
     // Loading state
@@ -92,6 +94,7 @@ export default function PodcastDetailPage() {
             >
                 <PodcastActionBar
                     isSubscribed={isSubscribed}
+                    podcastId={podcast?.id}
                     feedUrl={podcast?.feedUrl || previewData?.feedUrl}
                     colors={colors}
                     isSubscribing={isSubscribing}
@@ -99,6 +102,10 @@ export default function PodcastDetailPage() {
                     onSubscribe={() => handleSubscribe(previewData)}
                     onRemove={handleRemovePodcast}
                     onShowDeleteConfirm={setShowDeleteConfirm}
+                    autoDownload={podcast?.autoDownload}
+                    autoRemoveAds={podcast?.autoRemoveAds}
+                    adRemovalAvailable={adRemovalAvailable}
+                    onSetAutoMode={handleSetAutoMode}
                 />
             </PodcastHero>
 

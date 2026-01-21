@@ -1,9 +1,11 @@
 "use client";
 
-import { ExternalLink, Trash2, Plus, Loader2 } from "lucide-react";
+import { useState } from "react";
+import { ExternalLink, Trash2, Plus, Loader2, Download, Sparkles, Link2, Check } from "lucide-react";
 
 interface PodcastActionBarProps {
     isSubscribed: boolean;
+    podcastId?: string;
     feedUrl?: string;
     colors: any;
     isSubscribing: boolean;
@@ -11,20 +13,62 @@ interface PodcastActionBarProps {
     onSubscribe: () => void;
     onRemove: () => void;
     onShowDeleteConfirm: (show: boolean) => void;
+    // Auto-download/ad-removal settings
+    autoDownload?: boolean;
+    autoRemoveAds?: boolean;
+    adRemovalAvailable?: boolean;
+    onSetAutoMode?: (mode: "off" | "download" | "download_and_adfree") => void;
 }
+
+type AutoMode = "off" | "download" | "download_and_adfree";
 
 export function PodcastActionBar({
     isSubscribed,
+    podcastId,
     feedUrl,
     isSubscribing,
     showDeleteConfirm,
     onSubscribe,
     onRemove,
     onShowDeleteConfirm,
+    autoDownload = false,
+    autoRemoveAds = false,
+    adRemovalAvailable = false,
+    onSetAutoMode,
 }: PodcastActionBarProps) {
+    const [m3uCopied, setM3uCopied] = useState(false);
+
+    // Derive current mode from props
+    const currentMode: AutoMode = autoRemoveAds ? "download_and_adfree" : autoDownload ? "download" : "off";
+
+    const handleCopyM3U = async () => {
+        if (!podcastId) return;
+
+        const baseUrl = window.location.origin;
+        const m3uUrl = `${baseUrl}/api/podcasts/${podcastId}/playlist.m3u`;
+
+        try {
+            await navigator.clipboard.writeText(m3uUrl);
+            setM3uCopied(true);
+            setTimeout(() => setM3uCopied(false), 2000);
+        } catch (err) {
+            console.error("Failed to copy M3U URL:", err);
+        }
+    };
+
+    const handleModeSelect = (mode: AutoMode) => {
+        if (!onSetAutoMode) return;
+        // If clicking the currently selected mode, turn it off
+        if (mode === currentMode) {
+            onSetAutoMode("off");
+        } else {
+            onSetAutoMode(mode);
+        }
+    };
+
     return (
-        <div className="flex items-center gap-4">
-            {/* Subscribe Button - Yellow primary action */}
+        <div className="flex flex-wrap items-center gap-3">
+            {/* Subscribe Button */}
             {!isSubscribed && (
                 <button
                     onClick={onSubscribe}
@@ -56,6 +100,64 @@ export function PodcastActionBar({
                 >
                     <ExternalLink className="w-5 h-5" />
                 </a>
+            )}
+
+            {/* Auto-download segmented control */}
+            {isSubscribed && onSetAutoMode && (
+                <div className="flex rounded-full bg-white/5 p-1">
+                    <button
+                        onClick={() => handleModeSelect("download")}
+                        className={`px-3 py-1.5 rounded-full text-sm font-medium transition-all flex items-center gap-1.5 ${
+                            currentMode === "download"
+                                ? "bg-green-500/30 text-green-400"
+                                : "text-white/60 hover:text-white/80 hover:bg-white/5"
+                        }`}
+                        title="Automatically download new episodes"
+                    >
+                        <Download className="w-4 h-4" />
+                        <span className="hidden md:inline">Auto-download</span>
+                    </button>
+
+                    {adRemovalAvailable && (
+                        <button
+                            onClick={() => handleModeSelect("download_and_adfree")}
+                            className={`px-3 py-1.5 rounded-full text-sm font-medium transition-all flex items-center gap-1.5 ${
+                                currentMode === "download_and_adfree"
+                                    ? "bg-purple-500/30 text-purple-400"
+                                    : "text-white/60 hover:text-white/80 hover:bg-white/5"
+                            }`}
+                            title="Automatically download and remove ads from new episodes"
+                        >
+                            <Sparkles className="w-4 h-4" />
+                            <span className="hidden md:inline">Auto + Ad-removal</span>
+                        </button>
+                    )}
+                </div>
+            )}
+
+            {/* M3U Copy Button */}
+            {isSubscribed && podcastId && (
+                <button
+                    onClick={handleCopyM3U}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-all ${
+                        m3uCopied
+                            ? "bg-green-500/20 text-green-400"
+                            : "bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/70"
+                    }`}
+                    title="Copy M3U playlist URL for external podcast apps"
+                >
+                    {m3uCopied ? (
+                        <>
+                            <Check className="w-4 h-4" />
+                            <span className="hidden md:inline">Copied!</span>
+                        </>
+                    ) : (
+                        <>
+                            <Link2 className="w-4 h-4" />
+                            <span className="hidden md:inline">M3U</span>
+                        </>
+                    )}
+                </button>
             )}
 
             {/* Spacer */}

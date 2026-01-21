@@ -1329,6 +1329,20 @@ class ApiClient {
         );
     }
 
+    async updatePodcastSubscription(
+        podcastId: string,
+        settings: { autoDownload?: boolean; autoRemoveAds?: boolean }
+    ): Promise<{
+        success: boolean;
+        autoDownload: boolean;
+        autoRemoveAds: boolean;
+    }> {
+        return this.request(`/podcasts/${podcastId}/subscription`, {
+            method: "PATCH",
+            body: JSON.stringify(settings),
+        });
+    }
+
     // Playback State (cross-device sync)
     async getPlaybackState() {
         return this.request<any>("/playback-state");

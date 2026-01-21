@@ -16,6 +16,7 @@ import { startDiscoverWeeklyCron, stopDiscoverWeeklyCron } from "./discoverCron"
 import { runDataIntegrityCheck } from "./dataIntegrity";
 import { simpleDownloadManager } from "../services/simpleDownloadManager";
 import { cleanupExternalImageCache } from "../services/imageCacheCleanup";
+import { refreshAllPodcasts } from "../services/podcastRefresh";
 import { config } from "../config";
 
 // Track intervals and timeouts for cleanup
@@ -262,6 +263,22 @@ setTimeout(async () => {
     }
     }, 30 * 1000) // 30 seconds after startup
 );
+
+// Podcast refresh: check all subscribed podcasts for new episodes every 24 hours
+intervals.push(
+    setInterval(async () => {
+        try {
+            const result = await refreshAllPodcasts();
+            console.log(
+                `🎙️ Podcast refresh complete: ${result.refreshed} podcasts, ${result.newEpisodes} new episodes, ${result.errors} errors`
+            );
+        } catch (err) {
+            console.error("Scheduled podcast refresh failed:", err);
+        }
+    }, 24 * 60 * 60 * 1000) // Every 24 hours
+);
+
+console.log("Podcast refresh scheduled (every 24 hours)");
 
 /**
  * Gracefully shutdown all workers and cleanup resources

@@ -25,7 +25,9 @@ export interface Podcast {
     author: string;
     description?: string;
     coverUrl: string;
-    autoDownloadEpisodes: boolean;
+    // Per-subscription automation settings
+    autoDownload: boolean;
+    autoRemoveAds: boolean;
     genres?: string[];
     feedUrl?: string;
     episodes: Episode[];
