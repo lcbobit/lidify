@@ -9,8 +9,205 @@ import fs from "fs";
 import PQueue from "p-queue";
 import { getSystemSettings } from "../utils/systemSettings";
 import { sessionLog } from "../utils/playlistLogger";
+import { redisClient } from "../utils/redis";
+
+// Debug mode for verbose search/ranking logs
+const SOULSEEK_DEBUG = process.env.SOULSEEK_DEBUG === "true";
+
+function debugLog(message: string): void {
+    if (SOULSEEK_DEBUG) {
+        sessionLog("SOULSEEK", `[DEBUG] ${message}`);
+    }
+}
 
 const BITRATE_ATTR = 0;
+
+// =============================================================================
+// Rate Limiter - Prevents Soulseek server bans from too many searches
+// Based on slsk-batchdl's proven approach: 34 searches per 220 seconds
+// =============================================================================
+
+class RateLimitedSemaphore {
+    private tokens: number;
+    private readonly maxTokens: number;
+    private readonly refillIntervalMs: number;
+    private lastRefill: number;
+
+    constructor(maxSearches: number = 34, windowSeconds: number = 220) {
+        this.maxTokens = maxSearches;
+        this.tokens = maxSearches;
+        this.refillIntervalMs = windowSeconds * 1000;
+        this.lastRefill = Date.now();
+    }
+
+    /**
+     * Acquire a search token, waiting if rate limit is exceeded
+     */
+    async acquire(): Promise<void> {
+        this.tryRefill();
+        
+        while (this.tokens <= 0) {
+            const waitTime = this.refillIntervalMs - (Date.now() - this.lastRefill);
+            if (waitTime > 0) {
+                sessionLog(
+                    "SOULSEEK",
+                    `Rate limit reached, waiting ${Math.ceil(waitTime / 1000)}s for token refresh...`,
+                    "WARN"
+                );
+                await new Promise(r => setTimeout(r, Math.min(waitTime, 5000)));
+            }
+            this.tryRefill();
+        }
+        
+        this.tokens--;
+    }
+
+    /**
+     * Refill tokens if the time window has passed
+     */
+    private tryRefill(): void {
+        const now = Date.now();
+        if (now - this.lastRefill >= this.refillIntervalMs) {
+            this.tokens = this.maxTokens;
+            this.lastRefill = now;
+            sessionLog("SOULSEEK", `Search tokens refilled (${this.maxTokens} available)`);
+        }
+    }
+
+    /**
+     * Get current status for debugging
+     */
+    getStatus(): { tokens: number; maxTokens: number; nextRefillMs: number } {
+        return {
+            tokens: this.tokens,
+            maxTokens: this.maxTokens,
+            nextRefillMs: Math.max(0, this.refillIntervalMs - (Date.now() - this.lastRefill)),
+        };
+    }
+}
+
+// =============================================================================
+// User Reputation System - Track download failures per user
+// Stored in Redis with 24-hour TTL for automatic reset
+// =============================================================================
+
+const USER_REP_PREFIX = "slsk:user:rep:";
+const USER_REP_TTL_SECONDS = 24 * 60 * 60; // 24 hours
+
+// Thresholds for user reputation
+const REP_DOWNRANK_THRESHOLD = 1;    // 1+ failures: sort results lower
+const REP_STRONG_DOWNRANK_THRESHOLD = 3; // 3+ failures: push to bottom
+const REP_SKIP_THRESHOLD = 4;        // 4+ failures: skip user entirely
+
+interface UserReputation {
+    failures: number;
+    lastFailure: number;
+}
+
+async function getUserReputation(username: string): Promise<UserReputation> {
+    try {
+        const data = await redisClient.hGetAll(`${USER_REP_PREFIX}${username}`);
+        if (!data || !data.failures) {
+            return { failures: 0, lastFailure: 0 };
+        }
+        return {
+            failures: parseInt(data.failures, 10) || 0,
+            lastFailure: parseInt(data.lastFailure, 10) || 0,
+        };
+    } catch {
+        return { failures: 0, lastFailure: 0 };
+    }
+}
+
+async function recordUserFailure(username: string): Promise<void> {
+    try {
+        const key = `${USER_REP_PREFIX}${username}`;
+        // Use individual commands since multi() chaining works differently in redis v4
+        await redisClient.hIncrBy(key, "failures", 1);
+        await redisClient.hSet(key, "lastFailure", Date.now().toString());
+        await redisClient.expire(key, USER_REP_TTL_SECONDS);
+        
+        const rep = await getUserReputation(username);
+        sessionLog(
+            "SOULSEEK",
+            `User ${username} failure recorded (total: ${rep.failures})`,
+            "WARN"
+        );
+    } catch (err: any) {
+        sessionLog(
+            "SOULSEEK",
+            `Failed to record user failure for ${username}: ${err?.message || err}`,
+            "ERROR"
+        );
+    }
+}
+
+async function recordUserSuccess(username: string): Promise<void> {
+    try {
+        const key = `${USER_REP_PREFIX}${username}`;
+        const current = await getUserReputation(username);
+        
+        if (current.failures > 0) {
+            // Decrement failures on success (reward good behavior)
+            await redisClient.hIncrBy(key, "failures", -1);
+            await redisClient.expire(key, USER_REP_TTL_SECONDS);
+            
+            sessionLog(
+                "SOULSEEK",
+                `User ${username} success recorded (failures now: ${current.failures - 1})`
+            );
+        }
+    } catch (err: any) {
+        sessionLog(
+            "SOULSEEK",
+            `Failed to record user success for ${username}: ${err?.message || err}`,
+            "ERROR"
+        );
+    }
+}
+
+async function shouldSkipUser(username: string): Promise<boolean> {
+    const rep = await getUserReputation(username);
+    return rep.failures >= REP_SKIP_THRESHOLD;
+}
+
+async function getReputationPenalty(username: string): Promise<number> {
+    const rep = await getUserReputation(username);
+    
+    if (rep.failures >= REP_STRONG_DOWNRANK_THRESHOLD) {
+        return -50; // Strong penalty
+    } else if (rep.failures >= REP_DOWNRANK_THRESHOLD) {
+        return -20; // Mild penalty
+    }
+    return 0;
+}
+
+// =============================================================================
+// Diacritics removal for search fallbacks
+// =============================================================================
+
+const DIACRITICS_MAP: Record<string, string> = {
+    'à': 'a', 'á': 'a', 'â': 'a', 'ã': 'a', 'ä': 'a', 'å': 'a', 'æ': 'ae',
+    'ç': 'c', 'è': 'e', 'é': 'e', 'ê': 'e', 'ë': 'e', 'ì': 'i', 'í': 'i',
+    'î': 'i', 'ï': 'i', 'ñ': 'n', 'ò': 'o', 'ó': 'o', 'ô': 'o', 'õ': 'o',
+    'ö': 'o', 'ø': 'o', 'ù': 'u', 'ú': 'u', 'û': 'u', 'ü': 'u', 'ý': 'y',
+    'ÿ': 'y', 'ß': 'ss', 'œ': 'oe',
+    'À': 'A', 'Á': 'A', 'Â': 'A', 'Ã': 'A', 'Ä': 'A', 'Å': 'A', 'Æ': 'AE',
+    'Ç': 'C', 'È': 'E', 'É': 'E', 'Ê': 'E', 'Ë': 'E', 'Ì': 'I', 'Í': 'I',
+    'Î': 'I', 'Ï': 'I', 'Ñ': 'N', 'Ò': 'O', 'Ó': 'O', 'Ô': 'O', 'Õ': 'O',
+    'Ö': 'O', 'Ø': 'O', 'Ù': 'U', 'Ú': 'U', 'Û': 'U', 'Ü': 'U', 'Ý': 'Y',
+    'Ÿ': 'Y', 'Œ': 'OE',
+};
+
+function removeDiacritics(str: string): string {
+    return str.replace(/[àáâãäåæçèéêëìíîïñòóôõöøùúûüýÿßœÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝŸŒ]/g, 
+        char => DIACRITICS_MAP[char] || char
+    );
+}
+
+function hasDiacritics(str: string): boolean {
+    return /[àáâãäåæçèéêëìíîïñòóôõöøùúûüýÿßœÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝŸŒ]/.test(str);
+}
 
 export interface SearchResult {
     user: string;
@@ -43,8 +240,10 @@ class SoulseekService {
     private connectPromise: Promise<void> | null = null;
     private lastConnectAttempt = 0;
     private readonly RECONNECT_COOLDOWN = 30000; // 30 seconds between reconnect attempts
-    private readonly DOWNLOAD_TIMEOUT = 180000; // 3 minutes per download attempt
-    private readonly MAX_DOWNLOAD_RETRIES = 3; // Try up to 3 different users
+    private readonly CONNECTION_TIMEOUT = 10000; // 10 seconds to establish connection
+    private readonly INACTIVITY_TIMEOUT = 30000; // 30 seconds with no data = stalled
+    private readonly MAX_DOWNLOAD_TIMEOUT = 300000; // 5 minutes absolute max (safety net)
+    private readonly MAX_DOWNLOAD_RETRIES = 5; // Try up to 5 different users
 
     // Connection health tracking
     private connectedAt: Date | null = null;
@@ -53,8 +252,13 @@ class SoulseekService {
     private consecutiveErrors = 0; // Separate counter for actual errors (not empty results)
     private totalSearches = 0;
     private totalSuccessfulSearches = 0;
+
+    private readonly SEARCH_CACHE_TTL_SECONDS = 24 * 60 * 60;
     private readonly MAX_CONSECUTIVE_EMPTY = 3; // After 3 empty searches, force reconnect
     private readonly MAX_CONSECUTIVE_ERRORS = 2; // After 2 errors, force reconnect
+
+    // Rate limiter: 34 searches per 220 seconds (slsk-batchdl proven safe values)
+    private readonly searchRateLimiter = new RateLimitedSemaphore(34, 220);
 
     /**
      * Normalize track title for better search results
@@ -96,6 +300,132 @@ class SoulseekService {
         }
 
         return normalized;
+    }
+
+    private normalizeForCacheKey(value: string): string {
+        return value
+            .toLowerCase()
+            .replace(/[''′`]/g, "'")
+            .replace(/[^a-z0-9\s]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+    }
+
+    private getSearchCacheKey(artistName: string, trackTitle: string): string {
+        const artist = this.normalizeForCacheKey(artistName);
+        const title = this.normalizeForCacheKey(this.normalizeTrackTitle(trackTitle));
+        return `slsk:match:${artist}:${title}`;
+    }
+
+    private async getCachedMatches(
+        artistName: string,
+        trackTitle: string
+    ): Promise<TrackMatch[] | null> {
+        try {
+            const key = this.getSearchCacheKey(artistName, trackTitle);
+            const raw = await redisClient.get(key);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (!Array.isArray(parsed)) return null;
+
+            return parsed
+                .filter(
+                    (m: any) =>
+                        m &&
+                        typeof m.username === "string" &&
+                        typeof m.fullPath === "string" &&
+                        typeof m.filename === "string"
+                )
+                .map(
+                    (m: any): TrackMatch => ({
+                        username: m.username,
+                        filename: m.filename,
+                        fullPath: m.fullPath,
+                        size: Number(m.size ?? 0),
+                        bitRate: m.bitRate ?? undefined,
+                        quality:
+                            typeof m.quality === "string"
+                                ? m.quality
+                                : this.getQualityFromFilename(
+                                      m.filename,
+                                      m.bitRate
+                                  ),
+                        score: Number(m.score ?? 0),
+                    })
+                );
+        } catch {
+            return null;
+        }
+    }
+
+    private async setCachedMatches(
+        artistName: string,
+        trackTitle: string,
+        matches: TrackMatch[]
+    ): Promise<void> {
+        try {
+            const key = this.getSearchCacheKey(artistName, trackTitle);
+            // Keep a small payload
+            const compact = matches.slice(0, 10).map((m) => ({
+                username: m.username,
+                filename: m.filename,
+                fullPath: m.fullPath,
+                size: m.size,
+                bitRate: m.bitRate,
+                quality: m.quality,
+                score: m.score,
+            }));
+            await redisClient.setex(
+                key,
+                this.SEARCH_CACHE_TTL_SECONDS,
+                JSON.stringify(compact)
+            );
+        } catch {
+            // Ignore cache errors
+        }
+    }
+
+    private buildSearchQueries(artistName: string, trackTitle: string): string[] {
+        const normalizedTitle = this.normalizeTrackTitle(trackTitle);
+
+        // Extra aggressive cleanup for playlist titles (soundtrack naming is noisy)
+        const titleNoFrom = normalizedTitle
+            .replace(/\s*\(from[^)]*\)\s*/gi, " ")
+            .replace(/\s*-\s*from\s+.*$/i, "")
+            .replace(/\s*\(original\s+motion\s+picture\s+score\)\s*/gi, " ")
+            .replace(/\s*\(original\s+soundtrack\)\s*/gi, " ")
+            .replace(/\s*\boriginal\s+motion\s+picture\s+score\b/gi, " ")
+            .replace(/\s*\boriginal\s+soundtrack\b/gi, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        const base = `${artistName} ${titleNoFrom}`.trim();
+
+        // Fallback query: first 6 words of title (reduces over-specific searches)
+        const titleWords = titleNoFrom.split(/\s+/).slice(0, 6).join(" ");
+        const short = `${artistName} ${titleWords}`.trim();
+
+        const queries = [base];
+        if (short !== base) queries.push(short);
+        
+        // Add diacritics-free variants if the query contains accented characters
+        // e.g., "Bjork" instead of "Bjork", "Sigur Ros" instead of "Sigur Ros"
+        if (hasDiacritics(base)) {
+            const noDiacriticsBase = removeDiacritics(base);
+            if (noDiacriticsBase !== base) {
+                queries.push(noDiacriticsBase);
+            }
+        }
+        
+        // Title-only fallback for rare tracks where artist name might be wrong/different
+        if (titleNoFrom.length >= 5) {
+            const titleOnly = titleNoFrom;
+            if (!queries.includes(titleOnly)) {
+                queries.push(titleOnly);
+            }
+        }
+        
+        return Array.from(new Set(queries));
     }
 
     private flattenSearchResults(results: Array<any>): SearchResult[] {
@@ -253,7 +583,15 @@ class SoulseekService {
     async searchTrack(
         artistName: string,
         trackTitle: string,
-        isRetry: boolean = false
+        isRetry: boolean = false,
+        options?: {
+            timeoutMs?: number;
+            queryOverride?: string;
+            preferFlac?: boolean;
+            allowMp3320Fallback?: boolean;
+            allowMp3256Fallback?: boolean;
+            skipCache?: boolean;
+        }
     ): Promise<SearchTrackResult> {
         this.totalSearches++;
         const searchId = this.totalSearches;
@@ -281,17 +619,82 @@ class SoulseekService {
             return { found: false, bestMatch: null, allMatches: [] };
         }
 
-        // Normalize title to extract main song name (removes live/remaster info)
-        const normalizedTitle = this.normalizeTrackTitle(trackTitle);
-        const useNormalized = normalizedTitle !== trackTitle;
+        if (!options?.skipCache) {
+            const cached = await this.getCachedMatches(artistName, trackTitle);
+            if (cached && cached.length > 0) {
+                const qualityFiltered = this.selectMatchesByQuality(cached, options);
+                if (qualityFiltered && qualityFiltered.length > 0) {
+                    // Validate cached matches against the title using the basename.
+                    // Older cache entries may be polluted by folder-name matches.
+                    const hasTitleSignal = (filename: string, title: string): boolean => {
+                        const normalizedTitle = title
+                            .toLowerCase()
+                            .replace(/[^a-z0-9\s]/g, "")
+                            .replace(/^\d+\s*[-.]?\s*/, "");
+                        const normalizedFilename = (filename || "")
+                            .toLowerCase()
+                            .replace(/[^a-z0-9]/g, "")
+                            .replace(/^\d+[-.]?/, "");
 
-        const query = `${artistName} ${normalizedTitle}`;
-        if (useNormalized) {
-            sessionLog(
-                "SOULSEEK",
-                `[Search #${searchId}] Normalized: "${trackTitle}" → "${normalizedTitle}"`
-            );
+                        const titleNoSpaces = normalizedTitle.replace(/\s/g, "");
+                        if (
+                            titleNoSpaces.length > 0 &&
+                            normalizedFilename.includes(titleNoSpaces)
+                        ) {
+                            return true;
+                        }
+
+                        const titleWords = normalizedTitle
+                            .split(/\s+/)
+                            .filter((w) => w.length > 2)
+                            .slice(0, 3);
+                        if (
+                            titleWords.length > 0 &&
+                            titleWords.every((w) => normalizedFilename.includes(w))
+                        ) {
+                            return true;
+                        }
+
+                        return (
+                            titleWords.length > 0 &&
+                            titleWords.some(
+                                (w) =>
+                                    w.length > 4 &&
+                                    normalizedFilename.includes(w)
+                            )
+                        );
+                    };
+
+                    const filtered = qualityFiltered.filter((m) =>
+                        hasTitleSignal(m.filename, trackTitle)
+                    );
+                    if (filtered.length > 0) {
+                        const best = filtered[0];
+                        sessionLog(
+                            "SOULSEEK",
+                            `[Search #${searchId}] Cache hit: ${best.filename} | ${best.quality} | ${Math.round(
+                                best.size / 1024 / 1024
+                            )}MB | User: ${best.username} | Score: ${best.score}`
+                        );
+                        return {
+                            found: true,
+                            bestMatch: best,
+                            allMatches: filtered,
+                        };
+                    }
+                    // Cached matches exist but don't look like the requested title - fall back to live search.
+                }
+            }
         }
+
+        const timeoutMs = options?.timeoutMs ?? 8000;
+        const query = options?.queryOverride
+            ? options.queryOverride
+            : this.buildSearchQueries(artistName, trackTitle)[0];
+        
+        // Rate limit: acquire token before searching (prevents server bans)
+        await this.searchRateLimiter.acquire();
+        
         sessionLog(
             "SOULSEEK",
             `[Search #${searchId}] Searching: "${query}" (connected ${connectionAge}s, ${this.consecutiveEmptySearches} consecutive empty)`
@@ -299,7 +702,7 @@ class SoulseekService {
         try {
             const searchStartTime = Date.now();
             const rawResults = await this.client.search(query, {
-                timeout: 8000, // 8 seconds - most results arrive quickly
+                timeout: timeoutMs,
             });
             const searchDuration = Date.now() - searchStartTime;
             const results = this.flattenSearchResults(rawResults);
@@ -312,18 +715,15 @@ class SoulseekService {
                     "WARN"
                 );
 
-                if (
-                    !isRetry &&
-                    this.consecutiveEmptySearches >=
-                        this.MAX_CONSECUTIVE_EMPTY
-                ) {
+                // Force reconnect if too many consecutive empty searches (zombie connection)
+                if (this.consecutiveEmptySearches >= this.MAX_CONSECUTIVE_EMPTY) {
                     sessionLog(
                         "SOULSEEK",
-                        `[Search #${searchId}] Too many consecutive empty searches, forcing reconnect and retry...`,
+                        `Too many empty searches (${this.consecutiveEmptySearches}) - forcing reconnect`,
                         "WARN"
                     );
                     this.forceDisconnect();
-                    return await this.searchTrack(artistName, trackTitle, true);
+                    this.consecutiveEmptySearches = 0;
                 }
 
                 return { found: false, bestMatch: null, allMatches: [] };
@@ -369,10 +769,18 @@ class SoulseekService {
                 return { found: false, bestMatch: null, allMatches: [] };
             }
 
-            const rankedMatches = this.rankAllResults(
+            const rankedMatchesRaw = this.rankAllResults(
                 audioFiles,
                 artistName,
                 trackTitle
+            );
+
+            // Apply user reputation penalties (downrank/skip users with failures)
+            const reputationAdjusted = await this.applyReputationToMatches(rankedMatchesRaw);
+
+            const rankedMatches = this.selectMatchesByQuality(
+                reputationAdjusted,
+                options
             );
 
             if (rankedMatches.length === 0) {
@@ -381,6 +789,10 @@ class SoulseekService {
                     `[Search #${searchId}] No suitable match found from ${audioFiles.length} audio files`,
                     "WARN"
                 );
+                if (SOULSEEK_DEBUG && audioFiles.length > 0) {
+                    // Show what we rejected when debug is on
+                    debugLog(`Search #${searchId} rejected all ${audioFiles.length} candidates. Enable SOULSEEK_DEBUG=true to see scoring details above.`);
+                }
                 return { found: false, bestMatch: null, allMatches: [] };
             }
 
@@ -397,6 +809,8 @@ class SoulseekService {
                 "SOULSEEK",
                 `[Search #${searchId}] Found ${rankedMatches.length} alternative sources for retry`
             );
+
+            await this.setCachedMatches(artistName, trackTitle, rankedMatchesRaw);
 
             return {
                 found: true,
@@ -439,6 +853,9 @@ class SoulseekService {
             return [];
         }
 
+        // Rate limit: acquire token before searching
+        await this.searchRateLimiter.acquire();
+
         try {
             const rawResults = await this.client.search(query, {
                 timeout: 8000, // 8 seconds - most results arrive quickly
@@ -475,66 +892,127 @@ class SoulseekService {
             .filter((w) => w.length > 2)
             .slice(0, 3);
 
+        debugLog(`Ranking ${results.length} candidates for "${artistName} - ${trackTitle}"`);
+        debugLog(`  Normalized: artist="${normalizedArtist}" (firstWord="${artistFirstWord}"), title="${normalizedTitle}" (words=${titleWords.join(",")})`);
+
         const scored = results.map((file) => {
             const filename = (file.file || "").toLowerCase();
-            const normalizedFilename = filename.replace(/[^a-z0-9]/g, "");
             const shortFilename = filename.split(/[/\\]/).pop() || filename;
+            const normalizedFilename = filename.replace(/[^a-z0-9]/g, "");
+            const normalizedShortFilename = shortFilename.replace(/[^a-z0-9]/g, "");
 
             let score = 0;
+            let titleMatched = false;
+            const scoreBreakdown: string[] = [];
 
-            // Prefer files with slots available (+20)
-            if (file.slots) score += 20;
+            // Prefer files with slots available (+40)
+            // Most "download failed" cases are just no free slots.
+            if (file.slots) {
+                score += 40;
+                scoreBreakdown.push("slots:+40");
+            } else {
+                score -= 10;
+                scoreBreakdown.push("no-slots:-10");
+            }
 
             // Check if filename contains artist (full or first word)
             if (
                 normalizedFilename.includes(normalizedArtist.replace(/\s/g, ""))
             ) {
                 score += 50; // Full artist match
+                scoreBreakdown.push("artist-full:+50");
             } else if (
                 artistFirstWord.length >= 3 &&
                 normalizedFilename.includes(artistFirstWord)
             ) {
                 score += 35; // Partial artist match (first word)
+                scoreBreakdown.push("artist-partial:+35");
+            } else {
+                scoreBreakdown.push("artist:0");
             }
 
-            // Check if filename contains title (full or partial)
+            // Check if *basename* contains title (full or partial)
+            // Note: Using the full path here can cause false positives when the directory name
+            // contains the title (e.g. album folder "Keasbey Nights"), making every track in the
+            // folder look like a title match.
             const titleNoSpaces = normalizedTitle.replace(/\s/g, "");
-            if (normalizedFilename.includes(titleNoSpaces)) {
+            if (normalizedShortFilename.includes(titleNoSpaces)) {
                 score += 50; // Full title match
+                titleMatched = true;
+                scoreBreakdown.push("title-full:+50");
             } else if (
                 titleWords.length > 0 &&
-                titleWords.every((w) => normalizedFilename.includes(w))
+                titleWords.every((w) => normalizedShortFilename.includes(w))
             ) {
                 score += 40; // All significant title words match
+                titleMatched = true;
+                scoreBreakdown.push("title-allwords:+40");
             } else if (
                 titleWords.length > 0 &&
                 titleWords.some(
-                    (w) => w.length > 4 && normalizedFilename.includes(w)
+                    (w) => w.length > 4 && normalizedShortFilename.includes(w)
                 )
             ) {
                 score += 25; // At least one significant title word matches
+                titleMatched = true;
+                scoreBreakdown.push("title-somewords:+25");
+            } else {
+                scoreBreakdown.push("title:0");
             }
 
-            // Prefer FLAC (+30)
-            if (filename.endsWith(".flac")) score += 30;
-            // Then high-quality MP3 (+20 for 320, +10 for 256)
-            else if (filename.endsWith(".mp3") && (file.bitrate || 0) >= 320)
+            // Guard against "artist-only" matches.
+            // Without some title signal, we can end up downloading the wrong track from the same artist/album.
+            if (!titleMatched) {
+                score -= 80;
+                scoreBreakdown.push("no-title-match:-80");
+            }
+
+            // Prefer FLAC (+35)
+            if (filename.endsWith(".flac")) {
+                score += 35;
+                scoreBreakdown.push("flac:+35");
+            }
+            // Then high-quality MP3 (+20 for 320)
+            else if (
+                filename.endsWith(".mp3") &&
+                ((file.bitrate || 0) >= 320 || filename.includes("320"))
+            ) {
                 score += 20;
-            else if (filename.endsWith(".mp3") && (file.bitrate || 0) >= 256)
-                score += 10;
+                scoreBreakdown.push("mp3-320:+20");
+            }
 
             // Prefer reasonable file sizes
             const sizeMB = (file.size || 0) / 1024 / 1024;
-            if (sizeMB >= 3 && sizeMB <= 100) score += 10;
-            if (sizeMB >= 10 && sizeMB <= 50) score += 5; // FLAC range
+            if (sizeMB >= 3 && sizeMB <= 100) {
+                score += 10;
+                scoreBreakdown.push("size-ok:+10");
+            }
+            if (sizeMB >= 10 && sizeMB <= 50) {
+                score += 5; // FLAC range
+                scoreBreakdown.push("size-flac:+5");
+            }
 
-            // Prefer higher speed peers
-            if (file.speed > 1000000) score += 5; // >1MB/s
+            // Prefer higher speed peers (helps overall throughput and success)
+            if (file.speed > 3000000) {
+                score += 25; // >3MB/s
+                scoreBreakdown.push("speed-fast:+25");
+            } else if (file.speed > 1500000) {
+                score += 15; // >1.5MB/s
+                scoreBreakdown.push("speed-med:+15");
+            } else if (file.speed > 800000) {
+                score += 8; // >0.8MB/s
+                scoreBreakdown.push("speed-ok:+8");
+            }
 
             const quality = this.getQualityFromFilename(
                 file.file,
                 file.bitrate
             );
+
+            debugLog(`  Candidate: "${shortFilename}" by ${file.user}`);
+            debugLog(`    Path: ${file.file}`);
+            debugLog(`    Quality: ${quality}, Size: ${sizeMB.toFixed(1)}MB, Slots: ${file.slots ? "yes" : "no"}, Speed: ${((file.speed || 0) / 1000000).toFixed(1)}MB/s`);
+            debugLog(`    Score: ${score} [${scoreBreakdown.join(", ")}]`);
 
             return {
                 username: file.user,
@@ -549,10 +1027,115 @@ class SoulseekService {
 
         // Sort by score descending, filter by minimum threshold
         // Score 20+ is acceptable: slots(20) OR artist match(35-50) OR title match(25-50)
-        return scored
+        const passed = scored
             .filter((m) => m.score >= 20)
             .sort((a, b) => b.score - a.score)
             .slice(0, 10); // Keep top 10 for retry purposes
+
+        const rejected = scored.filter((m) => m.score < 20);
+        
+        debugLog(`  Results: ${passed.length} passed (score >= 20), ${rejected.length} rejected`);
+        if (passed.length > 0) {
+            debugLog(`  Best match: "${passed[0].filename}" score=${passed[0].score}`);
+        } else if (scored.length > 0) {
+            const best = scored.sort((a, b) => b.score - a.score)[0];
+            debugLog(`  All rejected - best was "${best.filename}" score=${best.score} (needed >= 20)`);
+        }
+
+        return passed;
+    }
+
+    /**
+     * Apply user reputation penalties to ranked matches
+     * - Users with failures get score penalties
+     * - Users with 4+ failures are filtered out entirely
+     */
+    private async applyReputationToMatches(matches: TrackMatch[]): Promise<TrackMatch[]> {
+        if (matches.length === 0) return matches;
+
+        // Get unique usernames
+        const usernames = [...new Set(matches.map(m => m.username))];
+        
+        // Fetch all reputations in parallel
+        const reputations = new Map<string, number>();
+        await Promise.all(
+            usernames.map(async (username) => {
+                const penalty = await getReputationPenalty(username);
+                const shouldSkip = await shouldSkipUser(username);
+                reputations.set(username, shouldSkip ? -1000 : penalty);
+            })
+        );
+
+        // Apply penalties and filter
+        const adjusted = matches
+            .map(m => ({
+                ...m,
+                score: m.score + (reputations.get(m.username) || 0),
+            }))
+            .filter(m => m.score > -500) // Filter out skipped users
+            .sort((a, b) => b.score - a.score);
+
+        // Log if any users were penalized
+        const penalized = usernames.filter(u => (reputations.get(u) || 0) < 0);
+        if (penalized.length > 0) {
+            sessionLog(
+                "SOULSEEK",
+                `Applied reputation penalties to ${penalized.length} users: ${penalized.join(", ")}`
+            );
+        }
+
+        return adjusted;
+    }
+
+    private isFlac(match: TrackMatch): boolean {
+        return match.filename.toLowerCase().endsWith(".flac");
+    }
+
+    private isMp3320(match: TrackMatch): boolean {
+        if (!match.filename.toLowerCase().endsWith(".mp3")) return false;
+        if ((match.bitRate || 0) >= 320) return true;
+        return /\b320\b/.test(match.filename);
+    }
+
+    private isMp3256(match: TrackMatch): boolean {
+        if (!match.filename.toLowerCase().endsWith(".mp3")) return false;
+        const bitrate = match.bitRate || 0;
+        if (bitrate >= 256 && bitrate < 320) return true;
+        return /\b256\b/.test(match.filename);
+    }
+
+    private selectMatchesByQuality(
+        matches: TrackMatch[],
+        options?: {
+            preferFlac?: boolean;
+            allowMp3320Fallback?: boolean;
+            allowMp3256Fallback?: boolean;
+        }
+    ): TrackMatch[] {
+        const preferFlac = options?.preferFlac !== false;
+        const allowMp3320Fallback = options?.allowMp3320Fallback !== false;
+        const allowMp3256Fallback = options?.allowMp3256Fallback !== false;
+
+        if (matches.length === 0) return matches;
+        if (!preferFlac) return matches;
+
+        // Keep only FLAC + MP3 320 + MP3 256 when in "quality preferred" mode.
+        // Order: FLAC first, then 320, then 256 as last resort.
+        const flacs = matches.filter((m) => this.isFlac(m));
+        const mp3_320s = allowMp3320Fallback
+            ? matches.filter((m) => this.isMp3320(m))
+            : [];
+        const mp3_256s = allowMp3256Fallback
+            ? matches.filter((m) => this.isMp3256(m) && !this.isMp3320(m))
+            : [];
+
+        const combined = [...flacs, ...mp3_320s, ...mp3_256s];
+        if (combined.length > 0) {
+            // Preserve original ranking order within each tier.
+            return combined;
+        }
+
+        return [];
     }
 
     /**
@@ -565,6 +1148,7 @@ class SoulseekService {
         try {
             await this.ensureConnected();
         } catch (err: any) {
+            // Don't record connection failures as user failures
             return { success: false, error: err.message };
         }
 
@@ -583,22 +1167,56 @@ class SoulseekService {
             `Downloading from ${match.username}: ${match.filename} -> ${destPath}`
         );
 
-        return new Promise((resolve) => {
+        const result = await new Promise<{ success: boolean; error?: string }>((resolve) => {
             let resolved = false;
             let download: { stream: NodeJS.ReadableStream } | null = null;
+            let inactivityTimer: NodeJS.Timeout | null = null;
+            let connectionEstablished = false;
 
-            // Timeout handler - 3 minutes max per download attempt
-            const timeoutId = setTimeout(() => {
+            const clearTimers = () => {
+                if (inactivityTimer) {
+                    clearTimeout(inactivityTimer);
+                    inactivityTimer = null;
+                }
+            };
+
+            const resetInactivityTimer = () => {
+                clearTimers();
+                inactivityTimer = setTimeout(() => {
+                    if (!resolved) {
+                        resolved = true;
+                        sessionLog(
+                            "SOULSEEK",
+                            `Download stalled (no data for ${this.INACTIVITY_TIMEOUT / 1000}s): ${match.filename}`,
+                            "WARN"
+                        );
+                        if (fs.existsSync(destPath)) {
+                            try {
+                                fs.unlinkSync(destPath);
+                            } catch (e) {
+                                // Ignore cleanup errors
+                            }
+                        }
+                        if (download) {
+                            (download.stream as any).destroy?.(
+                                new Error("Download stalled")
+                            );
+                        }
+                        resolve({ success: false, error: "Download stalled - no data received" });
+                    }
+                }, this.INACTIVITY_TIMEOUT);
+            };
+
+            // Safety net timeout - absolute maximum
+            const maxTimeoutId = setTimeout(() => {
                 if (!resolved) {
                     resolved = true;
+                    clearTimers();
                     sessionLog(
                         "SOULSEEK",
-                        `Download timed out after ${
-                            this.DOWNLOAD_TIMEOUT / 1000
-                        }s: ${match.filename}`,
+                        `Download exceeded max time (${this.MAX_DOWNLOAD_TIMEOUT / 1000}s): ${match.filename}`,
                         "WARN"
                     );
-                    // Clean up partial file if it exists
                     if (fs.existsSync(destPath)) {
                         try {
                             fs.unlinkSync(destPath);
@@ -611,9 +1229,9 @@ class SoulseekService {
                             new Error("Download timed out")
                         );
                     }
-                    resolve({ success: false, error: "Download timed out" });
+                    resolve({ success: false, error: "Download exceeded maximum time" });
                 }
-            }, this.DOWNLOAD_TIMEOUT);
+            }, this.MAX_DOWNLOAD_TIMEOUT);
 
             const finalize = (
                 success: boolean,
@@ -621,7 +1239,8 @@ class SoulseekService {
             ): void => {
                 if (resolved) return;
                 resolved = true;
-                clearTimeout(timeoutId);
+                clearTimers();
+                clearTimeout(maxTimeoutId);
                 if (!success && fs.existsSync(destPath)) {
                     try {
                         fs.unlinkSync(destPath);
@@ -684,12 +1303,38 @@ class SoulseekService {
             };
 
             (async () => {
+                // Connection timeout - must establish connection within limit
+                const connectionTimeoutId = setTimeout(() => {
+                    if (!connectionEstablished && !resolved) {
+                        resolved = true;
+                        clearTimers();
+                        clearTimeout(maxTimeoutId);
+                        sessionLog(
+                            "SOULSEEK",
+                            `Connection timeout (${this.CONNECTION_TIMEOUT / 1000}s): ${match.filename}`,
+                            "WARN"
+                        );
+                        resolve({ success: false, error: "Connection timeout - peer not responding" });
+                    }
+                }, this.CONNECTION_TIMEOUT);
+
                 try {
                     download = (await this.client!.download(
                         match.username,
                         match.fullPath
                     )) as { stream: NodeJS.ReadableStream };
+                    
+                    // Connection established - clear connection timeout, start inactivity timer
+                    connectionEstablished = true;
+                    clearTimeout(connectionTimeoutId);
+                    resetInactivityTimer();
+
                     const writeStream = fs.createWriteStream(destPath);
+
+                    // Reset inactivity timer on each data chunk
+                    download.stream.on("data", () => {
+                        resetInactivityTimer();
+                    });
 
                     download.stream.on("error", (err: any) =>
                         finalize(false, err?.message || "Stream error")
@@ -701,10 +1346,20 @@ class SoulseekService {
 
                     download.stream.pipe(writeStream);
                 } catch (err: any) {
+                    clearTimeout(connectionTimeoutId);
                     finalize(false, err?.message || "Download failed");
                 }
             })();
         });
+
+        // Record reputation based on download result
+        if (result.success) {
+            await recordUserSuccess(match.username);
+        } else {
+            await recordUserFailure(match.username);
+        }
+
+        return result;
     }
 
     /**
@@ -761,11 +1416,16 @@ class SoulseekService {
         for (let attempt = 0; attempt < matchesToTry.length; attempt++) {
             const match = matchesToTry[attempt];
 
+            // Add delay between retry attempts to reduce connection pressure
+            if (attempt > 0) {
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+            }
+
             sessionLog(
                 "SOULSEEK",
-                `Attempt ${attempt + 1}/${matchesToTry.length}: Trying ${
-                    match.username
-                } for ${match.filename}`
+                `[${artistName} - ${trackTitle}] Attempt ${attempt + 1}/${
+                    matchesToTry.length
+                }: Trying ${match.username}`
             );
 
             // Build destination path using configured downloadPath
@@ -829,7 +1489,10 @@ class SoulseekService {
         trackTitle: string,
         albumName: string,
         allMatches: TrackMatch[],
-        musicPath: string
+        musicPath: string,
+        options?: {
+            downloadSubdir?: string;
+        }
     ): Promise<{ success: boolean; filePath?: string; error?: string }> {
         if (allMatches.length === 0) {
             return { success: false, error: "No matches provided" };
@@ -838,6 +1501,10 @@ class SoulseekService {
         const sanitize = (name: string) =>
             name.replace(/[<>:"/\\|?*]/g, "_").trim();
         const errors: string[] = [];
+
+        const sanitizedSubdir = options?.downloadSubdir
+            ? sanitize(path.basename(options.downloadSubdir))
+            : null;
 
         // Try up to MAX_DOWNLOAD_RETRIES different users
         const matchesToTry = allMatches.slice(0, this.MAX_DOWNLOAD_RETRIES);
@@ -856,12 +1523,20 @@ class SoulseekService {
             const settings = await getSystemSettings();
             const downloadBase =
                 settings?.downloadPath || "/soulseek-downloads";
-            const destPath = path.join(
-                downloadBase,
-                sanitize(artistName),
-                sanitize(albumName),
-                sanitize(match.filename)
-            );
+            const destPath = sanitizedSubdir
+                ? path.join(
+                      downloadBase,
+                      sanitizedSubdir,
+                      sanitize(artistName),
+                      sanitize(albumName),
+                      sanitize(match.filename)
+                  )
+                : path.join(
+                      downloadBase,
+                      sanitize(artistName),
+                      sanitize(albumName),
+                      sanitize(match.filename)
+                  );
 
             // Download with timeout
             const downloadResult = await this.downloadTrack(match, destPath);
@@ -899,7 +1574,7 @@ class SoulseekService {
 
     /**
      * Search and download multiple tracks in parallel
-     * - Searches run in parallel (20 concurrent, 15s timeout each)
+     * - Searches run in parallel (capped to reduce connection churn)
      * - Downloads run in parallel (20 concurrent by default)
      */
     async searchAndDownloadBatch(
@@ -912,6 +1587,21 @@ class SoulseekService {
              * Used to namespace playlist downloads (e.g. "Playlists") to avoid collisions with /music.
              */
             downloadSubdir?: string;
+
+            /** Prefer lossless; fallback to MP3 320 if needed (default: true) */
+            preferFlac?: boolean;
+            /** Allow MP3 320 fallback when no FLAC available (default: true) */
+            allowMp3320Fallback?: boolean;
+            /** Allow MP3 256 fallback as last resort (default: true) */
+            allowMp3256Fallback?: boolean;
+
+            /** Fast-pass search timeout (default: 3500ms) */
+            searchTimeoutMs?: number;
+            /** Slow-pass search timeout for misses (default: 10000ms) */
+            searchTimeoutLongMs?: number;
+
+            /** Limit concurrent searches (default: 10) */
+            searchConcurrency?: number;
         }
     ): Promise<{
         successful: number;
@@ -932,69 +1622,132 @@ class SoulseekService {
             errors: [],
         };
 
-        // Phase 1: Search all tracks in parallel (searches are fast)
-        sessionLog(
-            "SOULSEEK",
-            `Searching for ${tracks.length} tracks in parallel...`
-        );
-        const searchQueue = new PQueue({
-            concurrency: Math.min(20, Math.max(tracks.length, 1)),
-        });
-        const searchResults = await Promise.all(
-            tracks.map((track) =>
-                searchQueue.add(async () => ({
-                    track,
-                    result: await this.searchTrack(track.artist, track.title),
-                }))
-            )
-        );
-
-        // Phase 2: Queue downloads with concurrency limit
-        const tracksWithMatches = searchResults.filter(
-            (r) => r.result.found && r.result.allMatches.length > 0
-        );
-        sessionLog(
-            "SOULSEEK",
-            `Found matches for ${tracksWithMatches.length}/${tracks.length} tracks, downloading with concurrency ${concurrency}...`
-        );
-
-        // Count tracks with no search results as failed
-        const noMatchTracks = searchResults.filter(
-            (r) => !r.result.found || r.result.allMatches.length === 0
-        );
-        for (const { track } of noMatchTracks) {
-            results.failed++;
-            results.errors.push(
-                `${track.artist} - ${track.title}: No match found on Soulseek`
+        // Ensure connection is established before starting batch
+        try {
+            await this.ensureConnected();
+        } catch (err: any) {
+            sessionLog(
+                "SOULSEEK",
+                `Failed to connect before batch: ${err.message}`,
+                "ERROR"
             );
+            return {
+                successful: 0,
+                failed: tracks.length,
+                files: [],
+                errors: tracks.map(t => `${t.artist} - ${t.title}: Connection failed`),
+            };
         }
 
-        // Queue downloads for tracks with matches
-        const downloadPromises = tracksWithMatches.map(({ track, result }) =>
-            downloadQueue.add(async () => {
-                const downloadResult = await this.downloadWithRetry(
-                    track.artist,
-                    track.title,
-                    track.album,
-                    result.allMatches,
-                    musicPath,
-                    options
-                );
-                if (downloadResult.success && downloadResult.filePath) {
-                    results.successful++;
-                    results.files.push(downloadResult.filePath);
-                } else {
+        // Pipeline search -> download to reduce wall-clock time.
+        sessionLog(
+            "SOULSEEK",
+            `Searching for ${tracks.length} tracks (pipelined)...`
+        );
+
+        const preferFlac = options?.preferFlac !== false;
+        const allowMp3320Fallback = options?.allowMp3320Fallback !== false;
+        const allowMp3256Fallback = options?.allowMp3256Fallback !== false;
+        const fastTimeoutMs = options?.searchTimeoutMs ?? 3500;
+        const slowTimeoutMs = options?.searchTimeoutLongMs ?? 10000;
+        // Can now use higher concurrency since rate limiter handles throttling
+        const searchConcurrency = Math.min(
+            options?.searchConcurrency ?? 10,
+            Math.max(tracks.length, 1)
+        );
+
+        const searchQueue = new PQueue({ concurrency: searchConcurrency });
+
+        const searchTasks = tracks.map((track) =>
+            searchQueue.add(async () => {
+                // Rate limiting is now handled by searchRateLimiter.acquire() in searchTrack()
+                const queries = this.buildSearchQueries(track.artist, track.title);
+
+                let searchResult: SearchTrackResult = {
+                    found: false,
+                    bestMatch: null,
+                    allMatches: [],
+                };
+
+                // Pass 1: fast searches
+                for (const query of queries) {
+                    searchResult = await this.searchTrack(
+                        track.artist,
+                        track.title,
+                        false,
+                        {
+                            timeoutMs: fastTimeoutMs,
+                            queryOverride: query,
+                            preferFlac,
+                            allowMp3320Fallback,
+                            allowMp3256Fallback,
+                        }
+                    );
+                    if (searchResult.found && searchResult.allMatches.length > 0) {
+                        break;
+                    }
+                }
+
+                // Pass 2: slower searches for misses
+                if (!searchResult.found || searchResult.allMatches.length === 0) {
+                    for (const query of queries) {
+                        searchResult = await this.searchTrack(
+                            track.artist,
+                            track.title,
+                            false,
+                            {
+                                timeoutMs: slowTimeoutMs,
+                                queryOverride: query,
+                                preferFlac,
+                                allowMp3320Fallback,
+                                allowMp3256Fallback,
+                                // Avoid immediate cache-hit loops for problematic tracks
+                                skipCache: true,
+                            }
+                        );
+                        if (searchResult.found && searchResult.allMatches.length > 0) {
+                            break;
+                        }
+                    }
+                }
+
+                if (!searchResult.found || searchResult.allMatches.length === 0) {
                     results.failed++;
                     results.errors.push(
-                        `${track.artist} - ${track.title}: ${
-                            downloadResult.error || "Unknown error"
-                        }`
+                        `${track.artist} - ${track.title}: No match found on Soulseek`
                     );
+                    return;
                 }
+
+                // Immediately queue download as soon as a match exists.
+                void downloadQueue.add(async () => {
+                    const downloadResult = await this.downloadWithRetry(
+                        track.artist,
+                        track.title,
+                        track.album,
+                        searchResult.allMatches,
+                        musicPath,
+                        options
+                    );
+                    if (downloadResult.success && downloadResult.filePath) {
+                        results.successful++;
+                        results.files.push(downloadResult.filePath);
+                    } else {
+                        results.failed++;
+                        results.errors.push(
+                            `${track.artist} - ${track.title}: ${
+                                downloadResult.error || "Unknown error"
+                            }`
+                        );
+                    }
+                    // Add 1s delay between track downloads to reduce connection pressure
+                    await new Promise((resolve) => setTimeout(resolve, 1000));
+                });
             })
         );
 
-        await Promise.all(downloadPromises);
+        await Promise.all(searchTasks);
+        await downloadQueue.onIdle();
 
         sessionLog(
             "SOULSEEK",
@@ -1020,14 +1773,41 @@ class SoulseekService {
         const sanitize = (name: string) =>
             name.replace(/[<>:"/\\|?*]/g, "_").trim();
         const errors: string[] = [];
-        const matchesToTry = allMatches.slice(0, this.MAX_DOWNLOAD_RETRIES);
+        
+        // Deduplicate matches by username - no point retrying same user who already failed
+        const seenUsers = new Set<string>();
+        const uniqueMatches = allMatches.filter((m) => {
+            if (seenUsers.has(m.username)) return false;
+            seenUsers.add(m.username);
+            return true;
+        });
+        const matchesToTry = uniqueMatches.slice(0, this.MAX_DOWNLOAD_RETRIES);
 
         const sanitizedSubdir = options?.downloadSubdir
             ? sanitize(path.basename(options.downloadSubdir))
             : null;
 
+        const failedUsers = new Set<string>();
         for (let attempt = 0; attempt < matchesToTry.length; attempt++) {
             const match = matchesToTry[attempt];
+
+            // Skip users that already failed in this batch
+            if (failedUsers.has(match.username)) continue;
+
+            // Skip users with too many failures (reputation system)
+            if (await shouldSkipUser(match.username)) {
+                sessionLog(
+                    "SOULSEEK",
+                    `[${artistName} - ${trackTitle}] Skipping ${match.username} (too many failures)`,
+                    "WARN"
+                );
+                continue;
+            }
+
+            // Add delay between retry attempts to reduce connection pressure
+            if (attempt > 0) {
+                await new Promise((resolve) => setTimeout(resolve, 500));
+            }
 
             sessionLog(
                 "SOULSEEK",
@@ -1068,6 +1848,7 @@ class SoulseekService {
                 return { success: true, filePath: destPath };
             }
             errors.push(`${match.username}: ${result.error}`);
+            failedUsers.add(match.username);
         }
 
         sessionLog(
