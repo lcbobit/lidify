@@ -11,6 +11,7 @@ import { notificationService } from "./notificationService";
 import { getSystemSettings } from "../utils/systemSettings";
 import { prisma } from "../utils/db";
 import { redisClient } from "../utils/redis";
+import { normalizeArtistName } from "../utils/artistNormalization";
 import PQueue from "p-queue";
 import path from "path";
 // Note: We DON'T use simpleDownloadManager here because it has same-artist fallback logic
@@ -59,6 +60,7 @@ export interface ImportPreview {
         trackCount: number;
     };
     matchedTracks: MatchedTrack[];
+    // Deprecated: playlist imports are track-only; kept for backward compatibility
     albumsToDownload: AlbumToDownload[];
     summary: {
         total: number;
@@ -97,6 +99,8 @@ export interface ImportJob {
         artist: string;
         title: string;
         album: string;
+        sort: number;
+        previewUrl: string | null;
         preMatchedTrackId: string | null; // Track ID if already matched in preview
     }>;
 }
@@ -291,6 +295,14 @@ function normalizeTrackTitle(str: string): string {
 }
 
 /**
+ * Keep path sanitization in sync with SoulseekService.
+ * Used to reliably locate playlist download folders under downloadPath/Playlists.
+ */
+function sanitizePathPart(name: string): string {
+    return name.replace(/[<>:"/\\|?*]/g, "_").trim();
+}
+
+/**
  * Calculate similarity between two strings (0-100)
  */
 function stringSimilarity(a: string, b: string): number {
@@ -316,6 +328,235 @@ function stringSimilarity(a: string, b: string): number {
 }
 
 class SpotifyImportService {
+    private async findLocalTrackForPendingTrack(pendingTrack: {
+        artist: string;
+        title: string;
+        album: string;
+    }) {
+        const normalizedArtist = normalizeString(pendingTrack.artist);
+        const artistFirstWord = normalizedArtist.split(" ")[0];
+        const strippedTitle = stripTrackSuffix(pendingTrack.title);
+        const normalizedTitle = normalizeApostrophes(pendingTrack.title);
+        const cleanedTitle = normalizeTrackTitle(pendingTrack.title);
+
+        // Strategy 1: Exact title match with fuzzy artist (contains first word)
+        let localTrack = await prisma.track.findFirst({
+            where: {
+                title: { equals: normalizedTitle, mode: "insensitive" },
+                album: {
+                    artist: {
+                        normalizedName: {
+                            contains: artistFirstWord,
+                            mode: "insensitive",
+                        },
+                    },
+                },
+            },
+            select: { id: true, title: true },
+        });
+
+        // Strategy 2: Stripped title match
+        if (!localTrack && strippedTitle !== normalizedTitle) {
+            localTrack = await prisma.track.findFirst({
+                where: {
+                    title: { equals: strippedTitle, mode: "insensitive" },
+                    album: {
+                        artist: {
+                            normalizedName: {
+                                contains: artistFirstWord,
+                                mode: "insensitive",
+                            },
+                        },
+                    },
+                },
+                select: { id: true, title: true },
+            });
+        }
+
+        // Strategy 3: Contains + similarity/containment
+        if (!localTrack && strippedTitle.length >= 5) {
+            const searchTerm = strippedTitle
+                .split(" ")
+                .slice(0, 4)
+                .join(" ");
+
+            const candidates = await prisma.track.findMany({
+                where: {
+                    title: { contains: searchTerm, mode: "insensitive" },
+                    album: {
+                        artist: {
+                            normalizedName: {
+                                contains: artistFirstWord,
+                                mode: "insensitive",
+                            },
+                        },
+                    },
+                },
+                select: { id: true, title: true },
+                take: 10,
+            });
+
+            for (const candidate of candidates) {
+                const candidateNormalized = normalizeTrackTitle(candidate.title);
+                const sim = stringSimilarity(cleanedTitle, candidateNormalized);
+                if (sim >= 80) {
+                    localTrack = candidate;
+                    break;
+                }
+
+                const spotifyNorm = cleanedTitle.toLowerCase();
+                const libraryNorm = candidateNormalized.toLowerCase();
+                if (libraryNorm.startsWith(spotifyNorm) || spotifyNorm.startsWith(libraryNorm)) {
+                    localTrack = candidate;
+                    break;
+                }
+            }
+        }
+
+        // Strategy 3.5: Preview-style fuzzy artist+title scoring
+        if (!localTrack) {
+            const candidates = await prisma.track.findMany({
+                where: {
+                    album: {
+                        artist: {
+                            normalizedName: {
+                                contains: artistFirstWord,
+                                mode: "insensitive",
+                            },
+                        },
+                    },
+                },
+                include: { album: { include: { artist: true } } },
+                take: 50,
+            });
+
+            for (const candidate of candidates) {
+                const titleSim = stringSimilarity(
+                    cleanedTitle,
+                    normalizeTrackTitle(candidate.title)
+                );
+                const artistSim = stringSimilarity(
+                    pendingTrack.artist,
+                    candidate.album.artist.name
+                );
+                const score = titleSim * 0.6 + artistSim * 0.4;
+                if (score >= 70) {
+                    localTrack = { id: candidate.id, title: candidate.title };
+                    break;
+                }
+            }
+        }
+
+        // Strategy 4: startsWith + verify
+        if (!localTrack && strippedTitle.length > 10) {
+            const candidate = await prisma.track.findFirst({
+                where: {
+                    title: {
+                        startsWith: strippedTitle.substring(
+                            0,
+                            Math.min(20, strippedTitle.length)
+                        ),
+                        mode: "insensitive",
+                    },
+                    album: {
+                        artist: {
+                            normalizedName: {
+                                contains: artistFirstWord,
+                                mode: "insensitive",
+                            },
+                        },
+                    },
+                },
+                select: { id: true, title: true },
+            });
+
+            if (candidate) {
+                const dbTitleNormalized = normalizeTrackTitle(candidate.title);
+                if (stringSimilarity(cleanedTitle, dbTitleNormalized) >= 70) {
+                    localTrack = candidate;
+                }
+            }
+        }
+
+        // Strategy 5: Very fuzzy (last resort)
+        if (!localTrack) {
+            const searchWords = strippedTitle
+                .split(" ")
+                .slice(0, 3)
+                .join(" ");
+            if (searchWords.length >= 4) {
+                const candidates = await prisma.track.findMany({
+                    where: {
+                        title: {
+                            contains: searchWords.split(" ")[0],
+                            mode: "insensitive",
+                        },
+                        album: {
+                            artist: {
+                                normalizedName: {
+                                    contains: artistFirstWord,
+                                    mode: "insensitive",
+                                },
+                            },
+                        },
+                    },
+                    include: { album: { include: { artist: true } } },
+                    take: 20,
+                });
+
+                let bestMatch: { id: string; title: string } | null = null;
+                let bestScore = 0;
+                for (const candidate of candidates) {
+                    const titleScore = stringSimilarity(
+                        cleanedTitle,
+                        normalizeTrackTitle(candidate.title)
+                    );
+                    const artistScore = stringSimilarity(
+                        normalizedArtist,
+                        normalizeString(candidate.album.artist.name)
+                    );
+                    const combinedScore = titleScore * 0.7 + artistScore * 0.3;
+                    if (combinedScore > bestScore && combinedScore >= 65) {
+                        bestScore = combinedScore;
+                        bestMatch = { id: candidate.id, title: candidate.title };
+                    }
+                }
+                if (bestMatch) localTrack = bestMatch;
+            }
+        }
+
+        // Strategy 6: Title-only fallback
+        if (!localTrack && cleanedTitle.length >= 10) {
+            const titleSearchTerm = strippedTitle
+                .split(" ")
+                .slice(0, 4)
+                .join(" ");
+            const candidates = await prisma.track.findMany({
+                where: {
+                    title: { contains: titleSearchTerm, mode: "insensitive" },
+                },
+                select: { id: true, title: true },
+                take: 50,
+            });
+
+            let bestTitleMatch: { id: string; title: string } | null = null;
+            let bestTitleScore = 0;
+            for (const candidate of candidates) {
+                const titleScore = stringSimilarity(
+                    cleanedTitle,
+                    normalizeTrackTitle(candidate.title)
+                );
+                if (titleScore > bestTitleScore && titleScore >= 85) {
+                    bestTitleScore = titleScore;
+                    bestTitleMatch = candidate;
+                }
+            }
+            if (bestTitleMatch) localTrack = bestTitleMatch;
+        }
+
+        return localTrack;
+    }
+
     /**
      * Match a Spotify track to the local library
      */
@@ -497,173 +738,36 @@ class SpotifyImportService {
         },
         source: "Spotify" | "Deezer"
     ): Promise<ImportPreview> {
-        const logPrefix =
-            source === "Spotify" ? "[Spotify Import]" : "[Deezer Import]";
-
+        // Track-only preview: avoid MusicBrainz/Lidarr. We only need to know what's already
+        // in the library vs what needs Soulseek downloads.
         const matchedTracks: MatchedTrack[] = [];
-        const unmatchedByAlbum = new Map<string, SpotifyTrack[]>();
+        const matchQueue = new PQueue({ concurrency: 10 });
 
-        for (const track of tracks) {
-            const matched = await this.matchTrack(track);
-            matchedTracks.push(matched);
+        await Promise.all(
+            tracks.map((track) =>
+                matchQueue.add(async () => {
+                    const matched = await this.matchTrack(track);
+                    matchedTracks.push(matched);
+                })
+            )
+        );
 
-            if (!matched.localTrack) {
-                const key = `${track.artist}|||${track.album}`;
-                const existing = unmatchedByAlbum.get(key) || [];
-                existing.push(track);
-                unmatchedByAlbum.set(key, existing);
-            }
-        }
+        // Preserve original order (queue completes out-of-order)
+        const indexById = new Map<string, number>();
+        tracks.forEach((t, i) => indexById.set(t.spotifyId, i));
+        matchedTracks.sort(
+            (a, b) =>
+                (indexById.get(a.spotifyTrack.spotifyId) ?? 0) -
+                (indexById.get(b.spotifyTrack.spotifyId) ?? 0)
+        );
+
+        const inLibrary = matchedTracks.filter((m) => m.localTrack !== null)
+            .length;
+        const downloadable = matchedTracks.filter((m) => m.localTrack === null)
+            .length;
+        const notFound = 0;
 
         const albumsToDownload: AlbumToDownload[] = [];
-
-        for (const [key, albumTracks] of unmatchedByAlbum.entries()) {
-            const [artistName, albumName] = key.split("|||");
-
-            let resolvedAlbumName = albumName;
-            let artistMbid: string | null = null;
-            let albumMbid: string | null = null;
-
-            console.log(
-                `\n${logPrefix} ========================================`
-            );
-            console.log(
-                `${logPrefix} Looking up: "${artistName}" - "${albumName}"`
-            );
-
-            if (albumName && albumName !== "Unknown Album") {
-                // Normalize album name to remove live/remaster suffixes
-                const normalizedAlbumName = stripTrackSuffix(albumName);
-                const wasNormalized = normalizedAlbumName !== albumName;
-
-                console.log(
-                    `${logPrefix} Searching for album "${albumName}" by ${artistName}...`
-                );
-                if (wasNormalized) {
-                    console.log(
-                        `${logPrefix}   → Normalized to: "${normalizedAlbumName}"`
-                    );
-                }
-
-                const mbResult = await this.findAlbumMbid(
-                    artistName,
-                    normalizedAlbumName
-                );
-                artistMbid = mbResult.artistMbid;
-                albumMbid = mbResult.albumMbid;
-
-                if (albumMbid) {
-                    console.log(
-                        `${logPrefix} ✓ Found album directly: "${albumName}" (MBID: ${albumMbid})`
-                    );
-                }
-            }
-
-            if (!albumMbid) {
-                console.log(
-                    `${logPrefix} Album not found, trying track-based search...`
-                );
-                for (const track of albumTracks) {
-                    // Normalize track title to remove live/remaster suffixes
-                    const normalizedTrackTitle = stripTrackSuffix(track.title);
-                    const wasNormalized = normalizedTrackTitle !== track.title;
-
-                    console.log(
-                        `${logPrefix}   Searching for track "${track.title}"...`
-                    );
-                    if (wasNormalized) {
-                        console.log(
-                            `${logPrefix}     → Normalized to: "${normalizedTrackTitle}"`
-                        );
-                    }
-
-                    const recordingInfo =
-                        await musicBrainzService.searchRecording(
-                            normalizedTrackTitle,
-                            artistName
-                        );
-
-                    if (recordingInfo) {
-                        resolvedAlbumName = recordingInfo.albumName;
-                        artistMbid = recordingInfo.artistMbid;
-                        albumMbid = recordingInfo.albumMbid;
-
-                        console.log(
-                            `${logPrefix} ✓ Found via track: "${resolvedAlbumName}" (MBID: ${albumMbid})`
-                        );
-                        break;
-                    }
-                }
-            }
-
-            if (!albumMbid) {
-                console.log(
-                    `${logPrefix} ✗ Could not find album MBID for ${artistName} - "${resolvedAlbumName}"`
-                );
-                if (albumName === "Unknown Album") {
-                    console.log(
-                        `${logPrefix} ℹ But can still download via Soulseek (track-based search)`
-                    );
-                }
-            }
-
-            const albumToDownload: AlbumToDownload = {
-                spotifyAlbumId: albumTracks[0].albumId,
-                albumName: resolvedAlbumName,
-                artistName,
-                artistMbid,
-                albumMbid,
-                coverUrl: albumTracks[0].coverUrl,
-                trackCount: albumTracks.length,
-                tracksNeeded: albumTracks,
-            };
-
-            console.log(`${logPrefix} Download strategy:`);
-            if (albumMbid) {
-                console.log(`   Will request album from Lidarr/Soulseek:`);
-                console.log(
-                    `   Artist: "${artistName}" (MBID: ${artistMbid || "NONE"})`
-                );
-                console.log(
-                    `   Album: "${resolvedAlbumName}" (MBID: ${albumMbid})`
-                );
-            } else {
-                // No MBID - will try Soulseek track-based search
-                console.log(
-                    `   Will request individual tracks via Soulseek (no MBID):`
-                );
-                console.log(`   Artist: "${artistName}"`);
-                console.log(
-                    `   Tracks: ${albumTracks
-                        .map((t) => `"${t.title}"`)
-                        .join(", ")}`
-                );
-            }
-            console.log(
-                `${logPrefix} ========================================\n`
-            );
-
-            albumsToDownload.push(albumToDownload);
-        }
-
-        const inLibrary = matchedTracks.filter(
-            (m) => m.localTrack !== null
-        ).length;
-
-        // All albums are now downloadable via Soulseek (either album-based with MBID or track-based without)
-        const downloadableAlbums = albumsToDownload;
-
-        // No albums are truly "not found" since Soulseek can search for any track
-        const notFoundAlbums: AlbumToDownload[] = [];
-
-        const downloadable = downloadableAlbums.reduce(
-            (sum, a) => sum + a.tracksNeeded.length,
-            0
-        );
-        const notFound = notFoundAlbums.reduce(
-            (sum, a) => sum + a.tracksNeeded.length,
-            0
-        );
 
         return {
             playlist: playlistMeta,
@@ -682,10 +786,6 @@ class SpotifyImportService {
      * Generate a preview of what will be imported
      */
     async generatePreview(spotifyUrl: string): Promise<ImportPreview> {
-        // Clear any stale null cache entries before processing
-        // This ensures we retry previously failed lookups
-        await musicBrainzService.clearStaleRecordingCaches();
-
         const playlist = await spotifyService.getPlaylist(spotifyUrl);
         if (!playlist) {
             throw new Error(
@@ -714,14 +814,6 @@ class SpotifyImportService {
     async generatePreviewFromDeezer(
         deezerPlaylist: any
     ): Promise<ImportPreview> {
-        // Clear any stale null cache entries before processing
-        await musicBrainzService.clearStaleRecordingCaches();
-
-        console.log(
-            "[Deezer Debug] Sample track from Deezer:",
-            JSON.stringify(deezerPlaylist.tracks[0], null, 2)
-        );
-
         const spotifyTracks: SpotifyTrack[] = deezerPlaylist.tracks.map(
             (track: any, index: number) => ({
                 spotifyId: track.deezerId,
@@ -736,11 +828,6 @@ class SpotifyImportService {
                 previewUrl: track.previewUrl || null,
                 coverUrl: track.coverUrl || deezerPlaylist.imageUrl || null,
             })
-        );
-
-        console.log(
-            "[Deezer Debug] Sample converted track:",
-            JSON.stringify(spotifyTracks[0], null, 2)
         );
 
         return this.buildPreviewFromTracklist(
@@ -764,7 +851,6 @@ class SpotifyImportService {
         userId: string,
         spotifyPlaylistId: string,
         playlistName: string,
-        albumMbidsToDownload: string[],
         preview: ImportPreview
     ): Promise<ImportJob> {
         const jobId = `import_${Date.now()}_${Math.random()
@@ -777,46 +863,26 @@ class SpotifyImportService {
 
         logger.logJobStart(playlistName, preview.summary.total, userId);
         logger.info(`Playlist ID: ${spotifyPlaylistId}`);
-        logger.info(`Albums to download: ${albumMbidsToDownload.length}`);
         logger.info(`Tracks already in library: ${preview.summary.inLibrary}`);
 
-        // Calculate tracks that will come from downloads
-        const tracksFromDownloads = preview.albumsToDownload
-            .filter((a) => {
-                const albumIdentifier = a.albumMbid || a.spotifyAlbumId;
-                return albumIdentifier
-                    ? albumMbidsToDownload.includes(albumIdentifier)
-                    : false;
-            })
-            .reduce((sum, a) => sum + a.tracksNeeded.length, 0);
+        // Track-only: download every track not already in the library
+        const tracksFromDownloads = preview.matchedTracks.filter(
+            (m) => !m.localTrack
+        ).length;
 
         // Extract the track info we need to match after downloads
         // Include ALL tracks, both matched and unmatched
         // IMPORTANT: Store pre-matched track IDs so we don't have to re-search them!
         // NOTE: `PlaylistPendingTrack.spotifyAlbum` should reflect Spotify's album name.
         // Only fall back to a resolved album name when Spotify returns "Unknown Album".
-        const pendingTracks = preview.matchedTracks.map((m) => {
-            const spotifyAlbum = m.spotifyTrack.album;
-            const spotifyAlbumId = m.spotifyTrack.albumId;
-
-            const albumToDownload = spotifyAlbumId
-                ? preview.albumsToDownload.find(
-                      (a) => a.spotifyAlbumId === spotifyAlbumId
-                  )
-                : undefined;
-
-            const albumForDisplay =
-                spotifyAlbum && spotifyAlbum !== "Unknown Album"
-                    ? spotifyAlbum
-                    : albumToDownload?.albumName || spotifyAlbum;
-
-            return {
-                artist: m.spotifyTrack.artist,
-                title: m.spotifyTrack.title,
-                album: albumForDisplay,
-                preMatchedTrackId: m.localTrack?.id || null,
-            };
-        });
+        const pendingTracks = preview.matchedTracks.map((m, index) => ({
+            artist: m.spotifyTrack.artist,
+            title: m.spotifyTrack.title,
+            album: m.spotifyTrack.album || "Unknown Album",
+            sort: index,
+            previewUrl: m.spotifyTrack.previewUrl || null,
+            preMatchedTrackId: m.localTrack?.id || null,
+        }));
 
         const job: ImportJob = {
             id: jobId,
@@ -825,7 +891,7 @@ class SpotifyImportService {
             playlistName,
             status: "pending",
             progress: 0,
-            albumsTotal: albumMbidsToDownload.length,
+            albumsTotal: tracksFromDownloads,
             albumsCompleted: 0,
             tracksMatched: preview.summary.inLibrary,
             tracksTotal: preview.summary.total,
@@ -841,7 +907,7 @@ class SpotifyImportService {
         await saveImportJob(job);
 
         // Start processing in background
-        this.processImport(job, albumMbidsToDownload, preview).catch(
+        this.processImport(job, preview).catch(
             async (error) => {
                 job.status = "failed";
                 job.error = error.message;
@@ -860,15 +926,157 @@ class SpotifyImportService {
      */
     private async processImport(
         job: ImportJob,
-        albumMbidsToDownload: string[],
         preview: ImportPreview
     ): Promise<void> {
         const logger = jobLoggers.get(job.id);
 
-        // Import simpleDownloadManager here to avoid circular deps
-        const { simpleDownloadManager } = await import(
-            "./simpleDownloadManager"
-        );
+        // Track-only import:
+        // - Create playlist immediately with in-library tracks
+        // - Save unmatched tracks as pending
+        // - Download missing tracks via Soulseek
+        // - Queue scan of downloadPath/Playlists
+        // - scanProcessor will reconcile pending tracks after scan
+
+        const settings = await getSystemSettings();
+        const downloadBase = settings?.downloadPath || "/soulseek-downloads";
+        const playlistScanPath = path.join(downloadBase, "Playlists");
+
+        job.status = "creating_playlist";
+        job.progress = 5;
+        job.updatedAt = new Date();
+        await saveImportJob(job);
+
+        // Create playlist with already-matched tracks (preserve original sort)
+        const matchedItems = job.pendingTracks
+            .filter((t) => t.preMatchedTrackId)
+            .map((t) => ({
+                trackId: t.preMatchedTrackId as string,
+                sort: t.sort,
+            }));
+
+        const playlist = await prisma.playlist.create({
+            data: {
+                userId: job.userId,
+                name: job.playlistName,
+                isPublic: false,
+                spotifyPlaylistId: job.spotifyPlaylistId,
+                items:
+                    matchedItems.length > 0
+                        ? { create: matchedItems }
+                        : undefined,
+            },
+        });
+
+        job.createdPlaylistId = playlist.id;
+        job.status = "downloading";
+        job.progress = matchedItems.length > 0 ? 10 : 5;
+        job.updatedAt = new Date();
+        await saveImportJob(job);
+
+        // Save pending tracks (including original sort) for later reconciliation
+        const pendingTracksToSave = job.pendingTracks
+            .filter((t) => !t.preMatchedTrackId)
+            .map((t) => ({
+                playlistId: playlist.id,
+                spotifyArtist: t.artist,
+                spotifyTitle: t.title,
+                spotifyAlbum: t.album,
+                deezerPreviewUrl: t.previewUrl,
+                sort: t.sort,
+            }));
+
+        if (pendingTracksToSave.length > 0) {
+            await prisma.playlistPendingTrack.createMany({
+                data: pendingTracksToSave,
+                skipDuplicates: true,
+            });
+        }
+
+        // Download missing tracks via Soulseek
+        const tracksToDownload = job.pendingTracks
+            .filter((t) => !t.preMatchedTrackId)
+            .map((t) => ({ artist: t.artist, title: t.title, album: t.album }));
+
+        if (tracksToDownload.length > 0) {
+            try {
+                const dlResult = await soulseekService.searchAndDownloadBatch(
+                    tracksToDownload,
+                    settings?.musicPath || "/music",
+                    3, // Reduced download concurrency to avoid rate limiting
+                    {
+                        downloadSubdir: "Playlists",
+                        preferFlac: true,
+                        allowMp3320Fallback: true,
+                        // Fast first pass + slower retry pass
+                        searchTimeoutMs: 3500,
+                        searchTimeoutLongMs: 12000,
+                        searchConcurrency: 3, // Reduced from 10 to avoid rate limiting
+                    }
+                );
+
+                logger?.info(
+                    `Soulseek batch complete: ${dlResult.successful} succeeded, ${dlResult.failed} failed`
+                );
+
+                job.albumsCompleted = dlResult.successful;
+                job.updatedAt = new Date();
+                await saveImportJob(job);
+
+                if (dlResult.successful === 0) {
+                    logger?.warn(
+                        `Soulseek downloaded 0/${tracksToDownload.length} tracks (connection issues or no sources)`
+                    );
+                }
+            } catch (err: any) {
+                logger?.error(`Soulseek batch download error: ${err.message}`);
+                job.albumsCompleted = 0;
+                job.updatedAt = new Date();
+                await saveImportJob(job);
+            }
+        }
+
+        job.status = "scanning";
+        job.progress = 80;
+        job.updatedAt = new Date();
+        await saveImportJob(job);
+
+        try {
+            const { scanQueue } = await import("../workers/queues");
+            await scanQueue.add("scan", {
+                userId: job.userId,
+                musicPath: playlistScanPath,
+                basePath: downloadBase,
+                source: "spotify-import",
+                spotifyImportJobId: job.id,
+            });
+        } catch (err: any) {
+            logger?.error(`Failed to queue scan: ${err.message}`);
+        }
+
+        // We don't wait for scan completion; scanProcessor will reconcile and notify.
+        job.status = "completed";
+        job.progress = 100;
+        job.updatedAt = new Date();
+        await saveImportJob(job);
+
+        try {
+            await notificationService.notifyImportComplete(
+                job.userId,
+                job.playlistName,
+                playlist.id,
+                matchedItems.length,
+                job.tracksTotal
+            );
+        } catch (notifError) {
+            console.error("Failed to send import notification:", notifError);
+        }
+
+        return;
+
+        /*
+         * Legacy album-based import logic (Lidarr + MusicBrainz).
+         * Playlist imports are track-only now.
+         */
 
         try {
             // Phase 1: Download albums based on user's download preferences
@@ -1401,6 +1609,11 @@ class SpotifyImportService {
                 {
                     // Namespace playlist downloads to avoid collisions with /music paths
                     downloadSubdir: "Playlists",
+                    preferFlac: true,
+                    allowMp3320Fallback: true,
+                    searchTimeoutMs: 3500,
+                    searchTimeoutLongMs: 12000,
+                    searchConcurrency: 8,
                 }
             );
 
@@ -1585,6 +1798,7 @@ class SpotifyImportService {
         const scanJob = await scanQueue.add("scan", {
             userId: job.userId,
             musicPath: playlistScanPath,
+            basePath: downloadBase,
             source: "spotify-import",
             spotifyImportJobId: importJobId,
         });
@@ -1632,9 +1846,11 @@ class SpotifyImportService {
 
         // Match all pending tracks against the library
         const matchedTrackIds: string[] = [];
+        const matchedInputIndices = new Set<number>();
         let trackIndex = 0;
 
-        for (const pendingTrack of job.pendingTracks) {
+        for (let originalIndex = 0; originalIndex < job.pendingTracks.length; originalIndex++) {
+            const pendingTrack = job.pendingTracks[originalIndex];
             trackIndex++;
 
             // FAST PATH: If already matched in preview, use that ID directly
@@ -1647,6 +1863,7 @@ class SpotifyImportService {
                 });
                 if (existingTrack) {
                     matchedTrackIds.push(existingTrack.id);
+                    matchedInputIndices.add(originalIndex);
                     console.log(
                         `   ✓ Pre-matched: "${pendingTrack.title}" -> track ${existingTrack.id}`
                     );
@@ -1679,321 +1896,15 @@ class SpotifyImportService {
                 `   strippedTitle: "${strippedTitle}", artistFirstWord: "${artistFirstWord}"`
             );
 
-            // Try multiple matching strategies
-            let localTrack = null;
-
-            // Strategy 1: Exact title match with fuzzy artist (contains first word)
-            localTrack = await prisma.track.findFirst({
-                where: {
-                    title: {
-                        equals: normalizedTitle,
-                        mode: "insensitive",
-                    },
-                    album: {
-                        artist: {
-                            normalizedName: {
-                                contains: artistFirstWord,
-                                mode: "insensitive",
-                            },
-                        },
-                    },
-                },
+            const localTrack = await this.findLocalTrackForPendingTrack({
+                artist: pendingTrack.artist,
+                title: pendingTrack.title,
+                album: pendingTrack.album,
             });
-
-            // Strategy 2: Stripped title match (removes remaster suffix but keeps punctuation)
-            // "Ain't Gonna Rain Anymore - 2011 Remaster" -> searches for "Ain't Gonna Rain Anymore"
-            if (!localTrack && strippedTitle !== normalizedTitle) {
-                logger?.log(
-                    `   Strategy 2: Searching for stripped title "${strippedTitle}"`
-                );
-                localTrack = await prisma.track.findFirst({
-                    where: {
-                        title: {
-                            equals: strippedTitle,
-                            mode: "insensitive",
-                        },
-                        album: {
-                            artist: {
-                                normalizedName: {
-                                    contains: artistFirstWord,
-                                    mode: "insensitive",
-                                },
-                            },
-                        },
-                    },
-                });
-            }
-
-            // Strategy 3: Case-insensitive CONTAINS search on title (handles slight variations)
-            // e.g., database has "Ain't" but Spotify has "Ain't" (different apostrophe after normalization still differs)
-            if (!localTrack && strippedTitle.length >= 5) {
-                // Search for tracks where title contains the first few words
-                const searchTerm = strippedTitle
-                    .split(" ")
-                    .slice(0, 4)
-                    .join(" ");
-                logger?.log(
-                    `   Strategy 3: Contains search for "${searchTerm}"`
-                );
-                const candidates = await prisma.track.findMany({
-                    where: {
-                        title: {
-                            contains: searchTerm,
-                            mode: "insensitive",
-                        },
-                        album: {
-                            artist: {
-                                normalizedName: {
-                                    contains: artistFirstWord,
-                                    mode: "insensitive",
-                                },
-                            },
-                        },
-                    },
-                    take: 10,
-                });
-
-                // Find best match using similarity OR containment
-                for (const candidate of candidates) {
-                    const candidateNormalized = normalizeTrackTitle(
-                        candidate.title
-                    );
-                    const sim = stringSimilarity(
-                        cleanedTitle,
-                        candidateNormalized
-                    );
-
-                    // Direct similarity match
-                    if (sim >= 80) {
-                        localTrack = candidate;
-                        logger?.log(
-                            `      Found via contains+similarity (${sim.toFixed(
-                                0
-                            )}%)`
-                        );
-                        break;
-                    }
-
-                    // Containment match: "Sordid Affair" should match "Sordid Affair (Feat. Ryan James)"
-                    // Check if one title contains the other (normalized)
-                    const spotifyNorm = cleanedTitle.toLowerCase();
-                    const libraryNorm = candidateNormalized.toLowerCase();
-                    if (
-                        libraryNorm.startsWith(spotifyNorm) ||
-                        spotifyNorm.startsWith(libraryNorm)
-                    ) {
-                        localTrack = candidate;
-                        logger?.log(
-                            `      Found via containment match: "${cleanedTitle}" in "${candidateNormalized}"`
-                        );
-                        break;
-                    }
-                }
-            }
-
-            // Strategy 3.5: Same as preview - fuzzy match on artist NAME using similarity
-            // This catches cases where normalizedName differs from what we expect
-            if (!localTrack) {
-                logger?.log(`   Strategy 3.5: Fuzzy artist+title matching`);
-                const candidates = await prisma.track.findMany({
-                    where: {
-                        album: {
-                            artist: {
-                                normalizedName: {
-                                    contains: artistFirstWord,
-                                    mode: "insensitive",
-                                },
-                            },
-                        },
-                    },
-                    include: { album: { include: { artist: true } } },
-                    take: 50,
-                });
-
-                // Use same matching as preview: compare cleaned titles
-                for (const candidate of candidates) {
-                    const titleSim = stringSimilarity(
-                        cleanedTitle,
-                        normalizeTrackTitle(candidate.title)
-                    );
-                    const artistSim = stringSimilarity(
-                        pendingTrack.artist,
-                        candidate.album.artist.name
-                    );
-                    const score = titleSim * 0.6 + artistSim * 0.4;
-
-                    if (score >= 70) {
-                        localTrack = candidate;
-                        console.log(
-                            `      (preview-style match: ${score.toFixed(0)}%)`
-                        );
-                        break;
-                    }
-                }
-            }
-
-            // Strategy 4: StartsWith match with stripped title (for slight title variations)
-            if (!localTrack && strippedTitle.length > 10) {
-                logger?.log(`   Strategy 4: StartsWith search`);
-                localTrack = await prisma.track.findFirst({
-                    where: {
-                        title: {
-                            startsWith: strippedTitle.substring(
-                                0,
-                                Math.min(20, strippedTitle.length)
-                            ),
-                            mode: "insensitive",
-                        },
-                        album: {
-                            artist: {
-                                normalizedName: {
-                                    contains: artistFirstWord,
-                                    mode: "insensitive",
-                                },
-                            },
-                        },
-                    },
-                });
-
-                // Verify match
-                if (localTrack) {
-                    const dbTitleNormalized = normalizeTrackTitle(
-                        localTrack.title
-                    );
-                    if (
-                        stringSimilarity(cleanedTitle, dbTitleNormalized) < 70
-                    ) {
-                        localTrack = null;
-                    } else {
-                        logger?.log(`      Found via startsWith`);
-                    }
-                }
-            }
-
-            // Strategy 5: Very fuzzy - search and score by similarity (last resort)
-            if (!localTrack) {
-                logger?.log(`   Strategy 5: Fuzzy search (last resort)`);
-                // Get first few words for search
-                const searchWords = strippedTitle
-                    .split(" ")
-                    .slice(0, 3)
-                    .join(" ");
-                if (searchWords.length >= 4) {
-                    const candidates = await prisma.track.findMany({
-                        where: {
-                            title: {
-                                contains: searchWords.split(" ")[0], // Just first word
-                                mode: "insensitive",
-                            },
-                            album: {
-                                artist: {
-                                    normalizedName: {
-                                        contains: artistFirstWord,
-                                        mode: "insensitive",
-                                    },
-                                },
-                            },
-                        },
-                        include: { album: { include: { artist: true } } },
-                        take: 20,
-                    });
-
-                    // Find best match by similarity
-                    let bestMatch = null;
-                    let bestScore = 0;
-                    for (const candidate of candidates) {
-                        const titleScore = stringSimilarity(
-                            cleanedTitle,
-                            normalizeTrackTitle(candidate.title)
-                        );
-                        const artistScore = stringSimilarity(
-                            normalizedArtist,
-                            normalizeString(candidate.album.artist.name)
-                        );
-                        const combinedScore =
-                            titleScore * 0.7 + artistScore * 0.3;
-
-                        if (combinedScore > bestScore && combinedScore >= 65) {
-                            bestScore = combinedScore;
-                            bestMatch = candidate;
-                        }
-                    }
-
-                    if (bestMatch) {
-                        localTrack = bestMatch;
-                        console.log(
-                            `      (fuzzy match: score ${bestScore.toFixed(
-                                0
-                            )}% with "${bestMatch.title}" by ${
-                                bestMatch.album.artist.name
-                            })`
-                        );
-                    }
-                }
-            }
-
-            // Strategy 6: Title-only search (ignores artist entirely)
-            // This handles cases where file has wrong artist metadata (e.g., "Various Artists" compilations)
-            // Only used when title is distinctive enough (>10 chars) and no match found yet
-            if (!localTrack && cleanedTitle.length >= 10) {
-                logger?.log(
-                    `   Strategy 6: Title-only search (fallback for wrong artist metadata)`
-                );
-
-                // Search for tracks with very similar title, ignore artist completely
-                const titleSearchTerm = strippedTitle
-                    .split(" ")
-                    .slice(0, 4)
-                    .join(" ");
-                const candidates = await prisma.track.findMany({
-                    where: {
-                        title: {
-                            contains: titleSearchTerm,
-                            mode: "insensitive",
-                        },
-                    },
-                    include: { album: { include: { artist: true } } },
-                    take: 50,
-                });
-
-                // Find a high-confidence title match (require 85%+ similarity on title alone)
-                let bestTitleMatch = null;
-                let bestTitleScore = 0;
-
-                for (const candidate of candidates) {
-                    const titleScore = stringSimilarity(
-                        cleanedTitle,
-                        normalizeTrackTitle(candidate.title)
-                    );
-
-                    // Require very high title match since we're ignoring artist
-                    if (titleScore > bestTitleScore && titleScore >= 85) {
-                        bestTitleScore = titleScore;
-                        bestTitleMatch = candidate;
-                    }
-                }
-
-                if (bestTitleMatch) {
-                    localTrack = bestTitleMatch;
-                    logger?.log(
-                        `      Found via title-only match (${bestTitleScore.toFixed(
-                            0
-                        )}%): "${bestTitleMatch.title}" by ${
-                            bestTitleMatch.album.artist.name
-                        }`
-                    );
-                    console.log(
-                        `      (title-only match: ${bestTitleScore.toFixed(
-                            0
-                        )}% - note: artist metadata mismatch, wanted "${
-                            pendingTrack.artist
-                        }" got "${bestTitleMatch.album.artist.name}")`
-                    );
-                }
-            }
 
             if (localTrack) {
                 matchedTrackIds.push(localTrack.id);
+                matchedInputIndices.add(originalIndex);
                 console.log(
                     `   ✓ Matched: "${pendingTrack.title}" -> track ${localTrack.id}`
                 );
@@ -2071,57 +1982,10 @@ class SpotifyImportService {
             },
         });
 
-        // Save unmatched tracks as pending tracks for later auto-matching
-        const unmatchedTracks = job.pendingTracks.filter((_, index) => {
-            // We need to track which indices were matched
-            // Since matchedTrackIds doesn't preserve order, we need a different approach
-            return true; // We'll recalculate below
-        });
-
-        // Recalculate unmatched - tracks that weren't added to playlist
-        const matchedTitlesNormalized = new Set<string>();
-        for (const pendingTrack of job.pendingTracks) {
-            const normalizedArtist = normalizeString(pendingTrack.artist);
-            const strippedTitle = stripTrackSuffix(pendingTrack.title);
-
-            // Check if this track was matched by looking for it in the created items
-            const found = await prisma.track.findFirst({
-                where: {
-                    id: { in: uniqueTrackIds },
-                    title: {
-                        contains: strippedTitle.split(" ")[0],
-                        mode: "insensitive",
-                    },
-                    album: {
-                        artist: {
-                            normalizedName: {
-                                contains: normalizedArtist.split(" ")[0],
-                                mode: "insensitive",
-                            },
-                        },
-                    },
-                },
-            });
-
-            if (found) {
-                matchedTitlesNormalized.add(
-                    `${normalizedArtist}|${strippedTitle.toLowerCase()}`
-                );
-            }
-        }
-
         // Save pending tracks that weren't matched
         const pendingTracksToSave = job.pendingTracks
             .map((track, index) => ({ ...track, originalIndex: index }))
-            .filter((track) => {
-                const normalizedArtist = normalizeString(track.artist);
-                const strippedTitle = stripTrackSuffix(
-                    track.title
-                ).toLowerCase();
-                return !matchedTitlesNormalized.has(
-                    `${normalizedArtist}|${strippedTitle}`
-                );
-            });
+            .filter((_, index) => !matchedInputIndices.has(index));
 
         if (pendingTracksToSave.length > 0) {
             console.log(
@@ -2294,6 +2158,83 @@ class SpotifyImportService {
     }
 
     /**
+     * Repair an existing playlist by re-matching the full import tracklist.
+     * This is useful if tracks were deleted/re-scanned and playlist items were lost.
+     */
+    async repairPlaylist(jobId: string): Promise<{
+        added: number;
+        pendingRemoved: number;
+    }> {
+        const job = await getImportJob(jobId);
+        if (!job) throw new Error("Import job not found");
+        if (!job.createdPlaylistId) throw new Error("No playlist created for this job");
+
+        const playlistId = job.createdPlaylistId;
+
+        const existingItems = await prisma.playlistItem.findMany({
+            where: { playlistId },
+            select: { trackId: true },
+        });
+        const existingTrackIds = new Set(existingItems.map((i) => i.trackId));
+
+        let added = 0;
+        let pendingRemoved = 0;
+
+        for (let originalIndex = 0; originalIndex < job.pendingTracks.length; originalIndex++) {
+            const pendingTrack = job.pendingTracks[originalIndex];
+
+            // Prefer the original pre-match if still valid
+            let trackId: string | null = null;
+            if (pendingTrack.preMatchedTrackId) {
+                const existingTrack = await prisma.track.findUnique({
+                    where: { id: pendingTrack.preMatchedTrackId },
+                    select: { id: true },
+                });
+                if (existingTrack) trackId = existingTrack.id;
+            }
+
+            if (!trackId) {
+                const localTrack = await this.findLocalTrackForPendingTrack({
+                    artist: pendingTrack.artist,
+                    title: pendingTrack.title,
+                    album: pendingTrack.album,
+                });
+                trackId = localTrack?.id || null;
+            }
+
+            if (!trackId || existingTrackIds.has(trackId)) {
+                continue;
+            }
+
+            try {
+                await prisma.playlistItem.create({
+                    data: {
+                        playlistId,
+                        trackId,
+                        sort: originalIndex,
+                    },
+                });
+                existingTrackIds.add(trackId);
+                added++;
+            } catch {
+                // Ignore unique constraint collisions
+            }
+
+            // If this track was previously marked pending, remove it now
+            const deleteRes = await prisma.playlistPendingTrack.deleteMany({
+                where: {
+                    playlistId,
+                    spotifyArtist: pendingTrack.artist,
+                    spotifyTitle: pendingTrack.title,
+                },
+            });
+            pendingRemoved += deleteRes.count;
+        }
+
+        return { added, pendingRemoved };
+    }
+
+    /**
      * Get import job status (public method for routes)
      */
     async getJob(jobId: string): Promise<ImportJob | null> {
@@ -2437,13 +2378,6 @@ class SpotifyImportService {
         }
 
         for (const [playlistId, pendingTracks] of tracksByPlaylist) {
-            // Get current max sort position in playlist
-            const maxSortResult = await prisma.playlistItem.aggregate({
-                where: { playlistId },
-                _max: { sort: true },
-            });
-            let nextSort = (maxSortResult._max.sort ?? -1) + 1;
-
             // Get existing track IDs in playlist to avoid duplicates
             const existingItems = await prisma.playlistItem.findMany({
                 where: { playlistId },
@@ -2454,220 +2388,119 @@ class SpotifyImportService {
             );
 
             for (const pendingTrack of pendingTracks) {
-                const normalizedArtist = normalizeString(
-                    pendingTrack.spotifyArtist
-                );
-                const artistFirstWord = normalizedArtist.split(" ")[0];
-                const strippedTitle = stripTrackSuffix(
-                    pendingTrack.spotifyTitle
-                );
+                // Playlist imports should only ever reconcile against playlist downloads.
+                // Tags can be "Various Artists" etc, so we match by filePath under Playlists/.
+                const artistFolder = sanitizePathPart(pendingTrack.spotifyArtist);
+                const albumFolder = pendingTrack.spotifyAlbum
+                    ? sanitizePathPart(pendingTrack.spotifyAlbum)
+                    : "";
+
+                const strippedTitle = stripTrackSuffix(pendingTrack.spotifyTitle);
                 const cleanedTitle = normalizeTrackTitle(strippedTitle);
 
                 console.log(
-                    `   Trying to match: "${pendingTrack.spotifyTitle}" by ${pendingTrack.spotifyArtist}`
-                );
-                console.log(
-                    `      strippedTitle: "${strippedTitle}", artistFirstWord: "${artistFirstWord}"`
+                    `   Trying to match (playlist-only): "${pendingTrack.spotifyTitle}" by ${pendingTrack.spotifyArtist}`
                 );
 
-                // Debug: Check what tracks exist for this artist
-                const artistTracks = await prisma.track.findMany({
-                    where: {
-                        album: {
-                            artist: {
-                                normalizedName: {
-                                    contains: artistFirstWord,
-                                    mode: "insensitive",
-                                },
-                            },
+                const buildPrefixes = (artist: string, album?: string) => {
+                    const base = `Playlists/${artist}/`;
+                    const legacyBase = `soulseek-downloads/Playlists/${artist}/`;
+                    if (album && album.length > 0) {
+                        return [
+                            `${base}${album}/`,
+                            `${legacyBase}${album}/`,
+                        ];
+                    }
+                    return [base, legacyBase];
+                };
+
+                const queryByPrefixes = async (prefixes: string[]) => {
+                    if (prefixes.length === 0) return [] as Array<{ id: string; title: string; filePath: string }>;
+                    return prisma.track.findMany({
+                        where: {
+                            OR: prefixes.map((p) => ({
+                                filePath: { startsWith: p, mode: "insensitive" },
+                            })),
                         },
-                    },
-                    select: {
-                        title: true,
-                        album: {
-                            select: {
-                                artist: {
-                                    select: {
-                                        name: true,
-                                        normalizedName: true,
-                                    },
-                                },
-                            },
-                        },
-                    },
-                    take: 5,
-                });
-                if (artistTracks.length > 0) {
-                    console.log(
-                        `      DEBUG: Found ${artistTracks.length}+ tracks for artist containing "${artistFirstWord}"`
-                    );
-                    artistTracks
-                        .slice(0, 3)
-                        .forEach((t) =>
-                            console.log(
-                                `         - "${t.title}" (artist: ${t.album.artist.name}, normalized: ${t.album.artist.normalizedName})`
-                            )
-                        );
-                } else {
-                    console.log(
-                        `      DEBUG: NO tracks found for artist containing "${artistFirstWord}"`
-                    );
+                        select: { id: true, title: true, filePath: true },
+                        take: 200,
+                    });
+                };
+
+                // Prefer album folder, but fall back to artist folder (playlists are typically single-track downloads).
+                let candidates = await queryByPrefixes(
+                    buildPrefixes(artistFolder, albumFolder)
+                );
+                if (candidates.length === 0) {
+                    candidates = await queryByPrefixes(buildPrefixes(artistFolder));
                 }
 
-                // Try to find a matching track (using same strategies as buildPlaylist)
-                // Strategy 1: Stripped title + fuzzy artist (contains first word)
-                let localTrack = await prisma.track.findFirst({
-                    where: {
-                        title: { equals: strippedTitle, mode: "insensitive" },
-                        album: {
-                            artist: {
-                                normalizedName: {
-                                    contains: artistFirstWord,
-                                    mode: "insensitive",
-                                },
-                            },
-                        },
-                    },
-                    select: { id: true, title: true },
-                });
-
-                console.log(
-                    `      Strategy 1 result: ${
-                        localTrack ? "FOUND" : "not found"
-                    }`
-                );
-
-                // Strategy 2: Contains search on first few words + similarity
-                if (!localTrack && strippedTitle.length >= 5) {
-                    const searchTerm = strippedTitle
-                        .split(" ")
-                        .slice(0, 4)
-                        .join(" ");
-                    console.log(
-                        `      Strategy 2: Contains search for "${searchTerm}"`
-                    );
-                    const candidates = await prisma.track.findMany({
-                        where: {
-                            title: {
-                                contains: searchTerm,
-                                mode: "insensitive",
-                            },
-                            album: {
-                                artist: {
-                                    normalizedName: {
-                                        contains: artistFirstWord,
-                                        mode: "insensitive",
-                                    },
-                                },
-                            },
-                        },
-                        include: { album: { include: { artist: true } } },
-                        take: 10,
-                    });
-
-                    console.log(
-                        `      Strategy 2: Found ${candidates.length} candidates`
-                    );
-                    for (const candidate of candidates) {
-                        const candidateNormalized = normalizeTrackTitle(
-                            candidate.title
+                // Optional fallback: some setups may drop a leading "The" in folder names.
+                if (candidates.length === 0) {
+                    const artistWithoutTheRaw = pendingTrack.spotifyArtist
+                        .replace(/^the\s+/i, "")
+                        .trim();
+                    const artistWithoutThe = sanitizePathPart(artistWithoutTheRaw);
+                    if (artistWithoutThe && artistWithoutThe !== artistFolder) {
+                        candidates = await queryByPrefixes(
+                            buildPrefixes(artistWithoutThe, albumFolder)
                         );
-                        const sim = stringSimilarity(
-                            cleanedTitle,
-                            candidateNormalized
-                        );
-                        console.log(
-                            `         "${candidate.title}" by ${
-                                candidate.album.artist.name
-                            }: ${sim.toFixed(0)}%`
-                        );
-
-                        // Direct similarity match
-                        if (sim >= 80) {
-                            localTrack = {
-                                id: candidate.id,
-                                title: candidate.title,
-                            };
-                            break;
-                        }
-
-                        // Containment match: "Sordid Affair" should match "Sordid Affair (Feat. Ryan James)"
-                        const spotifyNorm = cleanedTitle.toLowerCase();
-                        const libraryNorm = candidateNormalized.toLowerCase();
-                        if (
-                            libraryNorm.startsWith(spotifyNorm) ||
-                            spotifyNorm.startsWith(libraryNorm)
-                        ) {
-                            console.log(
-                                `         Found via containment: "${cleanedTitle}" starts "${candidateNormalized}"`
+                        if (candidates.length === 0) {
+                            candidates = await queryByPrefixes(
+                                buildPrefixes(artistWithoutThe)
                             );
-                            localTrack = {
-                                id: candidate.id,
-                                title: candidate.title,
-                            };
-                            break;
                         }
                     }
                 }
 
-                if (!localTrack)
-                    console.log(`      Strategy 2 result: not found`);
-
-                // Strategy 3: Fuzzy match on title + artist similarity
-                if (!localTrack) {
-                    const firstWord = strippedTitle.split(" ")[0];
+                if (candidates.length === 0) {
                     console.log(
-                        `      Strategy 3: Fuzzy search for title containing "${firstWord}" and artist containing "${artistFirstWord}"`
+                        `      No playlist-download candidates found for artist folder "${artistFolder}"`
                     );
-                    const candidates = await prisma.track.findMany({
-                        where: {
-                            title: { contains: firstWord, mode: "insensitive" },
-                            album: {
-                                artist: {
-                                    normalizedName: {
-                                        contains: artistFirstWord,
-                                        mode: "insensitive",
-                                    },
-                                },
-                            },
-                        },
-                        include: { album: { include: { artist: true } } },
-                        take: 20,
-                    });
+                    continue;
+                }
 
-                    console.log(
-                        `      Strategy 3: Found ${candidates.length} candidates`
-                    );
-                    for (const candidate of candidates) {
-                        const titleScore = stringSimilarity(
-                            cleanedTitle,
-                            normalizeTrackTitle(candidate.title)
-                        );
-                        const artistScore = stringSimilarity(
-                            pendingTrack.spotifyArtist,
-                            candidate.album.artist.name
-                        );
-                        const combinedScore =
-                            titleScore * 0.6 + artistScore * 0.4;
-                        console.log(
-                            `         "${candidate.title}" by ${
-                                candidate.album.artist.name
-                            }: title=${titleScore.toFixed(
-                                0
-                            )}%, artist=${artistScore.toFixed(
-                                0
-                            )}%, combined=${combinedScore.toFixed(0)}%`
-                        );
+                // Pick best candidate by title match (safe because candidate set is constrained to Playlists/<artist>/...)
+                let best: { id: string; title: string; filePath: string } | null = null;
+                let bestScore = 0;
+                for (const candidate of candidates) {
+                    const candidateNorm = normalizeTrackTitle(candidate.title);
+                    let score = stringSimilarity(cleanedTitle, candidateNorm);
 
-                        if (combinedScore >= 70) {
-                            localTrack = {
-                                id: candidate.id,
-                                title: candidate.title,
-                            };
-                            break;
+                    // Exact match / containment boosts
+                    if (candidateNorm === cleanedTitle) score = 100;
+                    else {
+                        const a = cleanedTitle.toLowerCase();
+                        const b = candidateNorm.toLowerCase();
+                        if (a.length > 0 && (b.includes(a) || a.includes(b))) {
+                            score = Math.max(score, 90);
                         }
                     }
+
+                    if (score > bestScore) {
+                        bestScore = score;
+                        best = candidate;
+                    }
                 }
+
+                const wordCount = cleanedTitle.split(/\s+/).filter(Boolean).length;
+                const minScore = wordCount <= 2 ? 60 : 75;
+
+                if (!best || bestScore < minScore) {
+                    console.log(
+                        `      Found ${candidates.length} candidates, but best title score ${bestScore.toFixed(
+                            0
+                        )}% is below threshold ${minScore}%`
+                    );
+                    continue;
+                }
+
+                const localTrack = { id: best.id, title: best.title };
+                console.log(
+                    `      ✓ Matched via playlist path: "${best.title}" (${bestScore.toFixed(
+                        0
+                    )}%)`
+                );
 
                 if (localTrack && !existingTrackIds.has(localTrack.id)) {
                     // Add to playlist
@@ -2675,7 +2508,7 @@ class SpotifyImportService {
                         data: {
                             playlistId,
                             trackId: localTrack.id,
-                            sort: nextSort++,
+                            sort: pendingTrack.sort,
                         },
                     });
 

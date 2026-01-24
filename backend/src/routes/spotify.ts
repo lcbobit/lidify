@@ -20,7 +20,8 @@ const importSchema = z.object({
     spotifyPlaylistId: z.string(),
     url: z.string().url().optional(),
     playlistName: z.string().min(1).max(200),
-    albumMbidsToDownload: z.array(z.string()),
+    // Track-only playlist imports (Soulseek). Keep flexible for backwards compatibility.
+    preview: z.any().optional(),
 });
 
 /**
@@ -124,50 +125,50 @@ router.post("/preview", async (req, res) => {
  */
 router.post("/import", async (req, res) => {
     try {
-        const { spotifyPlaylistId, url, playlistName, albumMbidsToDownload } =
+        const { spotifyPlaylistId, url, playlistName, preview } =
             importSchema.parse(req.body);
         const userId = req.user.id;
 
-        // Re-generate preview to ensure fresh data
-        const effectiveUrl =
-            url?.trim() ||
-            `https://open.spotify.com/playlist/${spotifyPlaylistId}`;
+        // Prefer client-provided preview (fast, avoids double-fetching and avoids long work in this request)
+        let effectivePreview = preview as any;
+        if (!effectivePreview) {
+            const effectiveUrl =
+                url?.trim() ||
+                `https://open.spotify.com/playlist/${spotifyPlaylistId}`;
 
-        let preview;
-        if (effectiveUrl.includes("deezer.com")) {
-            const deezerMatch = effectiveUrl.match(/playlist[\/:](\d+)/);
-            if (!deezerMatch) {
-                return res
-                    .status(400)
-                    .json({ error: "Invalid Deezer playlist URL" });
+            if (effectiveUrl.includes("deezer.com")) {
+                const deezerMatch = effectiveUrl.match(/playlist[\/:](\d+)/);
+                if (!deezerMatch) {
+                    return res
+                        .status(400)
+                        .json({ error: "Invalid Deezer playlist URL" });
+                }
+                const playlistId = deezerMatch[1];
+                const deezerPlaylist = await deezerService.getPlaylist(playlistId);
+                if (!deezerPlaylist) {
+                    return res
+                        .status(404)
+                        .json({ error: "Deezer playlist not found" });
+                }
+                effectivePreview =
+                    await spotifyImportService.generatePreviewFromDeezer(
+                        deezerPlaylist
+                    );
+            } else {
+                effectivePreview =
+                    await spotifyImportService.generatePreview(effectiveUrl);
             }
-            const playlistId = deezerMatch[1];
-            const deezerPlaylist = await deezerService.getPlaylist(playlistId);
-            if (!deezerPlaylist) {
-                return res
-                    .status(404)
-                    .json({ error: "Deezer playlist not found" });
-            }
-            preview = await spotifyImportService.generatePreviewFromDeezer(
-                deezerPlaylist
-            );
-        } else {
-            preview = await spotifyImportService.generatePreview(effectiveUrl);
         }
 
         console.log(
             `[Spotify Import] Starting import for user ${userId}: ${playlistName}`
-        );
-        console.log(
-            `[Spotify Import] Downloading ${albumMbidsToDownload.length} albums`
         );
 
         const job = await spotifyImportService.startImport(
             userId,
             spotifyPlaylistId,
             playlistName,
-            albumMbidsToDownload,
-            preview
+            effectivePreview
         );
 
         res.json({
@@ -268,6 +269,43 @@ router.post("/import/:jobId/refresh", async (req, res) => {
         console.error("Spotify refresh error:", error);
         res.status(500).json({
             error: error.message || "Failed to refresh tracks",
+        });
+    }
+});
+
+/**
+ * POST /api/spotify/import/:jobId/repair
+ * Rebuild missing playlist items from the original import tracklist.
+ */
+router.post("/import/:jobId/repair", async (req, res) => {
+    try {
+        const { jobId } = req.params;
+        const userId = req.user.id;
+
+        const job = await spotifyImportService.getJob(jobId);
+        if (!job) {
+            return res.status(404).json({ error: "Import job not found" });
+        }
+
+        if (job.userId !== userId) {
+            return res
+                .status(403)
+                .json({ error: "Not authorized to repair this job" });
+        }
+
+        const result = await spotifyImportService.repairPlaylist(jobId);
+
+        res.json({
+            message: `Repaired playlist: added ${result.added} track(s), removed ${result.pendingRemoved} pending entr${
+                result.pendingRemoved === 1 ? "y" : "ies"
+            }`,
+            added: result.added,
+            pendingRemoved: result.pendingRemoved,
+        });
+    } catch (error: any) {
+        console.error("Spotify repair error:", error);
+        res.status(500).json({
+            error: error.message || "Failed to repair playlist",
         });
     }
 });
