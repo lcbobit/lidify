@@ -516,6 +516,32 @@ export class MoodBucketService {
 
         const config = MOOD_CONFIG[mood];
 
+        // Regenerate if older than 24 hours or any tracks missing
+        const ONE_DAY = 24 * 60 * 60 * 1000;
+        const isStale = Date.now() - userMix.generatedAt.getTime() > ONE_DAY;
+
+        const existingCount = isStale ? 0 : await prisma.track.count({
+            where: { id: { in: userMix.trackIds } },
+        });
+
+        if (isStale || existingCount < userMix.trackIds.length) {
+            const regenerated = await this.saveUserMoodMix(userId, mood);
+            if (regenerated) {
+                return {
+                    id: regenerated.id,
+                    type: "mood",
+                    mood,
+                    name: regenerated.name,
+                    description: regenerated.description,
+                    trackIds: regenerated.trackIds,
+                    coverUrls: regenerated.coverUrls,
+                    trackCount: regenerated.trackCount,
+                    color: regenerated.color,
+                };
+            }
+        }
+
+        // Return cached mix
         return {
             id: `your-mood-mix-${userMix.generatedAt.getTime()}`,
             type: "mood",

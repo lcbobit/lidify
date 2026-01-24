@@ -306,17 +306,75 @@ class DeezerService {
                 return null;
             }
 
-            const tracks: DeezerTrack[] = (data.tracks?.data || []).map((track: any) => ({
-                deezerId: String(track.id),
-                title: track.title || "Unknown",
-                artist: track.artist?.name || "Unknown Artist",
-                artistId: String(track.artist?.id || ""),
-                album: track.album?.title || "Unknown Album",
-                albumId: String(track.album?.id || ""),
-                durationMs: (track.duration || 0) * 1000,
-                previewUrl: track.preview || null,
-                coverUrl: track.album?.cover_medium || track.album?.cover || null,
-            }));
+            const tracks: DeezerTrack[] = [];
+            const seenPageUrls = new Set<string>();
+
+            const addTracks = (items: any[]) => {
+                for (const track of items) {
+                    const trackId = String(track.id);
+                    tracks.push({
+                        deezerId: trackId,
+                        title: track.title || "Unknown",
+                        artist: track.artist?.name || "Unknown Artist",
+                        artistId: String(track.artist?.id || ""),
+                        album: track.album?.title || "Unknown Album",
+                        albumId: String(track.album?.id || ""),
+                        durationMs: (track.duration || 0) * 1000,
+                        previewUrl: track.preview || null,
+                        coverUrl: track.album?.cover_medium || track.album?.cover || null,
+                    });
+                }
+            };
+
+            const initialTracks = data.tracks?.data || [];
+            addTracks(initialTracks);
+
+            const hasPagination = Boolean(data.tracks?.next);
+            const expectedTotal =
+                data.nb_tracks || data.tracks?.total || initialTracks.length;
+            const pageSize = Math.max(1, initialTracks.length || 25);
+            const maxPages =
+                hasPagination && expectedTotal === initialTracks.length
+                    ? 1000
+                    : Math.min(1000, Math.ceil(expectedTotal / pageSize) + 5);
+            const maxTracks =
+                hasPagination && expectedTotal === initialTracks.length
+                    ? 10000
+                    : Math.min(expectedTotal, 10000);
+
+            let nextUrl: string | null | undefined = data.tracks?.next;
+            let pageCount = 0;
+
+            while (nextUrl && pageCount < maxPages && tracks.length < maxTracks) {
+                if (seenPageUrls.has(nextUrl)) {
+                    console.warn(
+                        `Deezer: Pagination loop detected for playlist ${playlistId}, stopping early`
+                    );
+                    break;
+                }
+                seenPageUrls.add(nextUrl);
+                pageCount += 1;
+                try {
+                    const pageResponse = await axios.get(nextUrl, {
+                        timeout: 15000,
+                    });
+                    const pageData = pageResponse.data;
+                    addTracks(pageData?.data || []);
+                    nextUrl = pageData?.next;
+                } catch (error: any) {
+                    console.error(
+                        `Deezer playlist pagination error (${playlistId}):`,
+                        error.message
+                    );
+                    break;
+                }
+            }
+
+            if (tracks.length < expectedTotal) {
+                console.warn(
+                    `Deezer: Playlist ${playlistId} returned ${tracks.length}/${expectedTotal} tracks`
+                );
+            }
 
             console.log(`Deezer: Fetched playlist "${data.title}" with ${tracks.length} tracks`);
 
@@ -326,7 +384,7 @@ class DeezerService {
                 description: data.description || null,
                 creator: data.creator?.name || "Unknown",
                 imageUrl: data.picture_medium || data.picture || null,
-                trackCount: data.nb_tracks || tracks.length,
+                trackCount: expectedTotal,
                 tracks,
                 isPublic: data.public ?? true,
             };

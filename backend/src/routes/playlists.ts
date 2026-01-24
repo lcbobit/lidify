@@ -580,15 +580,19 @@ router.delete("/:id/pending/:trackId", async (req, res) => {
             return res.status(403).json({ error: "Access denied" });
         }
 
-        await prisma.playlistPendingTrack.delete({
-            where: { id: pendingTrackId },
+        const deleteResult = await prisma.playlistPendingTrack.deleteMany({
+            where: {
+                id: pendingTrackId,
+                playlistId,
+            },
         });
 
-        res.json({ message: "Pending track removed" });
-    } catch (error: any) {
-        if (error.code === "P2025") {
+        if (deleteResult.count === 0) {
             return res.status(404).json({ error: "Pending track not found" });
         }
+
+        res.json({ message: "Pending track removed" });
+    } catch (error) {
         console.error("Delete pending track error:", error);
         res.status(500).json({ error: "Failed to delete pending track" });
     }
@@ -600,11 +604,27 @@ router.delete("/:id/pending/:trackId", async (req, res) => {
  */
 router.get("/:id/pending/:trackId/preview", async (req, res) => {
     try {
-        const { trackId: pendingTrackId } = req.params;
+        const userId = req.user.id;
+        const { id: playlistId, trackId: pendingTrackId } = req.params;
+
+        const playlist = await prisma.playlist.findUnique({
+            where: { id: playlistId },
+        });
+
+        if (!playlist) {
+            return res.status(404).json({ error: "Playlist not found" });
+        }
+
+        if (!playlist.isPublic && playlist.userId !== userId) {
+            return res.status(403).json({ error: "Access denied" });
+        }
 
         // Get the pending track
-        const pendingTrack = await prisma.playlistPendingTrack.findUnique({
-            where: { id: pendingTrackId },
+        const pendingTrack = await prisma.playlistPendingTrack.findFirst({
+            where: {
+                id: pendingTrackId,
+                playlistId,
+            },
         });
 
         if (!pendingTrack) {
@@ -676,8 +696,11 @@ router.post("/:id/pending/:trackId/retry", async (req, res) => {
         }
 
         // Get the pending track
-        const pendingTrack = await prisma.playlistPendingTrack.findUnique({
-            where: { id: pendingTrackId },
+        const pendingTrack = await prisma.playlistPendingTrack.findFirst({
+            where: {
+                id: pendingTrackId,
+                playlistId,
+            },
         });
 
         if (!pendingTrack) {

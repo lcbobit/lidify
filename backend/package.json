@@ -50,10 +50,10 @@
         "podcast-index-api": "^1.1.10",
         "qrcode": "^1.5.4",
         "redis": "^4.6.10",
-        "socket.io": "^4.7.4",
         "rss-parser": "^3.13.0",
         "sharp": "^0.34.5",
-        "slsk-client": "^1.1.0",
+        "socket.io": "^4.7.4",
+        "soulseek-ts": "^2.1.4",
         "speakeasy": "^2.0.0",
         "swagger-jsdoc": "^6.2.8",
         "swagger-ui-express": "^5.0.1",
@@ -68,5 +68,8 @@
         "prisma": "^5.22.0",
         "tsx": "^4.7.0",
         "typescript": "^5.3.3"
+    },
+    "overrides": {
+        "zlib": "npm:browserify-zlib@^0.2.0"
     }
 }
