@@ -4,10 +4,12 @@ import { useEffect, useState, useRef, useMemo } from "react";
 import { api } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { Loader2, Mic2, Search, Plus } from "lucide-react";
+import { Mic2, Search, Plus, Link2 } from "lucide-react";
 import { useToast } from "@/lib/toast-context";
 import { GradientSpinner } from "@/components/ui/GradientSpinner";
-import { usePodcastsQuery, useTopPodcastsQuery } from "@/hooks/useQueries";
+import { usePodcastsQuery, useTopPodcastsQuery, queryKeys } from "@/hooks/useQueries";
+import { useQueryClient } from "@tanstack/react-query";
+import { PodcastSubscriptionList } from "@/features/podcast/components";
 import Image from "next/image";
 
 // Always proxy images through the backend for caching and mobile compatibility
@@ -22,7 +24,9 @@ interface Podcast {
     author: string;
     description?: string;
     coverUrl: string;
-    autoDownloadEpisodes: boolean;
+    autoDownload: boolean;
+    autoRemoveAds: boolean;
+    accessToken?: string;
     genres?: string[];
     feedUrl?: string;
     episodes?: any[];
@@ -42,16 +46,28 @@ interface SearchResult {
     itunesId?: number;
 }
 
+// Detect if input looks like a podcast RSS feed URL
+const isUrl = (text: string): boolean => {
+    const trimmed = text.trim();
+    return trimmed.startsWith('http://') ||
+           trimmed.startsWith('https://') ||
+           trimmed.includes('.xml') ||
+           trimmed.includes('/feed') ||
+           trimmed.includes('/rss');
+};
+
 export default function PodcastsPage() {
     const [searchQuery, setSearchQuery] = useState("");
     const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     const [showDropdown, setShowDropdown] = useState(false);
+    const [adRemovalAvailable, setAdRemovalAvailable] = useState(false);
     const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const { isAuthenticated } = useAuth();
     const router = useRouter();
     const { toast } = useToast();
+    const queryClient = useQueryClient();
 
     // Use React Query hooks
     const { data: podcasts = [], isLoading: isLoadingPodcasts } =
@@ -63,12 +79,19 @@ export default function PodcastsPage() {
     const [relatedPodcasts, setRelatedPodcasts] = useState<{
         [key: string]: SearchResult[];
     }>({});
-    
+
     // Sorting and pagination state for "My Podcasts"
     type SortOption = 'title' | 'author' | 'recent';
     const [sortBy, setSortBy] = useState<SortOption>('title');
     const [itemsPerPage, setItemsPerPage] = useState<number>(50);
     const [currentPage, setCurrentPage] = useState(1);
+
+    // Check if ad removal is available
+    useEffect(() => {
+        api.getAdRemovalStatus()
+            .then((status) => setAdRemovalAvailable(status.available))
+            .catch(() => setAdRemovalAvailable(false));
+    }, []);
 
     useEffect(() => {
         if (isAuthenticated) {
@@ -123,6 +146,9 @@ export default function PodcastsPage() {
             document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
+    // Track if current search query is a URL
+    const searchIsUrl = useMemo(() => isUrl(searchQuery), [searchQuery]);
+
     // Debounced search
     useEffect(() => {
         if (searchTimeoutRef.current) {
@@ -132,6 +158,14 @@ export default function PodcastsPage() {
         if (searchQuery.trim().length < 2) {
             setSearchResults([]);
             setShowDropdown(false);
+            return;
+        }
+
+        // If it's a URL, show the "Add from URL" option immediately
+        if (searchIsUrl) {
+            setSearchResults([]);
+            setShowDropdown(true);
+            setIsSearching(false);
             return;
         }
 
@@ -166,7 +200,7 @@ export default function PodcastsPage() {
                 clearTimeout(searchTimeoutRef.current);
             }
         };
-    }, [searchQuery]);
+    }, [searchQuery, searchIsUrl]);
 
     const loadDiscovery = async () => {
         try {
@@ -216,6 +250,38 @@ export default function PodcastsPage() {
         }
     };
 
+    // Subscribe to a podcast directly via RSS feed URL
+    const handleSubscribeByUrl = async (url: string) => {
+        toast.info("Adding podcast from URL...");
+        try {
+            const response = await api.subscribePodcast(url, undefined);
+            if (response.success && response.podcast?.id) {
+                toast.success(`Subscribed to ${response.podcast.title || 'podcast'}!`);
+                setSearchQuery("");
+                setShowDropdown(false);
+                router.push(`/podcasts/${response.podcast.id}`);
+            }
+        } catch (error: any) {
+            console.error("Subscribe by URL error:", error);
+            toast.error(error.message || "Failed to add podcast. Is this a valid RSS feed?");
+        }
+    };
+
+    const handleUpdateSettings = async (
+        podcastId: string,
+        settings: { autoDownload?: boolean; autoRemoveAds?: boolean }
+    ) => {
+        try {
+            await api.updatePodcastSubscription(podcastId, settings);
+            // Invalidate to refresh with new settings
+            queryClient.invalidateQueries({ queryKey: queryKeys.podcasts() });
+        } catch (error) {
+            console.error("Failed to update podcast settings:", error);
+            toast.error("Failed to update settings");
+            throw error; // Re-throw so the row component can roll back
+        }
+    };
+
     if (isLoading) {
         return (
             <div className="flex items-center justify-center min-h-screen bg-black">
@@ -255,7 +321,7 @@ export default function PodcastsPage() {
                             type="text"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            placeholder="Quick add..."
+                            placeholder="Search or paste RSS URL..."
                             className="w-full pl-11 pr-4 py-3 bg-white/5 border border-white/10 rounded-full text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 focus:bg-white/10 transition-all text-sm"
                         />
                         {isSearching && (
@@ -320,10 +386,45 @@ export default function PodcastsPage() {
                             </div>
                         )}
 
+                        {/* Add from URL Option */}
+                        {showDropdown && searchIsUrl && (
+                            <div className="absolute top-full left-0 mt-2 w-full bg-[#121212] border border-white/10 rounded-lg shadow-2xl overflow-hidden z-50">
+                                <div
+                                    className="flex items-center gap-3 p-3 hover:bg-white/5 transition-colors cursor-pointer"
+                                    onClick={() => handleSubscribeByUrl(searchQuery.trim())}
+                                >
+                                    {/* Link Icon */}
+                                    <div className="w-12 h-12 rounded-full bg-purple-500/20 flex-shrink-0 flex items-center justify-center">
+                                        <Link2 className="w-6 h-6 text-purple-400" />
+                                    </div>
+
+                                    {/* Info */}
+                                    <div className="flex-1 min-w-0">
+                                        <h3 className="text-white font-semibold text-sm">
+                                            Add podcast from URL
+                                        </h3>
+                                        <p className="text-gray-400 text-xs truncate">
+                                            {searchQuery.trim().length > 45
+                                                ? searchQuery.trim().substring(0, 45) + '...'
+                                                : searchQuery.trim()}
+                                        </p>
+                                    </div>
+
+                                    {/* Add Button */}
+                                    <div className="flex-shrink-0">
+                                        <div className="w-8 h-8 rounded-full bg-purple-500 hover:bg-purple-400 flex items-center justify-center transition-colors">
+                                            <Plus className="w-4 h-4 text-white" />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         {/* No Results */}
                         {showDropdown &&
                             searchResults.length === 0 &&
                             !isSearching &&
+                            !searchIsUrl &&
                             searchQuery.length >= 2 && (
                                 <div className="absolute top-full left-0 mt-2 w-full bg-[#121212] border border-white/10 rounded-lg shadow-2xl p-4 z-50">
                                     <p className="text-gray-400 text-sm text-center">
@@ -339,7 +440,7 @@ export default function PodcastsPage() {
                 {/* My Podcasts */}
                 {podcasts.length > 0 && (
                     <section>
-                        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+                        <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
                             <h2 className="text-xl font-bold text-white">
                                 My Podcasts
                             </h2>
@@ -375,49 +476,13 @@ export default function PodcastsPage() {
                                 </span>
                             </div>
                         </div>
-                        <div
-                            className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-5 2xl:grid-cols-5 3xl:grid-cols-5 gap-4"
-                            data-tv-section="my-podcasts"
-                        >
-                            {paginatedPodcasts.map((podcast, index) => {
-                                const imageUrl = getProxiedImageUrl(podcast.coverUrl);
-                                return (
-                                    <div
-                                        key={podcast.id}
-                                        onClick={() =>
-                                            router.push(`/podcasts/${podcast.id}`)
-                                        }
-                                        data-tv-card
-                                        data-tv-card-index={index}
-                                        tabIndex={0}
-                                        className="bg-transparent hover:bg-white/5 transition-all p-3 rounded-md cursor-pointer group"
-                                    >
-                                        <div className="w-full aspect-square bg-[#282828] rounded-full mb-2.5 overflow-hidden relative shadow-lg">
-                                            {imageUrl ? (
-                                                <Image
-                                                    src={imageUrl}
-                                                    alt={podcast.title}
-                                                    fill
-                                                    sizes="(max-width: 640px) 50vw, (max-width: 768px) 33vw, (max-width: 1024px) 25vw, 20vw"
-                                                    className="object-cover group-hover:scale-105 transition-transform"
-                                                    unoptimized
-                                                />
-                                            ) : (
-                                                <div className="w-full h-full flex items-center justify-center">
-                                                    <Mic2 className="w-16 h-16 text-gray-700" />
-                                                </div>
-                                            )}
-                                        </div>
-                                        <h3 className="text-sm font-semibold text-white truncate mb-0.5">
-                                            {podcast.title}
-                                        </h3>
-                                        <p className="text-xs text-gray-400 truncate">
-                                            {podcast.author}
-                                        </p>
-                                    </div>
-                                );
-                            })}
-                        </div>
+
+                        <PodcastSubscriptionList
+                            podcasts={paginatedPodcasts as any}
+                            adRemovalAvailable={adRemovalAvailable}
+                            onUpdateSettings={handleUpdateSettings}
+                            onPodcastClick={(id) => router.push(`/podcasts/${id}`)}
+                        />
 
                         {/* Pagination Controls */}
                         {totalPages > 1 && (
