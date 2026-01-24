@@ -409,7 +409,11 @@ router.post(
                         pendingTrack.spotifyTitle,
                         albumName,
                         searchResult.allMatches,
-                        settings.musicPath
+                        settings.musicPath,
+                        {
+                            // Namespace playlist downloads to avoid collisions with /music paths
+                            downloadSubdir: "Playlists",
+                        }
                     )
                     .then(async (result) => {
                         if (result.success) {
@@ -429,10 +433,19 @@ router.post(
                                 const { scanQueue } = await import(
                                     "../workers/queues"
                                 );
+                                const settings =
+                                    await prisma.systemSettings.findFirst();
+                                const downloadBase =
+                                    settings?.downloadPath || "/soulseek-downloads";
                                 await scanQueue.add(
                                     "scan",
                                     {
                                         userId: req.user!.id,
+                                        musicPath: path.join(
+                                            downloadBase,
+                                            "Playlists"
+                                        ),
+                                        basePath: downloadBase,
                                         source: "retry-pending-track",
                                         albumMbid:
                                             pendingTrack.albumMbid || undefined,
@@ -588,6 +601,7 @@ router.post(
                             await scanQueue.add("scan", {
                                 userId: req.user!.id,
                                 musicPath: path.join(downloadBase, "Playlists"),
+                                basePath: downloadBase,
                                 source: "retry-spotify-import",
                             });
                         } else {

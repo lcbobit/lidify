@@ -32,6 +32,9 @@ interface Track {
     id: string;
     title: string;
     duration: number;
+    filePath?: string;
+    fileSize?: number;
+    mime?: string | null;
     album: {
         id?: string;
         title: string;
@@ -79,6 +82,7 @@ export default function PlaylistDetailPage() {
     );
     const [retryingTrackId, setRetryingTrackId] = useState<string | null>(null);
     const [removingTrackId, setRemovingTrackId] = useState<string | null>(null);
+    const [isRetryingMissing, setIsRetryingMissing] = useState(false);
     const previewAudioRef = useRef<HTMLAudioElement | null>(null);
 
     // Clean up preview audio on unmount
@@ -161,6 +165,40 @@ export default function PlaylistDetailPage() {
             toast.error("Failed to retry download");
         } finally {
             setRetryingTrackId(null);
+        }
+    };
+
+    const handleRetryMissingTracks = async () => {
+        if (!playlistId) return;
+        setIsRetryingMissing(true);
+        try {
+            const result = await api.retryAllPendingTracks(playlistId);
+            if (result.success) {
+                window.dispatchEvent(
+                    new CustomEvent("set-activity-panel-tab", {
+                        detail: { tab: "active" },
+                    })
+                );
+                window.dispatchEvent(new CustomEvent("open-activity-panel"));
+                window.dispatchEvent(new CustomEvent("notifications-changed"));
+
+                // Refresh after a delay to allow downloads + scan to progress
+                setTimeout(() => {
+                    queryClient.invalidateQueries({
+                        queryKey: ["playlist", playlistId],
+                    });
+                }, 20000);
+
+                toast.success(result.message || "Retry started");
+            } else {
+                toast.error(result.message || "Retry failed");
+            }
+        } catch (error) {
+            console.error("Failed to retry missing tracks:", error);
+            toast.error("Failed to retry missing tracks");
+        } finally {
+            // Hide while in progress; show again after a short cooldown if still pending
+            setTimeout(() => setIsRetryingMissing(false), 60000);
         }
     };
 
@@ -358,6 +396,64 @@ export default function PlaylistDetailPage() {
         return `${mins}:${secs.toString().padStart(2, "0")}`;
     };
 
+    // Extract codec/format from mime type or file path
+    const getCodecLabel = (mime?: string | null, filePath?: string): string | null => {
+        if (mime) {
+            const mimeMap: Record<string, string> = {
+                "audio/flac": "FLAC",
+                "audio/x-flac": "FLAC",
+                flac: "FLAC",
+                "audio/mpeg": "MP3",
+                "audio/mp3": "MP3",
+                "audio/aac": "AAC",
+                "audio/mp4": "AAC",
+                "audio/x-m4a": "AAC",
+                "audio/ogg": "OGG",
+                "audio/vorbis": "OGG",
+                "audio/opus": "OPUS",
+                "audio/wav": "WAV",
+                "audio/x-wav": "WAV",
+                "audio/alac": "ALAC",
+                "audio/x-alac": "ALAC",
+                "audio/aiff": "AIFF",
+                "audio/x-aiff": "AIFF",
+            };
+            const normalized = mime.toLowerCase();
+            if (mimeMap[normalized]) return mimeMap[normalized];
+        }
+
+        if (filePath) {
+            const ext = filePath.split(".").pop()?.toLowerCase();
+            const extMap: Record<string, string> = {
+                flac: "FLAC",
+                mp3: "MP3",
+                aac: "AAC",
+                m4a: "AAC",
+                ogg: "OGG",
+                opus: "OPUS",
+                wav: "WAV",
+                alac: "ALAC",
+                aiff: "AIFF",
+                aif: "AIFF",
+                wma: "WMA",
+            };
+            if (ext && extMap[ext]) return extMap[ext];
+        }
+
+        return null;
+    };
+
+    const formatBitrate = (fileSize?: number, duration?: number): string | null => {
+        if (!fileSize || !duration || duration === 0) return null;
+        const bitrate = Math.round((fileSize * 8) / duration / 1000);
+        return `${bitrate}`;
+    };
+
+    const isLossless = (codec: string | null): boolean => {
+        if (!codec) return false;
+        return ["FLAC", "ALAC", "WAV", "AIFF"].includes(codec);
+    };
+
     if (isLoading) {
         return (
             <div className="flex items-center justify-center min-h-screen">
@@ -552,13 +648,26 @@ export default function PlaylistDetailPage() {
             <div className="px-4 md:px-8 pb-32">
                 {/* Show failed/pending count if any */}
                 {playlist.pendingCount > 0 && (
-                    <div className="mb-4 px-4 py-2 bg-red-900/20 border border-red-500/30 rounded-lg flex items-center gap-2">
-                        <AlertCircle className="w-4 h-4 text-red-400" />
-                        <span className="text-sm text-red-200">
-                            {playlist.pendingCount} track
-                            {playlist.pendingCount !== 1 ? "s" : ""} failed to
-                            download - will auto-import when available
-                        </span>
+                    <div className="mb-4 px-4 py-2 bg-red-900/20 border border-red-500/30 rounded-lg flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                            <AlertCircle className="w-4 h-4 text-red-400" />
+                            <span className="text-sm text-red-200">
+                                {playlist.pendingCount} track
+                                {playlist.pendingCount !== 1 ? "s" : ""} still
+                                missing. They will be added if they appear in
+                                your library after a scan.
+                            </span>
+                        </div>
+
+                        {playlist.isOwner && !isRetryingMissing && (
+                            <button
+                                onClick={handleRetryMissingTracks}
+                                className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-red-500/20 text-red-200 border border-red-500/30 hover:bg-red-500/30 transition-colors"
+                                title="Retry downloading missing tracks"
+                            >
+                                Retry missing
+                            </button>
+                        )}
                     </div>
                 )}
 
@@ -759,19 +868,76 @@ export default function PlaylistDetailPage() {
                                                     )}
                                                 </div>
                                                 <div className="min-w-0">
-                                                    <p
-                                                        className={cn(
-                                                            "text-sm font-medium truncate",
-                                                            isCurrentlyPlaying
-                                                                ? "text-[#ecb200]"
-                                                                : "text-white"
-                                                        )}
-                                                    >
-                                                        {
-                                                            playlistItem.track
-                                                                .title
-                                                        }
-                                                    </p>
+                                                    <div className="flex items-center gap-2 min-w-0">
+                                                        <p
+                                                            className={cn(
+                                                                "text-sm font-medium truncate",
+                                                                isCurrentlyPlaying
+                                                                    ? "text-[#ecb200]"
+                                                                    : "text-white"
+                                                            )}
+                                                        >
+                                                            {
+                                                                playlistItem
+                                                                    .track.title
+                                                            }
+                                                        </p>
+                                                        {(() => {
+                                                            const codec =
+                                                                getCodecLabel(
+                                                                    playlistItem
+                                                                        .track
+                                                                        .mime,
+                                                                    playlistItem
+                                                                        .track
+                                                                        .filePath
+                                                                );
+                                                            const bitrate =
+                                                                formatBitrate(
+                                                                    playlistItem
+                                                                        .track
+                                                                        .fileSize,
+                                                                    playlistItem
+                                                                        .track
+                                                                        .duration
+                                                                );
+                                                            if (!codec && !bitrate)
+                                                                return null;
+                                                            const lossless =
+                                                                isLossless(
+                                                                    codec
+                                                                );
+                                                            return (
+                                                                <div
+                                                                    className={cn(
+                                                                        "hidden md:flex shrink-0 items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium",
+                                                                        lossless
+                                                                            ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20"
+                                                                            : "bg-gray-500/15 text-gray-400 border border-gray-500/20"
+                                                                    )}
+                                                                    title={`${
+                                                                        codec ||
+                                                                        "Unknown"
+                                                                    }${
+                                                                        bitrate
+                                                                            ? ` @ ${bitrate} kbps`
+                                                                            : ""
+                                                                    }`}
+                                                                >
+                                                                    {codec && (
+                                                                        <span>
+                                                                            {codec}
+                                                                        </span>
+                                                                    )}
+                                                                    {bitrate && (
+                                                                        <span className="opacity-70">
+                                                                            {bitrate}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })()}
+                                                    </div>
                                                     <p className="text-xs text-gray-400 truncate">
                                                         {
                                                             playlistItem.track
@@ -801,6 +967,7 @@ export default function PlaylistDetailPage() {
                                                 >
                                                     <ListPlus className="w-4 h-4" />
                                                 </button>
+
                                                 <span className="text-sm text-gray-400 w-12 text-right">
                                                     {formatDuration(
                                                         playlistItem.track

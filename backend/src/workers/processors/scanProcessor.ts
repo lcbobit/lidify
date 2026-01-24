@@ -6,6 +6,7 @@ import * as path from "path";
 export interface ScanJobData {
     userId: string;
     musicPath?: string; // Optional: use custom path or default from config
+    basePath?: string; // Optional: base path used for relative filePath in DB
     albumMbid?: string; // Optional: if scan triggered by download completion
     artistMbid?: string; // Optional: if scan triggered by download completion
     source?: string; // Optional: source of scan (e.g., "lidarr-webhook", "discover-weekly-completion", "spotify-import")
@@ -32,6 +33,7 @@ export async function processScan(
     const {
         userId,
         musicPath,
+        basePath,
         albumMbid,
         artistMbid,
         source,
@@ -67,13 +69,17 @@ export async function processScan(
 
     // Use provided music path or fall back to config
     const scanPath = musicPath || config.music.musicPath;
+    const scanBasePath = basePath || scanPath;
 
     // Check if scanning the download path (soulseek-downloads)
     // If so, use "playlist only" mode: albums marked as DISCOVER, hidden from library views
     const { prisma } = await import("../../utils/db");
     const settings = await prisma.systemSettings.findFirst();
     const downloadPath = settings?.downloadPath || "/soulseek-downloads";
-    const playlistOnlyMode = scanPath === downloadPath || scanPath.includes("soulseek-download");
+    const playlistOnlyMode =
+        scanPath === downloadPath ||
+        scanPath.startsWith(downloadPath) ||
+        scanPath.includes("soulseek-download");
 
     // Create scanner with progress callback and cover cache path
     const scanner = new MusicScannerService((progress) => {
@@ -89,7 +95,7 @@ export async function processScan(
     console.log(`[ScanJob ${job.id}] Scanning path: ${scanPath}${playlistOnlyMode ? " (playlist-only mode)" : ""}`);
 
     try {
-        const result = await scanner.scanLibrary(scanPath);
+        const result = await scanner.scanLibrary(scanPath, scanBasePath);
 
         await job.progress(100);
 
@@ -357,28 +363,8 @@ export async function processScan(
             }
         }
 
-        // If this scan was for Spotify Import, build the final playlist
-        if (source === "spotify-import" && spotifyImportJobId) {
-            console.log(
-                `[ScanJob ${job.id}]  Building Spotify Import playlist for job ${spotifyImportJobId}...`
-            );
-            try {
-                const { spotifyImportService } = await import(
-                    "../../services/spotifyImport"
-                );
-                await spotifyImportService.buildPlaylistAfterScan(
-                    spotifyImportJobId
-                );
-                console.log(
-                    `[ScanJob ${job.id}] Spotify Import playlist complete!`
-                );
-            } catch (error: any) {
-                console.error(
-                    `[ScanJob ${job.id}]  Failed to build Spotify Import playlist:`,
-                    error.message
-                );
-            }
-        }
+        // Playlist imports are now track-only: playlist is created immediately.
+        // After scans, we only reconcile pending tracks (see below).
 
         // Send notification for manual scans (not background/webhook scans)
         if (!source && userId && userId !== "system") {
@@ -399,7 +385,11 @@ export async function processScan(
         // Reconcile pending tracks from Spotify playlist imports
         // This checks if any previously unmatched tracks now have matches
         // Run on: new tracks added OR manual sync (no source = manual scan button)
-        const shouldReconcile = result.tracksAdded > 0 || !source;
+        // Always reconcile after Spotify playlist import scans, even if tracksAdded == 0.
+        // Playlist downloads can be tagged as "Various Artists" etc, and matching logic may
+        // improve over time; skipping reconcile would leave tracks stuck in pending state.
+        const shouldReconcile =
+            result.tracksAdded > 0 || !source || source === "spotify-import";
         if (shouldReconcile) {
             try {
                 console.log(`[ScanJob ${job.id}] Checking for pending playlist tracks to reconcile...`);

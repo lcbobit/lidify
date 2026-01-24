@@ -700,6 +700,17 @@ class ApiClient {
         });
     }
 
+    async retryAllPendingTracks(playlistId: string) {
+        return this.request<{
+            success: boolean;
+            count: number;
+            message: string;
+            downloadJobId?: string;
+        }>(`/playlists/${playlistId}/pending/retry-all`, {
+            method: "POST",
+        });
+    }
+
     async removePendingTrack(playlistId: string, pendingTrackId: string) {
         return this.request<{ message: string }>(
             `/playlists/${playlistId}/pending/${pendingTrackId}`,

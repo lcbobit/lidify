@@ -2929,6 +2929,19 @@ router.get("/tracks/:id/stream", async (req, res) => {
                     }
                 }
 
+                // Back-compat: older playlist scans stored filePath without "Playlists/" prefix
+                // while files live under downloadPath/Playlists.
+                if (!fs.existsSync(absolutePath)) {
+                    const playlistDlPath = path.join(
+                        downloadPath,
+                        "Playlists",
+                        normalizedFilePath
+                    );
+                    if (fs.existsSync(playlistDlPath)) {
+                        absolutePath = playlistDlPath;
+                    }
+                }
+
                 console.log(
                     `[STREAM] Using native file: ${absolutePath} (${requestedQuality})`
                 );
@@ -2991,8 +3004,19 @@ router.get("/tracks/:id/stream", async (req, res) => {
                     // Check download path if not found in music path
                     if (!fs.existsSync(absolutePath)) {
                         const dlSettings = await prisma.systemSettings.findFirst();
-                        const dlPath = path.join(dlSettings?.downloadPath || "/soulseek-downloads", fallbackFilePath);
-                        if (fs.existsSync(dlPath)) absolutePath = dlPath;
+                        const dlBase = dlSettings?.downloadPath || "/soulseek-downloads";
+
+                        const dlPath = path.join(dlBase, fallbackFilePath);
+                        if (fs.existsSync(dlPath)) {
+                            absolutePath = dlPath;
+                        } else {
+                            const playlistDlPath = path.join(
+                                dlBase,
+                                "Playlists",
+                                fallbackFilePath
+                            );
+                            if (fs.existsSync(playlistDlPath)) absolutePath = playlistDlPath;
+                        }
                     }
 
                     const streamingService = new AudioStreamingService(

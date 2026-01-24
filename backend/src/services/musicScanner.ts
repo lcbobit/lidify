@@ -78,7 +78,7 @@ export class MusicScannerService {
     /**
      * Scan the music directory and update the database
      */
-    async scanLibrary(musicPath: string): Promise<ScanResult> {
+    async scanLibrary(musicPath: string, basePathForDb: string = musicPath): Promise<ScanResult> {
         const startTime = Date.now();
         const result: ScanResult = {
             tracksAdded: 0,
@@ -119,7 +119,7 @@ export class MusicScannerService {
         for (const audioFile of audioFiles) {
             await this.scanQueue.add(async () => {
                 try {
-                    const relativePath = path.relative(musicPath, audioFile);
+                    const relativePath = path.relative(basePathForDb, audioFile);
                     progress.currentFile = relativePath;
                     this.progressCallback?.(progress);
 
@@ -145,7 +145,7 @@ export class MusicScannerService {
                     await this.processAudioFile(
                         audioFile,
                         relativePath,
-                        musicPath
+                        basePathForDb
                     );
 
                     // Increment counters only after successful insert/update
