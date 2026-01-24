@@ -1,4 +1,5 @@
 import { Router, Response } from "express";
+import path from "path";
 import { notificationService } from "../services/notificationService";
 import { AuthenticatedRequest, requireAuth } from "../middleware/auth";
 import { prisma } from "../utils/db";
@@ -552,7 +553,10 @@ router.post(
 
                 // Run Soulseek search async
                 soulseekService
-                    .searchAndDownloadBatch(tracks, musicPath, 4)
+                    .searchAndDownloadBatch(tracks, musicPath, 4, {
+                        // Namespace playlist downloads to avoid collisions with /music paths
+                        downloadSubdir: "Playlists",
+                    })
                     .then(async (result) => {
                         if (result.successful > 0) {
                             await prisma.downloadJob.update({
@@ -577,10 +581,13 @@ router.post(
                             const { scanQueue } = await import(
                                 "../workers/queues"
                             );
+                            const settings =
+                                await prisma.systemSettings.findFirst();
+                            const downloadBase =
+                                settings?.downloadPath || "/soulseek-downloads";
                             await scanQueue.add("scan", {
-                                paths: [],
-                                fullScan: false,
                                 userId: req.user!.id,
+                                musicPath: path.join(downloadBase, "Playlists"),
                                 source: "retry-spotify-import",
                             });
                         } else {

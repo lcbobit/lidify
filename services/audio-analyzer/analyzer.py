@@ -32,7 +32,7 @@ import multiprocessing
 
 # Force spawn mode for TensorFlow compatibility (must be called before any multiprocessing)
 try:
-    multiprocessing.set_start_method('spawn', force=True)
+    multiprocessing.set_start_method("spawn", force=True)
 except RuntimeError:
     pass  # Already set
 
@@ -42,19 +42,20 @@ from psycopg2.extras import RealDictCursor
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger('audio-analyzer')
+logger = logging.getLogger("audio-analyzer")
 
 # Essentia imports (will fail gracefully if not installed for testing)
 ESSENTIA_AVAILABLE = False
 try:
     import essentia
+
     # Suppress Essentia's internal "No network created" warnings that spam logs
     essentia.log.warningActive = False
     essentia.log.infoActive = False
     import essentia.standard as es
+
     ESSENTIA_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"Essentia not available: {e}")
@@ -64,6 +65,7 @@ TF_MODELS_AVAILABLE = False
 TensorflowPredictEffnetDiscogs = None
 try:
     from essentia.standard import TensorflowPredictEffnetDiscogs
+
     TF_MODELS_AVAILABLE = True
     logger.info("TensorflowPredictEffnetDiscogs available - Enhanced mode enabled")
 except ImportError as e:
@@ -71,91 +73,101 @@ except ImportError as e:
     logger.info("Falling back to Standard mode")
 
 # Configuration from environment
-REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
-DATABASE_URL = os.getenv('DATABASE_URL', '')
-MUSIC_PATH = os.getenv('MUSIC_PATH', '/music')
-BATCH_SIZE = int(os.getenv('BATCH_SIZE', '10'))
-SLEEP_INTERVAL = int(os.getenv('SLEEP_INTERVAL', '5'))
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+MUSIC_PATH = os.getenv("MUSIC_PATH", "/music")
+DOWNLOAD_PATH = os.getenv("DOWNLOAD_PATH", "")
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "10"))
+SLEEP_INTERVAL = int(os.getenv("SLEEP_INTERVAL", "5"))
 
 # Disable ML analysis entirely (set to 'true' to disable)
 # Useful for low-resource systems that don't need mood-based playlists
-DISABLE_ML_ANALYSIS = os.getenv('DISABLE_ML_ANALYSIS', 'false').lower() in ('true', '1', 'yes')
+DISABLE_ML_ANALYSIS = os.getenv("DISABLE_ML_ANALYSIS", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
 # Large file handling configuration
 # Files larger than MAX_FILE_SIZE_MB will be skipped (0 = no limit)
 # Hi-res FLAC files (24-bit/96kHz+) can be 200-500MB and take too long to analyze
-MAX_FILE_SIZE_MB = int(os.getenv('MAX_FILE_SIZE_MB', '100'))
+MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "100"))
 # Base timeout per track in seconds (scaled up for larger files)
-BASE_TRACK_TIMEOUT = int(os.getenv('BASE_TRACK_TIMEOUT', '120'))
+BASE_TRACK_TIMEOUT = int(os.getenv("BASE_TRACK_TIMEOUT", "120"))
 # Max timeout per track (even for very large files)
-MAX_TRACK_TIMEOUT = int(os.getenv('MAX_TRACK_TIMEOUT', '600'))
+MAX_TRACK_TIMEOUT = int(os.getenv("MAX_TRACK_TIMEOUT", "600"))
 
 # Number of parallel analysis workers (default: 2)
 # ML analysis is resource-intensive; increase only if you have CPU/RAM headroom
-NUM_WORKERS = int(os.getenv('NUM_WORKERS', '2'))
-ESSENTIA_VERSION = '2.1b6-enhanced-v2'
+NUM_WORKERS = int(os.getenv("NUM_WORKERS", "2"))
+ESSENTIA_VERSION = "2.1b6-enhanced-v2"
 
 # Retry configuration
-MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))  # Max retry attempts per track
-STALE_PROCESSING_MINUTES = int(os.getenv('STALE_PROCESSING_MINUTES', '10'))  # Reset tracks stuck in 'processing'
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))  # Max retry attempts per track
+STALE_PROCESSING_MINUTES = int(
+    os.getenv("STALE_PROCESSING_MINUTES", "10")
+)  # Reset tracks stuck in 'processing'
 
 # Queue names
-ANALYSIS_QUEUE = 'audio:analysis:queue'
-ANALYSIS_PROCESSING = 'audio:analysis:processing'
+ANALYSIS_QUEUE = "audio:analysis:queue"
+ANALYSIS_PROCESSING = "audio:analysis:processing"
 
 # Model paths (pre-packaged in Docker image)
-MODEL_DIR = '/app/models'
+MODEL_DIR = "/app/models"
 
 # Discogs EfficientNet model file paths (official Essentia models from essentia.upf.edu/models/)
 # These are more accurate than the older MusiCNN models
 MODELS = {
     # Base Discogs EfficientNet embedding model
-    'effnet': os.path.join(MODEL_DIR, 'discogs-effnet-bs64-1.pb'),
+    "effnet": os.path.join(MODEL_DIR, "discogs-effnet-bs64-1.pb"),
     # Mood classification heads (Discogs EfficientNet architecture)
-    'mood_happy': os.path.join(MODEL_DIR, 'mood_happy-discogs-effnet-1.pb'),
-    'mood_sad': os.path.join(MODEL_DIR, 'mood_sad-discogs-effnet-1.pb'),
-    'mood_relaxed': os.path.join(MODEL_DIR, 'mood_relaxed-discogs-effnet-1.pb'),
-    'mood_aggressive': os.path.join(MODEL_DIR, 'mood_aggressive-discogs-effnet-1.pb'),
-    'mood_party': os.path.join(MODEL_DIR, 'mood_party-discogs-effnet-1.pb'),
-    'mood_acoustic': os.path.join(MODEL_DIR, 'mood_acoustic-discogs-effnet-1.pb'),
-    'mood_electronic': os.path.join(MODEL_DIR, 'mood_electronic-discogs-effnet-1.pb'),
+    "mood_happy": os.path.join(MODEL_DIR, "mood_happy-discogs-effnet-1.pb"),
+    "mood_sad": os.path.join(MODEL_DIR, "mood_sad-discogs-effnet-1.pb"),
+    "mood_relaxed": os.path.join(MODEL_DIR, "mood_relaxed-discogs-effnet-1.pb"),
+    "mood_aggressive": os.path.join(MODEL_DIR, "mood_aggressive-discogs-effnet-1.pb"),
+    "mood_party": os.path.join(MODEL_DIR, "mood_party-discogs-effnet-1.pb"),
+    "mood_acoustic": os.path.join(MODEL_DIR, "mood_acoustic-discogs-effnet-1.pb"),
+    "mood_electronic": os.path.join(MODEL_DIR, "mood_electronic-discogs-effnet-1.pb"),
     # Danceability and Voice/Instrumental (arousal/valence derived from mood predictions)
-    'danceability': os.path.join(MODEL_DIR, 'danceability-discogs-effnet-1.pb'),
-    'voice_instrumental': os.path.join(MODEL_DIR, 'voice_instrumental-discogs-effnet-1.pb'),
+    "danceability": os.path.join(MODEL_DIR, "danceability-discogs-effnet-1.pb"),
+    "voice_instrumental": os.path.join(
+        MODEL_DIR, "voice_instrumental-discogs-effnet-1.pb"
+    ),
 }
+
 
 class DatabaseConnection:
     """PostgreSQL connection manager"""
-    
+
     def __init__(self, url: str):
         self.url = url
         self.conn = None
-    
+
     def connect(self):
         """Establish database connection"""
         if not self.url:
             raise ValueError("DATABASE_URL not set")
         self.conn = psycopg2.connect(self.url)
-        self.conn.set_client_encoding('UTF8')
+        self.conn.set_client_encoding("UTF8")
         self.conn.autocommit = False
         logger.info("Connected to PostgreSQL")
-    
+
     def get_cursor(self):
         """Get a database cursor"""
         if not self.conn:
             self.connect()
         return self.conn.cursor(cursor_factory=RealDictCursor)
-    
+
     def commit(self):
         """Commit transaction"""
         if self.conn:
             self.conn.commit()
-    
+
     def rollback(self):
         """Rollback transaction"""
         if self.conn:
             self.conn.rollback()
-    
+
     def close(self):
         """Close connection"""
         if self.conn:
@@ -166,22 +178,22 @@ class DatabaseConnection:
 class AudioAnalyzer:
     """
     Enhanced audio analysis using Essentia with TensorFlow models.
-    
+
     Supports two modes:
     - Enhanced: Uses ML models for accurate mood/valence/arousal (default)
     - Standard: Uses heuristics when models aren't available (fallback)
     """
-    
+
     def __init__(self):
         self.loaders = {}
         self.enhanced_mode = False
         self.effnet_model = None  # Base Discogs EfficientNet model
         self.prediction_models = {}  # Classification head models
-        
+
         if ESSENTIA_AVAILABLE:
             self._init_essentia()
             self._load_ml_models()
-    
+
     def _init_essentia(self):
         """Initialize Essentia algorithms for basic feature extraction"""
         # Basic feature extractors (always available)
@@ -190,17 +202,17 @@ class AudioAnalyzer:
         self.loudness = es.Loudness()
         self.dynamic_complexity = es.DynamicComplexity()
         self.danceability_extractor = es.Danceability()
-        
+
         # Additional extractors for better Standard mode
         self.spectral_centroid = es.Centroid(range=22050)  # For brightness
         self.spectral_flatness = es.FlatnessDB()  # For instrumentalness
         self.zcr = es.ZeroCrossingRate()  # For speechiness
         self.rms = es.RMS()  # For proper energy calculation
         self.spectrum = es.Spectrum()
-        self.windowing = es.Windowing(type='hann')
-        
+        self.windowing = es.Windowing(type="hann")
+
         logger.info("Essentia basic algorithms initialized")
-    
+
     def _load_ml_models(self):
         """
         Load Discogs EfficientNet TensorFlow models for Enhanced mode.
@@ -215,13 +227,14 @@ class AudioAnalyzer:
 
         try:
             from essentia.standard import TensorflowPredict2D
+
             logger.info("Loading Discogs EfficientNet models...")
 
             # First, load the base EfficientNet embedding model
-            if os.path.exists(MODELS['effnet']):
+            if os.path.exists(MODELS["effnet"]):
                 self.effnet_model = TensorflowPredictEffnetDiscogs(
-                    graphFilename=MODELS['effnet'],
-                    output="PartitionedCall:1"  # Embedding layer output
+                    graphFilename=MODELS["effnet"],
+                    output="PartitionedCall:1",  # Embedding layer output
                 )
                 logger.info("Loaded base Discogs EfficientNet model for embeddings")
             else:
@@ -230,23 +243,22 @@ class AudioAnalyzer:
 
             # Load classification head models
             heads_to_load = {
-                'mood_happy': MODELS['mood_happy'],
-                'mood_sad': MODELS['mood_sad'],
-                'mood_relaxed': MODELS['mood_relaxed'],
-                'mood_aggressive': MODELS['mood_aggressive'],
-                'mood_party': MODELS['mood_party'],
-                'mood_acoustic': MODELS['mood_acoustic'],
-                'mood_electronic': MODELS['mood_electronic'],
-                'danceability': MODELS['danceability'],
-                'voice_instrumental': MODELS['voice_instrumental'],
+                "mood_happy": MODELS["mood_happy"],
+                "mood_sad": MODELS["mood_sad"],
+                "mood_relaxed": MODELS["mood_relaxed"],
+                "mood_aggressive": MODELS["mood_aggressive"],
+                "mood_party": MODELS["mood_party"],
+                "mood_acoustic": MODELS["mood_acoustic"],
+                "mood_electronic": MODELS["mood_electronic"],
+                "danceability": MODELS["danceability"],
+                "voice_instrumental": MODELS["voice_instrumental"],
             }
 
             for model_name, model_path in heads_to_load.items():
                 if os.path.exists(model_path):
                     try:
                         self.prediction_models[model_name] = TensorflowPredict2D(
-                            graphFilename=model_path,
-                            output="model/Softmax"
+                            graphFilename=model_path, output="model/Softmax"
                         )
                         logger.info(f"Loaded classification head: {model_name}")
                     except Exception as e:
@@ -255,13 +267,17 @@ class AudioAnalyzer:
                     logger.warning(f"Model not found: {model_path}")
 
             # Enable enhanced mode if we have the key mood models
-            required = ['mood_happy', 'mood_sad', 'mood_relaxed', 'mood_aggressive']
+            required = ["mood_happy", "mood_sad", "mood_relaxed", "mood_aggressive"]
             if all(m in self.prediction_models for m in required):
                 self.enhanced_mode = True
-                logger.info(f"ENHANCED MODE ENABLED - {len(self.prediction_models)} Discogs EfficientNet classification heads loaded")
+                logger.info(
+                    f"ENHANCED MODE ENABLED - {len(self.prediction_models)} Discogs EfficientNet classification heads loaded"
+                )
             else:
                 missing = [m for m in required if m not in self.prediction_models]
-                logger.warning(f"Missing required models: {missing} - using Standard mode")
+                logger.warning(
+                    f"Missing required models: {missing} - using Standard mode"
+                )
 
         except ImportError as e:
             logger.warning(f"TensorflowPredict2D not available: {e}")
@@ -270,12 +286,12 @@ class AudioAnalyzer:
             logger.error(f"Failed to load ML models: {e}")
             traceback.print_exc()
             self.enhanced_mode = False
-    
+
     def load_audio(self, file_path: str, sample_rate: int = 16000) -> Optional[Any]:
         """Load audio file as mono signal"""
         if not ESSENTIA_AVAILABLE:
             return None
-        
+
         try:
             loader = es.MonoLoader(filename=file_path, sampleRate=sample_rate)
             audio = loader()
@@ -283,13 +299,13 @@ class AudioAnalyzer:
         except Exception as e:
             logger.error(f"Failed to load audio {file_path}: {e}")
             return None
-    
+
     def analyze(self, file_path: str) -> Dict[str, Any]:
         """
         Analyze audio file and extract all features.
-        
+
         Uses Enhanced mode (ML models) if available, otherwise Standard mode (heuristics).
-        
+
         Returns dict with:
         - bpm: float
         - beatsCount: int
@@ -315,107 +331,115 @@ class AudioAnalyzer:
         - analysisMode: str ('enhanced' or 'standard')
         """
         result = {
-            'bpm': None,
-            'beatsCount': None,
-            'key': None,
-            'keyScale': None,
-            'keyStrength': None,
-            'energy': None,
-            'loudness': None,
-            'dynamicRange': None,
-            'danceability': None,
-            'valence': None,
-            'arousal': None,
-            'instrumentalness': None,
-            'acousticness': None,
-            'speechiness': None,
-            'moodTags': [],
-            'essentiaGenres': [],
+            "bpm": None,
+            "beatsCount": None,
+            "key": None,
+            "keyScale": None,
+            "keyStrength": None,
+            "energy": None,
+            "loudness": None,
+            "dynamicRange": None,
+            "danceability": None,
+            "valence": None,
+            "arousal": None,
+            "instrumentalness": None,
+            "acousticness": None,
+            "speechiness": None,
+            "moodTags": [],
+            "essentiaGenres": [],
             # Enhanced mode fields
-            'moodHappy': None,
-            'moodSad': None,
-            'moodRelaxed': None,
-            'moodAggressive': None,
-            'danceabilityMl': None,
-            'analysisMode': 'standard',
+            "moodHappy": None,
+            "moodSad": None,
+            "moodRelaxed": None,
+            "moodAggressive": None,
+            "danceabilityMl": None,
+            "analysisMode": "standard",
         }
-        
+
         if not ESSENTIA_AVAILABLE:
             logger.error("Essentia not available - cannot analyze audio files")
-            result['_error'] = 'Essentia library not installed'
+            result["_error"] = "Essentia library not installed"
             return result
-        
+
         # Load audio at different sample rates for different algorithms
         audio_44k = self.load_audio(file_path, 44100)
         audio_16k = self.load_audio(file_path, 16000)
-        
+
         if audio_44k is None or audio_16k is None:
             return result
-        
+
         try:
             # === BASIC FEATURES (always extracted) ===
-            
+
             # Rhythm Analysis
-            bpm, beats, beats_confidence, _, beats_intervals = self.rhythm_extractor(audio_44k)
-            result['bpm'] = round(float(bpm), 1)
-            result['beatsCount'] = len(beats)
-            
+            bpm, beats, beats_confidence, _, beats_intervals = self.rhythm_extractor(
+                audio_44k
+            )
+            result["bpm"] = round(float(bpm), 1)
+            result["beatsCount"] = len(beats)
+
             # Key Detection
             key, scale, strength = self.key_extractor(audio_44k)
-            result['key'] = key
-            result['keyScale'] = scale
-            result['keyStrength'] = round(float(strength), 3)
-            
+            result["key"] = key
+            result["keyScale"] = scale
+            result["keyStrength"] = round(float(strength), 3)
+
             # Energy & Dynamics - using RMS for proper 0-1 energy
             rms_values = []
             zcr_values = []
             spectral_centroid_values = []
             spectral_flatness_values = []
-            
+
             # Process audio in frames for detailed analysis
             frame_size = 2048
             hop_size = 1024
             for i in range(0, len(audio_44k) - frame_size, hop_size):
-                frame = audio_44k[i:i + frame_size]
+                frame = audio_44k[i : i + frame_size]
                 windowed = self.windowing(frame)
                 spectrum = self.spectrum(windowed)
-                
+
                 rms_values.append(self.rms(frame))
                 zcr_values.append(self.zcr(frame))
                 spectral_centroid_values.append(self.spectral_centroid(spectrum))
                 spectral_flatness_values.append(self.spectral_flatness(spectrum))
-            
+
             # RMS-based energy (properly normalized to 0-1)
             if rms_values:
                 avg_rms = np.mean(rms_values)
                 # RMS is typically 0.0-0.5 for normalized audio, scale to 0-1
-                result['energy'] = round(min(1.0, float(avg_rms) * 3), 3)
+                result["energy"] = round(min(1.0, float(avg_rms) * 3), 3)
             else:
-                result['energy'] = 0.5
-            
+                result["energy"] = 0.5
+
             loudness = self.loudness(audio_44k)
-            result['loudness'] = round(float(loudness), 2)
-            
+            result["loudness"] = round(float(loudness), 2)
+
             dynamic_range, _ = self.dynamic_complexity(audio_44k)
-            result['dynamicRange'] = round(float(dynamic_range), 2)
-            
+            result["dynamicRange"] = round(float(dynamic_range), 2)
+
             # Store spectral features for Standard mode estimates
-            result['_spectral_centroid'] = np.mean(spectral_centroid_values) if spectral_centroid_values else 0.5
-            result['_spectral_flatness'] = np.mean(spectral_flatness_values) if spectral_flatness_values else -20
-            result['_zcr'] = np.mean(zcr_values) if zcr_values else 0.1
-            
+            result["_spectral_centroid"] = (
+                np.mean(spectral_centroid_values) if spectral_centroid_values else 0.5
+            )
+            result["_spectral_flatness"] = (
+                np.mean(spectral_flatness_values) if spectral_flatness_values else -20
+            )
+            result["_zcr"] = np.mean(zcr_values) if zcr_values else 0.1
+
             # Basic Danceability (non-ML)
             # Note: es.Danceability() can return values > 1.0, so we clamp
             danceability, _ = self.danceability_extractor(audio_44k)
-            result['danceability'] = round(max(0.0, min(1.0, float(danceability))), 3)
-            
+            result["danceability"] = round(max(0.0, min(1.0, float(danceability))), 3)
+
             # === ENHANCED MODE: Use ML models ===
             if self.enhanced_mode:
                 try:
                     ml_features = self._extract_ml_features(audio_16k)
                     result.update(ml_features)
-                    result['analysisMode'] = 'enhanced'
-                    logger.info(f"Enhanced analysis: valence={result['valence']}, arousal={result['arousal']}")
+                    result["analysisMode"] = "enhanced"
+                    logger.info(
+                        f"Enhanced analysis: valence={result['valence']}, arousal={result['arousal']}"
+                    )
                 except Exception as e:
                     logger.warning(f"ML analysis failed, falling back to Standard: {e}")
                     traceback.print_exc()
@@ -423,22 +447,24 @@ class AudioAnalyzer:
             else:
                 # === STANDARD MODE: Use heuristics ===
                 self._apply_standard_estimates(result, scale, bpm)
-            
+
             # Generate mood tags based on all features
-            result['moodTags'] = self._generate_mood_tags(result)
-            
-            logger.info(f"Analysis complete [{result['analysisMode']}]: BPM={result['bpm']}, Key={result['key']} {result['keyScale']}, Valence={result['valence']}, Arousal={result['arousal']}")
-            
+            result["moodTags"] = self._generate_mood_tags(result)
+
+            logger.info(
+                f"Analysis complete [{result['analysisMode']}]: BPM={result['bpm']}, Key={result['key']} {result['keyScale']}, Valence={result['valence']}, Arousal={result['arousal']}"
+            )
+
         except Exception as e:
             logger.error(f"Analysis error: {e}")
             traceback.print_exc()
-        
+
         # Clean up internal fields before returning
-        for key in ['_spectral_centroid', '_spectral_flatness', '_zcr']:
+        for key in ["_spectral_centroid", "_spectral_flatness", "_zcr"]:
             result.pop(key, None)
-        
+
         return result
-    
+
     def _extract_ml_features(self, audio_16k) -> Dict[str, Any]:
         """
         Extract features using Essentia Discogs EfficientNet + classification heads.
@@ -454,14 +480,14 @@ class AudioAnalyzer:
         We detect and normalize edge cases.
         """
         result = {}
-        
+
         if not self.effnet_model:
             raise ValueError("Discogs EfficientNet model not loaded")
-        
+
         def safe_predict(model, embeddings, model_name: str) -> Tuple[float, float]:
             """
             Safely extract prediction and return (value, confidence).
-            
+
             Returns:
                 (value, variance) - value is the mean prediction, variance indicates confidence
                 High variance = model is uncertain across frames
@@ -473,7 +499,19 @@ class AudioAnalyzer:
                 # Verified from model metadata JSON files at essentia.upf.edu:
                 #   Column 0 = positive: mood_aggressive, mood_happy, danceability, mood_acoustic, mood_electronic, voice_instrumental (instrumental)
                 #   Column 1 = positive: mood_sad, mood_relaxed, mood_party
-                positive_col = 0 if model_name in ['mood_aggressive', 'mood_happy', 'danceability', 'mood_acoustic', 'mood_electronic', 'voice_instrumental'] else 1
+                positive_col = (
+                    0
+                    if model_name
+                    in [
+                        "mood_aggressive",
+                        "mood_happy",
+                        "danceability",
+                        "mood_acoustic",
+                        "mood_electronic",
+                        "voice_instrumental",
+                    ]
+                    else 1
+                )
                 positive_probs = preds[:, positive_col]
                 raw_value = float(np.mean(positive_probs))
                 variance = float(np.var(positive_probs))
@@ -483,67 +521,85 @@ class AudioAnalyzer:
             except Exception as e:
                 logger.warning(f"Prediction failed for {model_name}: {e}")
                 return (0.5, 0.0)
-        
+
         # Step 1: Get embeddings from base Discogs EfficientNet model
         # Output shape: [frames, 1280] - 1280-dimensional embedding per frame
         embeddings = self.effnet_model(audio_16k)
         logger.debug(f"Discogs EfficientNet embeddings shape: {embeddings.shape}")
-        
+
         # Step 2: Pass embeddings through classification heads
         # Each head outputs [frames, 2] where [:, 1] is probability of positive class
-        
+
         # === MOOD PREDICTIONS ===
         # Collect raw predictions with their variances
         raw_moods = {}
-        
-        if 'mood_happy' in self.prediction_models:
-            val, var = safe_predict(self.prediction_models['mood_happy'], embeddings, 'mood_happy')
-            raw_moods['moodHappy'] = (val, var)
-        
-        if 'mood_sad' in self.prediction_models:
-            val, var = safe_predict(self.prediction_models['mood_sad'], embeddings, 'mood_sad')
-            raw_moods['moodSad'] = (val, var)
-        
-        if 'mood_relaxed' in self.prediction_models:
-            val, var = safe_predict(self.prediction_models['mood_relaxed'], embeddings, 'mood_relaxed')
-            raw_moods['moodRelaxed'] = (val, var)
-        
-        if 'mood_aggressive' in self.prediction_models:
-            val, var = safe_predict(self.prediction_models['mood_aggressive'], embeddings, 'mood_aggressive')
-            raw_moods['moodAggressive'] = (val, var)
-        
-        if 'mood_party' in self.prediction_models:
-            val, var = safe_predict(self.prediction_models['mood_party'], embeddings, 'mood_party')
-            raw_moods['moodParty'] = (val, var)
-        
-        if 'mood_acoustic' in self.prediction_models:
-            val, var = safe_predict(self.prediction_models['mood_acoustic'], embeddings, 'mood_acoustic')
-            raw_moods['moodAcoustic'] = (val, var)
-        
-        if 'mood_electronic' in self.prediction_models:
-            val, var = safe_predict(self.prediction_models['mood_electronic'], embeddings, 'mood_electronic')
-            raw_moods['moodElectronic'] = (val, var)
-        
+
+        if "mood_happy" in self.prediction_models:
+            val, var = safe_predict(
+                self.prediction_models["mood_happy"], embeddings, "mood_happy"
+            )
+            raw_moods["moodHappy"] = (val, var)
+
+        if "mood_sad" in self.prediction_models:
+            val, var = safe_predict(
+                self.prediction_models["mood_sad"], embeddings, "mood_sad"
+            )
+            raw_moods["moodSad"] = (val, var)
+
+        if "mood_relaxed" in self.prediction_models:
+            val, var = safe_predict(
+                self.prediction_models["mood_relaxed"], embeddings, "mood_relaxed"
+            )
+            raw_moods["moodRelaxed"] = (val, var)
+
+        if "mood_aggressive" in self.prediction_models:
+            val, var = safe_predict(
+                self.prediction_models["mood_aggressive"], embeddings, "mood_aggressive"
+            )
+            raw_moods["moodAggressive"] = (val, var)
+
+        if "mood_party" in self.prediction_models:
+            val, var = safe_predict(
+                self.prediction_models["mood_party"], embeddings, "mood_party"
+            )
+            raw_moods["moodParty"] = (val, var)
+
+        if "mood_acoustic" in self.prediction_models:
+            val, var = safe_predict(
+                self.prediction_models["mood_acoustic"], embeddings, "mood_acoustic"
+            )
+            raw_moods["moodAcoustic"] = (val, var)
+
+        if "mood_electronic" in self.prediction_models:
+            val, var = safe_predict(
+                self.prediction_models["mood_electronic"], embeddings, "mood_electronic"
+            )
+            raw_moods["moodElectronic"] = (val, var)
+
         # Log raw mood predictions for debugging
         raw_values = {k: v[0] for k, v in raw_moods.items()}
-        logger.info(f"ML Raw Moods: H={raw_values.get('moodHappy')}, S={raw_values.get('moodSad')}, R={raw_values.get('moodRelaxed')}, A={raw_values.get('moodAggressive')}")
-        
+        logger.info(
+            f"ML Raw Moods: H={raw_values.get('moodHappy')}, S={raw_values.get('moodSad')}, R={raw_values.get('moodRelaxed')}, A={raw_values.get('moodAggressive')}"
+        )
+
         # === DETECT UNRELIABLE PREDICTIONS ===
         # For some audio (e.g., very niche genres, ambient, noise),
         # the model may output high values for ALL contradictory moods.
         # Detect this and normalize to preserve relative ordering.
-        core_moods = ['moodHappy', 'moodSad', 'moodRelaxed', 'moodAggressive']
+        core_moods = ["moodHappy", "moodSad", "moodRelaxed", "moodAggressive"]
         core_values = [raw_moods[m][0] for m in core_moods if m in raw_moods]
-        
+
         if len(core_values) >= 4:
             min_mood = min(core_values)
             max_mood = max(core_values)
-            
+
             # If all core moods are > 0.7 AND the range is small,
             # the predictions are likely unreliable (out-of-distribution audio)
             if min_mood > 0.7 and (max_mood - min_mood) < 0.3:
-                logger.warning(f"Detected out-of-distribution audio: all moods high ({min_mood:.2f}-{max_mood:.2f}). Normalizing...")
-                
+                logger.warning(
+                    f"Detected out-of-distribution audio: all moods high ({min_mood:.2f}-{max_mood:.2f}). Normalizing..."
+                )
+
                 # Normalize: scale so max becomes 0.8 and min becomes 0.2
                 # This preserves relative ordering while creating useful differentiation
                 for mood_key in core_moods:
@@ -551,129 +607,159 @@ class AudioAnalyzer:
                         old_val = raw_moods[mood_key][0]
                         if max_mood > min_mood:
                             # Linear scaling: min->0.2, max->0.8
-                            normalized = 0.2 + (old_val - min_mood) / (max_mood - min_mood) * 0.6
+                            normalized = (
+                                0.2 + (old_val - min_mood) / (max_mood - min_mood) * 0.6
+                            )
                         else:
                             normalized = 0.5  # All values equal, use neutral
-                        raw_moods[mood_key] = (round(normalized, 3), raw_moods[mood_key][1])
-                
-                logger.info(f"Normalized moods: H={raw_moods.get('moodHappy', (0,0))[0]}, S={raw_moods.get('moodSad', (0,0))[0]}, R={raw_moods.get('moodRelaxed', (0,0))[0]}, A={raw_moods.get('moodAggressive', (0,0))[0]}")
-        
+                        raw_moods[mood_key] = (
+                            round(normalized, 3),
+                            raw_moods[mood_key][1],
+                        )
+
+                logger.info(
+                    f"Normalized moods: H={raw_moods.get('moodHappy', (0, 0))[0]}, S={raw_moods.get('moodSad', (0, 0))[0]}, R={raw_moods.get('moodRelaxed', (0, 0))[0]}, A={raw_moods.get('moodAggressive', (0, 0))[0]}"
+                )
+
         # Store final mood values in result
         for mood_key, (val, var) in raw_moods.items():
             result[mood_key] = val
-        
+
         # === VALENCE (derived from mood models) ===
         # Valence = emotional positivity: happy/party vs sad
-        happy = result.get('moodHappy', 0.5)
-        sad = result.get('moodSad', 0.5)
-        party = result.get('moodParty', 0.5)
-        result['valence'] = round(max(0.0, min(1.0, happy * 0.5 + party * 0.3 + (1 - sad) * 0.2)), 3)
-        
+        happy = result.get("moodHappy", 0.5)
+        sad = result.get("moodSad", 0.5)
+        party = result.get("moodParty", 0.5)
+        result["valence"] = round(
+            max(0.0, min(1.0, happy * 0.5 + party * 0.3 + (1 - sad) * 0.2)), 3
+        )
+
         # === AROUSAL (derived from mood models) ===
         # Arousal = energy level: aggressive/party/electronic vs relaxed/acoustic
-        aggressive = result.get('moodAggressive', 0.5)
-        relaxed = result.get('moodRelaxed', 0.5)
-        acoustic = result.get('moodAcoustic', 0.5)
-        electronic = result.get('moodElectronic', 0.5)
-        result['arousal'] = round(max(0.0, min(1.0, aggressive * 0.35 + party * 0.25 + electronic * 0.2 + (1 - relaxed) * 0.1 + (1 - acoustic) * 0.1)), 3)
-        
+        aggressive = result.get("moodAggressive", 0.5)
+        relaxed = result.get("moodRelaxed", 0.5)
+        acoustic = result.get("moodAcoustic", 0.5)
+        electronic = result.get("moodElectronic", 0.5)
+        result["arousal"] = round(
+            max(
+                0.0,
+                min(
+                    1.0,
+                    aggressive * 0.35
+                    + party * 0.25
+                    + electronic * 0.2
+                    + (1 - relaxed) * 0.1
+                    + (1 - acoustic) * 0.1,
+                ),
+            ),
+            3,
+        )
+
         # === INSTRUMENTALNESS (voice/instrumental) ===
-        if 'voice_instrumental' in self.prediction_models:
-            val, var = safe_predict(self.prediction_models['voice_instrumental'], embeddings, 'voice_instrumental')
-            result['instrumentalness'] = val
-        
+        if "voice_instrumental" in self.prediction_models:
+            val, var = safe_predict(
+                self.prediction_models["voice_instrumental"],
+                embeddings,
+                "voice_instrumental",
+            )
+            result["instrumentalness"] = val
+
         # === ACOUSTICNESS (from mood_acoustic model) ===
-        if 'moodAcoustic' in result:
-            result['acousticness'] = result['moodAcoustic']
-        
+        if "moodAcoustic" in result:
+            result["acousticness"] = result["moodAcoustic"]
+
         # === ML DANCEABILITY ===
-        if 'danceability' in self.prediction_models:
-            val, var = safe_predict(self.prediction_models['danceability'], embeddings, 'danceability')
-            result['danceabilityMl'] = val
+        if "danceability" in self.prediction_models:
+            val, var = safe_predict(
+                self.prediction_models["danceability"], embeddings, "danceability"
+            )
+            result["danceabilityMl"] = val
             # Override basic danceability with ML value (basic algorithm is unreliable)
-            result['danceability'] = val
+            result["danceability"] = val
 
         return result
-    
+
     def _apply_standard_estimates(self, result: Dict[str, Any], scale: str, bpm: float):
         """
         Apply heuristic estimates for Standard mode.
-        
+
         Uses multiple audio features for more accurate mood estimation:
         - Key (major/minor) correlates with valence
-        - BPM correlates with arousal  
+        - BPM correlates with arousal
         - Energy (RMS) correlates with both
         - Dynamic range indicates acoustic vs electronic
         - Spectral centroid indicates brightness (higher = more energetic)
         - Spectral flatness indicates noise vs tonal (instrumental estimation)
         - Zero-crossing rate indicates speech presence
         """
-        result['analysisMode'] = 'standard'
-        
+        result["analysisMode"] = "standard"
+
         # Get all available features
-        energy = result.get('energy', 0.5) or 0.5
-        dynamic_range = result.get('dynamicRange', 8) or 8
-        danceability = result.get('danceability', 0.5) or 0.5
-        spectral_centroid = result.get('_spectral_centroid', 0.5) or 0.5
-        spectral_flatness = result.get('_spectral_flatness', -20) or -20
-        zcr = result.get('_zcr', 0.1) or 0.1
-        
+        energy = result.get("energy", 0.5) or 0.5
+        dynamic_range = result.get("dynamicRange", 8) or 8
+        danceability = result.get("danceability", 0.5) or 0.5
+        spectral_centroid = result.get("_spectral_centroid", 0.5) or 0.5
+        spectral_flatness = result.get("_spectral_flatness", -20) or -20
+        zcr = result.get("_zcr", 0.1) or 0.1
+
         # === VALENCE (happiness/positivity) ===
         # Major key = happier, minor = sadder
-        key_valence = 0.65 if scale == 'major' else 0.35
-        
+        key_valence = 0.65 if scale == "major" else 0.35
+
         # Higher tempo tends to be happier
         bpm_valence = 0.5
         if bpm:
             if bpm >= 120:
                 bpm_valence = min(0.8, 0.5 + (bpm - 120) / 200)  # Fast = happy
             elif bpm <= 80:
-                bpm_valence = max(0.2, 0.5 - (80 - bpm) / 100)   # Slow = melancholic
-        
+                bpm_valence = max(0.2, 0.5 - (80 - bpm) / 100)  # Slow = melancholic
+
         # Brighter sounds (high spectral centroid) tend to be happier
         # Spectral centroid is 0-1 (fraction of nyquist)
         brightness_valence = min(1.0, spectral_centroid * 1.5)
-        
+
         # Combine factors (key is most important for valence)
-        result['valence'] = round(
-            key_valence * 0.4 +      # Key is strong indicator
-            bpm_valence * 0.25 +     # Tempo matters
-            brightness_valence * 0.2 + # Brightness adds positivity
-            energy * 0.15,           # Energy adds slight positivity
-            3
+        result["valence"] = round(
+            key_valence * 0.4  # Key is strong indicator
+            + bpm_valence * 0.25  # Tempo matters
+            + brightness_valence * 0.2  # Brightness adds positivity
+            + energy * 0.15,  # Energy adds slight positivity
+            3,
         )
-        
+
         # === AROUSAL (energy/intensity) ===
         # BPM is the strongest arousal indicator
         bpm_arousal = 0.5
         if bpm:
             # Map 60-180 BPM to 0.1-0.9 arousal
             bpm_arousal = min(0.9, max(0.1, (bpm - 60) / 140))
-        
+
         # Energy directly indicates intensity
         energy_arousal = energy
-        
+
         # Low dynamic range = compressed = more intense
         compression_arousal = max(0, min(1.0, 1 - (dynamic_range / 20)))
-        
+
         # Brightness adds to perceived energy
         brightness_arousal = min(1.0, spectral_centroid * 1.2)
-        
+
         # Combine factors (BPM and energy are most important)
-        result['arousal'] = round(
-            bpm_arousal * 0.35 +       # Tempo is key
-            energy_arousal * 0.35 +    # Energy/loudness
-            brightness_arousal * 0.15 + # Brightness adds energy
-            compression_arousal * 0.15, # Compression = intensity
-            3
+        result["arousal"] = round(
+            bpm_arousal * 0.35  # Tempo is key
+            + energy_arousal * 0.35  # Energy/loudness
+            + brightness_arousal * 0.15  # Brightness adds energy
+            + compression_arousal * 0.15,  # Compression = intensity
+            3,
         )
-        
+
         # === INSTRUMENTALNESS ===
         # High spectral flatness (closer to 0 dB) = more noise-like = more instrumental
         # Low spectral flatness (closer to -60 dB) = more tonal = likely vocals
         # ZCR also helps - vocals have moderate ZCR
-        flatness_normalized = min(1.0, max(0, (spectral_flatness + 40) / 40))  # -40 to 0 dB -> 0 to 1
-        
+        flatness_normalized = min(
+            1.0, max(0, (spectral_flatness + 40) / 40)
+        )  # -40 to 0 dB -> 0 to 1
+
         # High ZCR often indicates percussion/hi-hats OR speech
         # Very low ZCR indicates sustained tones (likely instrumental)
         if zcr < 0.05:
@@ -682,118 +768,124 @@ class AudioAnalyzer:
             zcr_instrumental = 0.4  # High = could be speech or percussion
         else:
             zcr_instrumental = 0.5  # Moderate = uncertain
-        
-        result['instrumentalness'] = round(
-            flatness_normalized * 0.6 + zcr_instrumental * 0.4,
-            3
+
+        result["instrumentalness"] = round(
+            flatness_normalized * 0.6 + zcr_instrumental * 0.4, 3
         )
-        
+
         # === ACOUSTICNESS ===
         # High dynamic range = acoustic (natural dynamics)
         # Low dynamic range = compressed/electronic
-        result['acousticness'] = round(min(1.0, dynamic_range / 12), 3)
-        
+        result["acousticness"] = round(min(1.0, dynamic_range / 12), 3)
+
         # === SPEECHINESS ===
         # Speech has characteristic ZCR pattern and moderate spectral centroid
-        if zcr > 0.08 and zcr < 0.2 and spectral_centroid > 0.1 and spectral_centroid < 0.4:
-            result['speechiness'] = round(min(0.5, zcr * 3), 3)
+        if (
+            zcr > 0.08
+            and zcr < 0.2
+            and spectral_centroid > 0.1
+            and spectral_centroid < 0.4
+        ):
+            result["speechiness"] = round(min(0.5, zcr * 3), 3)
         else:
-            result['speechiness'] = 0.1
-        
+            result["speechiness"] = 0.1
+
         # Clean up internal fields (don't store in DB)
-        for key in ['_spectral_centroid', '_spectral_flatness', '_zcr']:
+        for key in ["_spectral_centroid", "_spectral_flatness", "_zcr"]:
             result.pop(key, None)
-    
+
     def _generate_mood_tags(self, features: Dict[str, Any]) -> List[str]:
         """
         Generate mood tags based on extracted features.
-        
+
         In Enhanced mode, uses ML predictions for more accurate tagging.
         In Standard mode, uses heuristic rules.
         """
         tags = []
-        
-        bpm = features.get('bpm', 0) or 0
-        energy = features.get('energy', 0.5) or 0.5
-        valence = features.get('valence', 0.5) or 0.5
-        arousal = features.get('arousal', 0.5) or 0.5
-        danceability = features.get('danceability', 0.5) or 0.5
-        key_scale = features.get('keyScale', '')
-        
+
+        bpm = features.get("bpm", 0) or 0
+        energy = features.get("energy", 0.5) or 0.5
+        valence = features.get("valence", 0.5) or 0.5
+        arousal = features.get("arousal", 0.5) or 0.5
+        danceability = features.get("danceability", 0.5) or 0.5
+        key_scale = features.get("keyScale", "")
+
         # Enhanced mode: use ML mood predictions
-        mood_happy = features.get('moodHappy')
-        mood_sad = features.get('moodSad')
-        mood_relaxed = features.get('moodRelaxed')
-        mood_aggressive = features.get('moodAggressive')
-        
+        mood_happy = features.get("moodHappy")
+        mood_sad = features.get("moodSad")
+        mood_relaxed = features.get("moodRelaxed")
+        mood_aggressive = features.get("moodAggressive")
+
         # ML-based tags (higher confidence)
         if mood_happy is not None and mood_happy >= 0.6:
-            tags.append('happy')
-            tags.append('uplifting')
+            tags.append("happy")
+            tags.append("uplifting")
         if mood_sad is not None and mood_sad >= 0.6:
-            tags.append('sad')
-            tags.append('melancholic')
+            tags.append("sad")
+            tags.append("melancholic")
         if mood_relaxed is not None and mood_relaxed >= 0.6:
-            tags.append('relaxed')
-            tags.append('chill')
+            tags.append("relaxed")
+            tags.append("chill")
         if mood_aggressive is not None and mood_aggressive >= 0.6:
-            tags.append('aggressive')
-            tags.append('intense')
-        
+            tags.append("aggressive")
+            tags.append("intense")
+
         # Arousal-based tags (prefer ML arousal)
         if arousal >= 0.7:
-            tags.append('energetic')
-            tags.append('upbeat')
+            tags.append("energetic")
+            tags.append("upbeat")
         elif arousal <= 0.3:
-            tags.append('calm')
-            tags.append('peaceful')
-        
+            tags.append("calm")
+            tags.append("peaceful")
+
         # Valence-based tags (if not already added by ML)
-        if 'happy' not in tags and 'sad' not in tags:
+        if "happy" not in tags and "sad" not in tags:
             if valence >= 0.7:
-                tags.append('happy')
-                tags.append('uplifting')
+                tags.append("happy")
+                tags.append("uplifting")
             elif valence <= 0.3:
-                tags.append('sad')
-                tags.append('melancholic')
-        
+                tags.append("sad")
+                tags.append("melancholic")
+
         # Danceability-based tags
         if danceability >= 0.7:
-            tags.append('dance')
-            tags.append('groovy')
-        
+            tags.append("dance")
+            tags.append("groovy")
+
         # BPM-based tags
         if bpm >= 140:
-            tags.append('fast')
+            tags.append("fast")
         elif bpm <= 80:
-            tags.append('slow')
-        
+            tags.append("slow")
+
         # Key-based tags
-        if key_scale == 'minor':
-            if 'happy' not in tags:
-                tags.append('moody')
-        
+        if key_scale == "minor":
+            if "happy" not in tags:
+                tags.append("moody")
+
         # Combination tags
         if arousal >= 0.7 and bpm >= 120:
-            tags.append('workout')
+            tags.append("workout")
         if arousal <= 0.4 and valence <= 0.4:
-            tags.append('atmospheric')
+            tags.append("atmospheric")
         if arousal <= 0.3 and bpm <= 90:
-            tags.append('chill')
+            tags.append("chill")
         if mood_aggressive is not None and mood_aggressive >= 0.5 and bpm >= 120:
-            tags.append('intense')
-        
+            tags.append("intense")
+
         return list(set(tags))[:12]  # Dedupe and limit
 
 
 # Global analyzer instance for worker processes (initialized per-process)
 _process_analyzer = None
 
+
 def _init_worker_process():
     """Initialize the analyzer for a worker process"""
     global _process_analyzer
     _process_analyzer = AudioAnalyzer()
     logger.info(f"Worker process {os.getpid()} initialized with analyzer")
+
 
 def _analyze_track_in_process(args: Tuple[str, str]) -> Tuple[str, str, Dict[str, Any]]:
     """
@@ -810,11 +902,16 @@ def _analyze_track_in_process(args: Tuple[str, str]) -> Tuple[str, str, Dict[str
 
     try:
         # Normalize path separators (Windows paths -> Unix)
-        normalized_path = file_path.replace('\\', '/')
+        normalized_path = file_path.replace("\\", "/")
         full_path = os.path.join(MUSIC_PATH, normalized_path)
 
+        if not os.path.exists(full_path) and DOWNLOAD_PATH:
+            fallback_path = os.path.join(DOWNLOAD_PATH, normalized_path)
+            if os.path.exists(fallback_path):
+                full_path = fallback_path
+
         if not os.path.exists(full_path):
-            return (track_id, file_path, {'_error': 'File not found'})
+            return (track_id, file_path, {"_error": "File not found"})
 
         # Check file size before processing
         file_size_bytes = os.path.getsize(full_path)
@@ -822,26 +919,32 @@ def _analyze_track_in_process(args: Tuple[str, str]) -> Tuple[str, str, Dict[str
 
         # Skip files that exceed the size limit
         if MAX_FILE_SIZE_MB > 0 and file_size_mb > MAX_FILE_SIZE_MB:
-            logger.warning(f"Skipping oversized file ({file_size_mb:.1f}MB > {MAX_FILE_SIZE_MB}MB): {file_path}")
-            return (track_id, file_path, {
-                '_error': f'File too large ({file_size_mb:.1f}MB > {MAX_FILE_SIZE_MB}MB limit)',
-                '_skip': True,
-                '_file_size_mb': file_size_mb
-            })
+            logger.warning(
+                f"Skipping oversized file ({file_size_mb:.1f}MB > {MAX_FILE_SIZE_MB}MB): {file_path}"
+            )
+            return (
+                track_id,
+                file_path,
+                {
+                    "_error": f"File too large ({file_size_mb:.1f}MB > {MAX_FILE_SIZE_MB}MB limit)",
+                    "_skip": True,
+                    "_file_size_mb": file_size_mb,
+                },
+            )
 
         # Run analysis
         features = _process_analyzer.analyze(full_path)
-        features['_file_size_mb'] = file_size_mb
+        features["_file_size_mb"] = file_size_mb
         return (track_id, file_path, features)
 
     except Exception as e:
         logger.error(f"Analysis error for {file_path}: {e}")
-        return (track_id, file_path, {'_error': str(e)})
+        return (track_id, file_path, {"_error": str(e)})
 
 
 class AnalysisWorker:
     """Worker that processes audio analysis jobs from Redis queue using parallel processing"""
-    
+
     def __init__(self):
         self.redis = redis.from_url(REDIS_URL)
         self.db = DatabaseConnection(DATABASE_URL)
@@ -849,39 +952,45 @@ class AnalysisWorker:
         self.executor = None
         self.consecutive_empty = 0
         self.batch_count = 0  # Track batches for periodic cleanup
-    
+
     def _cleanup_stale_processing(self):
         """Reset tracks stuck in 'processing' status (from crashed workers)"""
         cursor = self.db.get_cursor()
         try:
             # Reset tracks that have been "processing" for too long
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE "Track"
                 SET "analysisStatus" = 'pending',
                     "updatedAt" = NOW()
                 WHERE "analysisStatus" = 'processing'
                 AND "updatedAt" < NOW() - INTERVAL '%s minutes'
                 RETURNING id
-            """, (STALE_PROCESSING_MINUTES,))
-            
+            """,
+                (STALE_PROCESSING_MINUTES,),
+            )
+
             reset_ids = cursor.fetchall()
             reset_count = len(reset_ids)
-            
+
             if reset_count > 0:
-                logger.info(f"Reset {reset_count} stale 'processing' tracks back to 'pending'")
-            
+                logger.info(
+                    f"Reset {reset_count} stale 'processing' tracks back to 'pending'"
+                )
+
             self.db.commit()
         except Exception as e:
             logger.error(f"Failed to cleanup stale tracks: {e}")
             self.db.rollback()
         finally:
             cursor.close()
-    
+
     def _retry_failed_tracks(self):
         """Retry failed tracks that haven't exceeded max retries"""
         cursor = self.db.get_cursor()
         try:
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE "Track"
                 SET
                     "analysisStatus" = 'pending',
@@ -890,36 +999,47 @@ class AnalysisWorker:
                 WHERE "analysisStatus" = 'failed'
                 AND COALESCE("analysisRetryCount", 0) < %s
                 RETURNING id
-            """, (MAX_RETRIES,))
-            
+            """,
+                (MAX_RETRIES,),
+            )
+
             retry_ids = cursor.fetchall()
             retry_count = len(retry_ids)
-            
+
             if retry_count > 0:
-                logger.info(f"Re-queued {retry_count} failed tracks for retry (max retries: {MAX_RETRIES})")
-            
+                logger.info(
+                    f"Re-queued {retry_count} failed tracks for retry (max retries: {MAX_RETRIES})"
+                )
+
             # Log counts for skipped and permanently failed tracks
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT
                     SUM(CASE WHEN "analysisStatus" = 'skipped' THEN 1 ELSE 0 END) as skipped,
                     SUM(CASE WHEN "analysisStatus" = 'failed' AND COALESCE("analysisRetryCount", 0) >= %s THEN 1 ELSE 0 END) as perm_failed
                 FROM "Track"
-            """, (MAX_RETRIES,))
+            """,
+                (MAX_RETRIES,),
+            )
 
             counts = cursor.fetchone()
             if counts:
-                if counts['skipped'] and counts['skipped'] > 0:
-                    logger.info(f"{counts['skipped']} tracks skipped (file size/timeout limits)")
-                if counts['perm_failed'] and counts['perm_failed'] > 0:
-                    logger.warning(f"{counts['perm_failed']} tracks permanently failed (exceeded {MAX_RETRIES} retries)")
-            
+                if counts["skipped"] and counts["skipped"] > 0:
+                    logger.info(
+                        f"{counts['skipped']} tracks skipped (file size/timeout limits)"
+                    )
+                if counts["perm_failed"] and counts["perm_failed"] > 0:
+                    logger.warning(
+                        f"{counts['perm_failed']} tracks permanently failed (exceeded {MAX_RETRIES} retries)"
+                    )
+
             self.db.commit()
         except Exception as e:
             logger.error(f"Failed to retry failed tracks: {e}")
             self.db.rollback()
         finally:
             cursor.close()
-    
+
     def start(self):
         """Start processing jobs with parallel workers"""
         cpu_count = os.cpu_count() or 4
@@ -930,43 +1050,52 @@ class AnalysisWorker:
         logger.info(f"  Music path: {MUSIC_PATH}")
         logger.info(f"  Batch size: {BATCH_SIZE}")
         logger.info(f"  CPU cores detected: {cpu_count}")
-        logger.info(f"  Active workers: {NUM_WORKERS}" + (" (from env)" if os.getenv('NUM_WORKERS') else " (default: 2)"))
+        logger.info(
+            f"  Active workers: {NUM_WORKERS}"
+            + (" (from env)" if os.getenv("NUM_WORKERS") else " (default: 2)")
+        )
         logger.info(f"  Max retries per track: {MAX_RETRIES}")
         logger.info(f"  Stale processing timeout: {STALE_PROCESSING_MINUTES} minutes")
-        logger.info(f"  Max file size: {MAX_FILE_SIZE_MB}MB" + (" (disabled)" if MAX_FILE_SIZE_MB == 0 else ""))
-        logger.info(f"  Base track timeout: {BASE_TRACK_TIMEOUT}s, max: {MAX_TRACK_TIMEOUT}s")
+        logger.info(
+            f"  Max file size: {MAX_FILE_SIZE_MB}MB"
+            + (" (disabled)" if MAX_FILE_SIZE_MB == 0 else "")
+        )
+        logger.info(
+            f"  Base track timeout: {BASE_TRACK_TIMEOUT}s, max: {MAX_TRACK_TIMEOUT}s"
+        )
         logger.info(f"  Essentia available: {ESSENTIA_AVAILABLE}")
-        
+
         self.db.connect()
         self.running = True
-        
+
         # Cleanup stale processing tracks from previous crashes
         logger.info("Cleaning up stale processing tracks...")
         self._cleanup_stale_processing()
-        
+
         # Retry failed tracks that haven't exceeded max retries
         logger.info("Checking for failed tracks to retry...")
         self._retry_failed_tracks()
-        
+
         # Create process pool with initializer
         # Each worker process loads its own TensorFlow models
         self.executor = ProcessPoolExecutor(
-            max_workers=NUM_WORKERS,
-            initializer=_init_worker_process
+            max_workers=NUM_WORKERS, initializer=_init_worker_process
         )
         logger.info(f"Started {NUM_WORKERS} worker processes")
-        
+
         try:
             while self.running:
                 try:
                     has_work = self.process_batch_parallel()
-                    
+
                     if not has_work:
                         self.consecutive_empty += 1
 
                         # After 10 consecutive empty batches, do cleanup and retry
                         if self.consecutive_empty >= 10:
-                            logger.info("No pending tracks, running cleanup and retry cycle...")
+                            logger.info(
+                                "No pending tracks, running cleanup and retry cycle..."
+                            )
                             self._cleanup_stale_processing()
                             self._retry_failed_tracks()
                             self.consecutive_empty = 0
@@ -977,10 +1106,12 @@ class AnalysisWorker:
                         # Run periodic cleanup every 50 batches to catch stuck tracks
                         # This prevents tracks from being stuck forever when queue is never empty
                         if self.batch_count % 50 == 0:
-                            logger.info(f"Periodic cleanup after {self.batch_count} batches...")
+                            logger.info(
+                                f"Periodic cleanup after {self.batch_count} batches..."
+                            )
                             self._cleanup_stale_processing()
                             self._retry_failed_tracks()
-                        
+
                 except KeyboardInterrupt:
                     logger.info("Shutdown requested")
                     self.running = False
@@ -988,10 +1119,12 @@ class AnalysisWorker:
                     logger.error(f"Worker error: {e}")
                     traceback.print_exc()
                     self.consecutive_empty += 1
-                    
+
                     # On persistent errors, cleanup and reconnect
                     if self.consecutive_empty >= 5:
-                        logger.info("Multiple consecutive errors, attempting recovery...")
+                        logger.info(
+                            "Multiple consecutive errors, attempting recovery..."
+                        )
                         try:
                             self.db.close()
                             time.sleep(2)
@@ -1001,7 +1134,7 @@ class AnalysisWorker:
                         except Exception as reconnect_err:
                             logger.error(f"Recovery failed: {reconnect_err}")
                         self.consecutive_empty = 0
-                    
+
                     time.sleep(SLEEP_INTERVAL)
         finally:
             if self.executor:
@@ -1009,10 +1142,10 @@ class AnalysisWorker:
                 logger.info("Worker processes shut down")
             self.db.close()
             logger.info("Worker stopped")
-    
+
     def process_batch_parallel(self) -> bool:
         """Process a batch of pending tracks in parallel.
-        
+
         Returns:
             True if there was work to process, False if queue was empty
         """
@@ -1023,48 +1156,53 @@ class AnalysisWorker:
             if not job_data:
                 break
             job = json.loads(job_data)
-            queued_jobs.append((job['trackId'], job.get('filePath', '')))
-        
+            queued_jobs.append((job["trackId"], job.get("filePath", "")))
+
         if queued_jobs:
             self._process_tracks_parallel(queued_jobs)
             return True
-        
+
         # Otherwise, find pending tracks in database
         cursor = self.db.get_cursor()
         try:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT id, "filePath"
                 FROM "Track"
                 WHERE "analysisStatus" = 'pending'
                 ORDER BY "fileModified" DESC
                 LIMIT %s
-            """, (BATCH_SIZE,))
-            
+            """,
+                (BATCH_SIZE,),
+            )
+
             tracks = cursor.fetchall()
-            
+
             if not tracks:
                 # No pending tracks, sleep and retry
                 time.sleep(SLEEP_INTERVAL)
                 return False
-            
+
             # Convert to list of tuples
-            track_list = [(t['id'], t['filePath']) for t in tracks]
+            track_list = [(t["id"], t["filePath"]) for t in tracks]
             self._process_tracks_parallel(track_list)
             return True
-            
+
         except Exception as e:
             logger.error(f"Batch processing error: {e}")
             self.db.rollback()
             return False
         finally:
             cursor.close()
-    
+
     def _process_tracks_parallel(self, tracks: List[Tuple[str, str]]):
         """Process multiple tracks in parallel using the process pool"""
         if not tracks:
             return
 
-        logger.info(f"Processing batch of {len(tracks)} tracks with {NUM_WORKERS} workers...")
+        logger.info(
+            f"Processing batch of {len(tracks)} tracks with {NUM_WORKERS} workers..."
+        )
 
         # Mark tracks as processing, but only if they're still pending
         # This prevents reprocessing completed/failed/skipped tracks from stale queue entries
@@ -1072,21 +1210,26 @@ class AnalysisWorker:
         valid_track_ids = set()
         try:
             track_ids = [t[0] for t in tracks]
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE "Track"
                 SET "analysisStatus" = 'processing',
                     "updatedAt" = NOW()
                 WHERE id = ANY(%s)
                 AND "analysisStatus" = 'pending'
                 RETURNING id
-            """, (track_ids,))
-            valid_track_ids = {row['id'] for row in cursor.fetchall()}
+            """,
+                (track_ids,),
+            )
+            valid_track_ids = {row["id"] for row in cursor.fetchall()}
             self.db.commit()
 
             # Filter to only process tracks that were successfully marked
             if len(valid_track_ids) < len(tracks):
                 skipped_count = len(tracks) - len(valid_track_ids)
-                logger.info(f"Skipped {skipped_count} tracks (already processed or not pending)")
+                logger.info(
+                    f"Skipped {skipped_count} tracks (already processed or not pending)"
+                )
                 tracks = [t for t in tracks if t[0] in valid_track_ids]
 
             if not tracks:
@@ -1105,7 +1248,9 @@ class AnalysisWorker:
         failed = 0
         skipped = 0
 
-        futures = {self.executor.submit(_analyze_track_in_process, t): t for t in tracks}
+        futures = {
+            self.executor.submit(_analyze_track_in_process, t): t for t in tracks
+        }
 
         # Calculate batch timeout: base + extra time per track
         # This scales with batch size to allow larger batches more time
@@ -1118,22 +1263,30 @@ class AnalysisWorker:
                 try:
                     # Per-track timeout scales with expected processing time
                     # Large files might need more time before the worker even returns
-                    track_id, file_path, features = future.result(timeout=MAX_TRACK_TIMEOUT)
+                    track_id, file_path, features = future.result(
+                        timeout=MAX_TRACK_TIMEOUT
+                    )
 
-                    if features.get('_error'):
+                    if features.get("_error"):
                         # Check if this is a permanent skip (oversized file, etc.)
-                        is_permanent = features.get('_skip', False)
-                        self._save_failed(track_id, features['_error'], permanent=is_permanent)
+                        is_permanent = features.get("_skip", False)
+                        self._save_failed(
+                            track_id, features["_error"], permanent=is_permanent
+                        )
                         if is_permanent:
                             skipped += 1
-                            logger.warning(f"⊘ Skipped: {file_path} - {features['_error']}")
+                            logger.warning(
+                                f"⊘ Skipped: {file_path} - {features['_error']}"
+                            )
                         else:
                             failed += 1
-                            logger.error(f"✗ Failed: {file_path} - {features['_error']}")
+                            logger.error(
+                                f"✗ Failed: {file_path} - {features['_error']}"
+                            )
                     else:
                         self._save_results(track_id, file_path, features)
                         completed += 1
-                        size_mb = features.get('_file_size_mb', 0)
+                        size_mb = features.get("_file_size_mb", 0)
                         if size_mb > 50:
                             logger.info(f"✓ Completed ({size_mb:.1f}MB): {file_path}")
                         else:
@@ -1142,7 +1295,11 @@ class AnalysisWorker:
                 except TimeoutError:
                     # Timeout waiting for result - mark as permanent failure
                     # These large files will likely timeout again, don't retry
-                    self._save_failed(track_info[0], "Analysis timeout (file too large to process)", permanent=True)
+                    self._save_failed(
+                        track_info[0],
+                        "Analysis timeout (file too large to process)",
+                        permanent=True,
+                    )
                     skipped += 1
                     logger.error(f"⊘ Timeout (permanent): {track_info[1]}")
 
@@ -1150,18 +1307,27 @@ class AnalysisWorker:
                     # Other errors - may be retryable
                     error_str = str(e)
                     # Mark memory errors as permanent (won't help to retry)
-                    is_permanent = 'MemoryError' in error_str or 'out of memory' in error_str.lower()
-                    self._save_failed(track_info[0], f"Error: {e}", permanent=is_permanent)
+                    is_permanent = (
+                        "MemoryError" in error_str
+                        or "out of memory" in error_str.lower()
+                    )
+                    self._save_failed(
+                        track_info[0], f"Error: {e}", permanent=is_permanent
+                    )
                     failed += 1
                     logger.error(f"✗ Failed: {track_info[1]} - {e}")
 
         except TimeoutError:
             # Entire batch timed out - mark remaining futures as permanent failures
-            logger.error(f"Batch timeout after {batch_timeout}s - marking remaining tracks as failed")
+            logger.error(
+                f"Batch timeout after {batch_timeout}s - marking remaining tracks as failed"
+            )
             for future in futures:
                 if not future.done():
                     track_info = futures[future]
-                    self._save_failed(track_info[0], "Batch timeout (file too large)", permanent=True)
+                    self._save_failed(
+                        track_info[0], "Batch timeout (file too large)", permanent=True
+                    )
                     skipped += 1
                     logger.error(f"⊘ Batch timeout: {track_info[1]}")
 
@@ -1174,13 +1340,16 @@ class AnalysisWorker:
             parts.append(f"{skipped} skipped (size/timeout)")
         if failed > 0:
             parts.append(f"{failed} failed")
-        logger.info(f"Batch: {', '.join(parts)} in {elapsed:.1f}s ({rate:.1f} tracks/sec)")
-    
+        logger.info(
+            f"Batch: {', '.join(parts)} in {elapsed:.1f}s ({rate:.1f} tracks/sec)"
+        )
+
     def _save_results(self, track_id: str, file_path: str, features: Dict[str, Any]):
         """Save analysis results to database"""
         cursor = self.db.get_cursor()
         try:
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE "Track"
                 SET
                     bpm = %s,
@@ -1214,43 +1383,45 @@ class AnalysisWorker:
                     "analysisError" = NULL,
                     "updatedAt" = NOW()
                 WHERE id = %s
-            """, (
-                features['bpm'],
-                features['beatsCount'],
-                features['key'],
-                features['keyScale'],
-                features['keyStrength'],
-                features['energy'],
-                features['loudness'],
-                features['dynamicRange'],
-                features['danceability'],
-                features['valence'],
-                features['arousal'],
-                features['instrumentalness'],
-                features['acousticness'],
-                features['speechiness'],
-                features['moodTags'],
-                features['essentiaGenres'],
-                features.get('moodHappy'),
-                features.get('moodSad'),
-                features.get('moodRelaxed'),
-                features.get('moodAggressive'),
-                features.get('moodParty'),
-                features.get('moodAcoustic'),
-                features.get('moodElectronic'),
-                features.get('danceabilityMl'),
-                features.get('analysisMode', 'standard'),
-                ESSENTIA_VERSION,
-                datetime.utcnow(),
-                track_id
-            ))
+            """,
+                (
+                    features["bpm"],
+                    features["beatsCount"],
+                    features["key"],
+                    features["keyScale"],
+                    features["keyStrength"],
+                    features["energy"],
+                    features["loudness"],
+                    features["dynamicRange"],
+                    features["danceability"],
+                    features["valence"],
+                    features["arousal"],
+                    features["instrumentalness"],
+                    features["acousticness"],
+                    features["speechiness"],
+                    features["moodTags"],
+                    features["essentiaGenres"],
+                    features.get("moodHappy"),
+                    features.get("moodSad"),
+                    features.get("moodRelaxed"),
+                    features.get("moodAggressive"),
+                    features.get("moodParty"),
+                    features.get("moodAcoustic"),
+                    features.get("moodElectronic"),
+                    features.get("danceabilityMl"),
+                    features.get("analysisMode", "standard"),
+                    ESSENTIA_VERSION,
+                    datetime.utcnow(),
+                    track_id,
+                ),
+            )
             self.db.commit()
         except Exception as e:
             logger.error(f"Failed to save results for {track_id}: {e}")
             self.db.rollback()
         finally:
             cursor.close()
-    
+
     def _save_failed(self, track_id: str, error: str, permanent: bool = False):
         """Mark track as failed or skipped.
 
@@ -1264,7 +1435,8 @@ class AnalysisWorker:
         try:
             if permanent:
                 # Mark as skipped - these won't be retried (size limits, timeouts, memory errors)
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE "Track"
                     SET
                         "analysisStatus" = 'skipped',
@@ -1272,11 +1444,14 @@ class AnalysisWorker:
                         "analysisRetryCount" = %s,
                         "updatedAt" = NOW()
                     WHERE id = %s
-                """, (error[:500], MAX_RETRIES, track_id))
+                """,
+                    (error[:500], MAX_RETRIES, track_id),
+                )
                 logger.info(f"Track {track_id} skipped: {error}")
             else:
                 # Normal failure - increment retry count
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE "Track"
                     SET
                         "analysisStatus" = 'failed',
@@ -1285,15 +1460,21 @@ class AnalysisWorker:
                         "updatedAt" = NOW()
                     WHERE id = %s
                     RETURNING "analysisRetryCount"
-                """, (error[:500], track_id))
+                """,
+                    (error[:500], track_id),
+                )
 
                 result = cursor.fetchone()
-                retry_count = result['analysisRetryCount'] if result else 0
+                retry_count = result["analysisRetryCount"] if result else 0
 
                 if retry_count >= MAX_RETRIES:
-                    logger.warning(f"Track {track_id} has permanently failed after {retry_count} attempts")
+                    logger.warning(
+                        f"Track {track_id} has permanently failed after {retry_count} attempts"
+                    )
                 else:
-                    logger.info(f"Track {track_id} failed (attempt {retry_count}/{MAX_RETRIES}, will retry)")
+                    logger.info(
+                        f"Track {track_id} failed (attempt {retry_count}/{MAX_RETRIES}, will retry)"
+                    )
 
             self.db.commit()
         except Exception as e:
@@ -1316,7 +1497,7 @@ def main():
         while True:
             time.sleep(3600)
 
-    if len(sys.argv) > 1 and sys.argv[1] == '--test':
+    if len(sys.argv) > 1 and sys.argv[1] == "--test":
         # Test mode: analyze a single file
         if len(sys.argv) < 3:
             print("Usage: analyzer.py --test <audio_file>")
@@ -1332,6 +1513,5 @@ def main():
     worker.start()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
-

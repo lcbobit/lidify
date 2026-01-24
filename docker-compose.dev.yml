@@ -51,11 +51,13 @@ services:
             DATABASE_URL: postgresql://lidify:lidify@postgres:5432/lidify
             # Music path inside container (mounted from host)
             MUSIC_PATH: /music
+            DOWNLOAD_PATH: /soulseek-downloads
             BATCH_SIZE: 10
             SLEEP_INTERVAL: 5
         volumes:
             # Mount your music library - UPDATE THIS PATH
             - "${MUSIC_PATH:-C:/Users/kevin/Music}:/music:ro"
+            - "${DOWNLOAD_PATH:-C:/Users/kevin/Music/soulseek-downloads}:/soulseek-downloads:ro"
         depends_on:
             postgres:
                 condition: service_healthy
@@ -65,7 +67,6 @@ services:
 
 volumes:
     postgres_dev_data:
-
 
 
 

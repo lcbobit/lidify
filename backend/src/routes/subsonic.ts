@@ -36,17 +36,42 @@ const router = Router();
 router.use((req: Request, res: Response, next) => {
     const endpoint = req.path;
     const client = req.query.c || 'unknown';
-    const user = req.query.u || 'no-user';
-    const type = req.query.type || '';
-    // Log key requests for debugging
-    if (endpoint.includes('AlbumList') || endpoint.includes('Scan') || endpoint.includes('scan')) {
-        console.log(`[Subsonic] ${req.method} ${endpoint} user=${user} client=${client} type=${type}`);
+    // Skip noisy endpoints
+    if (!endpoint.includes('ping') && !endpoint.includes('stream') && !endpoint.includes('getCoverArt')) {
+        console.log(`[Subsonic] ${req.method} ${endpoint} from client=${client}`);
     }
     next();
 });
 
 // Apply Subsonic authentication to all routes
 router.use(requireSubsonicAuth);
+
+async function resolveTrackPath(trackFilePath: string): Promise<string | null> {
+    const normalizedFilePath = trackFilePath.replace(/\\/g, "/");
+
+    const roots: string[] = [];
+    roots.push(config.music.musicPath);
+
+    const settings = await prisma.systemSettings.findFirst();
+    const downloadPath = settings?.downloadPath || "/soulseek-downloads";
+    roots.push(downloadPath);
+
+    for (const root of roots) {
+        const normalizedRoot = path.normalize(root);
+        const candidate = path.normalize(path.join(root, normalizedFilePath));
+
+        // Prevent path traversal
+        if (!candidate.startsWith(normalizedRoot + path.sep) && candidate !== normalizedRoot) {
+            continue;
+        }
+
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
+    return null;
+}
 
 // ============================================================================
 // SYSTEM ENDPOINTS
@@ -569,10 +594,9 @@ router.get("/getSong.view", async (req: Request, res: Response) => {
 });
 
 /**
- * getAlbumList.view / getAlbumList2.view - Album list with sorting options
- * Both endpoints return the same ID3-based data (some clients use the non-ID3 endpoint name)
+ * getAlbumList2.view - Album list (ID3 mode) with sorting options
  */
-const albumListHandler = async (req: Request, res: Response) => {
+router.get("/getAlbumList2.view", async (req: Request, res: Response) => {
     const format = getResponseFormat(req.query);
     const {
         type = "alphabeticalByName",
@@ -814,11 +838,7 @@ const albumListHandler = async (req: Request, res: Response) => {
             req.query.callback as string
         );
     }
-};
-
-// Register both endpoint names for compatibility
-router.get("/getAlbumList.view", albumListHandler);
-router.get("/getAlbumList2.view", albumListHandler);
+});
 
 /**
  * getRandomSongs.view - Random tracks
@@ -1184,9 +1204,17 @@ router.get("/stream.view", async (req: Request, res: Response) => {
             config.music.transcodeCacheMaxGb
         );
 
-        // Get absolute path
-        const normalizedFilePath = track.filePath.replace(/\\/g, "/");
-        const absolutePath = path.join(config.music.musicPath, normalizedFilePath);
+        const absolutePath = await resolveTrackPath(track.filePath);
+
+        if (!absolutePath) {
+            return sendSubsonicError(
+                res,
+                SubsonicErrorCode.NOT_FOUND,
+                "File not found",
+                format,
+                req.query.callback as string
+            );
+        }
 
         // Get stream file
         const { filePath, mimeType } = await streamingService.getStreamFilePath(
@@ -1259,10 +1287,9 @@ router.get("/download.view", async (req: Request, res: Response) => {
             );
         }
 
-        const normalizedFilePath = track.filePath.replace(/\\/g, "/");
-        const absolutePath = path.join(config.music.musicPath, normalizedFilePath);
+        const absolutePath = await resolveTrackPath(track.filePath);
 
-        if (!fs.existsSync(absolutePath)) {
+        if (!absolutePath) {
             return sendSubsonicError(
                 res,
                 SubsonicErrorCode.NOT_FOUND,
@@ -2286,8 +2313,7 @@ router.get("/getScanStatus.view", async (req: Request, res: Response) => {
     }
 });
 
-// Support both GET and POST for startScan (some clients use POST)
-const startScanHandler = async (req: Request, res: Response) => {
+router.get("/startScan.view", async (req: Request, res: Response) => {
     const format = getResponseFormat(req.query);
     if (!config.music.musicPath) {
         return sendSubsonicError(
@@ -2321,9 +2347,6 @@ const startScanHandler = async (req: Request, res: Response) => {
             req.query.callback as string
         );
     }
-};
-
-router.get("/startScan.view", startScanHandler);
-router.post("/startScan.view", startScanHandler);
+});
 
 export default router;

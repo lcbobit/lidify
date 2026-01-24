@@ -12,6 +12,7 @@ import { getSystemSettings } from "../utils/systemSettings";
 import { prisma } from "../utils/db";
 import { redisClient } from "../utils/redis";
 import PQueue from "p-queue";
+import path from "path";
 // Note: We DON'T use simpleDownloadManager here because it has same-artist fallback logic
 // For Spotify Import, we need EXACT album matching - no substitutions
 
@@ -781,7 +782,12 @@ class SpotifyImportService {
 
         // Calculate tracks that will come from downloads
         const tracksFromDownloads = preview.albumsToDownload
-            .filter((a) => albumMbidsToDownload.includes(a.albumMbid!))
+            .filter((a) => {
+                const albumIdentifier = a.albumMbid || a.spotifyAlbumId;
+                return albumIdentifier
+                    ? albumMbidsToDownload.includes(albumIdentifier)
+                    : false;
+            })
             .reduce((sum, a) => sum + a.tracksNeeded.length, 0);
 
         // Extract the track info we need to match after downloads
@@ -873,41 +879,33 @@ class SpotifyImportService {
 
                 logger?.logAlbumDownloadStart(albumMbidsToDownload.length);
 
-                // Get download preferences from system settings
+                // Playlist imports always use Soulseek for per-track downloads
+                // (ignores global downloadSource setting - that's for album browsing/discovery)
                 const settings = await getSystemSettings();
-                const downloadSource = settings?.downloadSource || "soulseek";
+                const downloadSource = "soulseek"; // Always Soulseek for playlist imports
                 const soulseekFallback = settings?.soulseekFallback || "none";
 
                 console.log(
-                    `[Spotify Import] Download source: ${downloadSource}, Soulseek fallback: ${soulseekFallback}`
+                    `[Spotify Import] Using Soulseek for per-track downloads (fallback: ${soulseekFallback})`
                 );
                 logger?.info(
-                    `Download source: ${downloadSource}${
-                        downloadSource === "soulseek"
-                            ? `, fallback: ${soulseekFallback}`
-                            : ""
-                    }`
+                    `Download source: Soulseek (per-track), fallback: ${soulseekFallback}`
                 );
 
-                // Check service availability based on download source
+                // Check service availability
                 const lidarrEnabled = await lidarrService.isEnabled();
                 const soulseekAvailable = await soulseekService.isAvailable();
 
                 logger?.info(
-                    `Service availability: lidarr=${
-                        lidarrEnabled ? "yes" : "no"
-                    }, soulseek=${soulseekAvailable ? "yes" : "no"}`
+                    `Service availability: soulseek=${
+                        soulseekAvailable ? "yes" : "no"
+                    }, lidarr=${lidarrEnabled ? "yes" : "no"} (fallback only)`
                 );
                 if (settings?.musicPath) {
                     logger?.info(`System musicPath: ${settings.musicPath}`);
                 }
 
-                if (downloadSource === "lidarr" && !lidarrEnabled) {
-                    throw new Error(
-                        "Lidarr is not configured. Cannot download missing albums."
-                    );
-                }
-                if (downloadSource === "soulseek" && !soulseekAvailable) {
+                if (!soulseekAvailable) {
                     if (soulseekFallback === "lidarr" && lidarrEnabled) {
                         console.log(
                             `[Spotify Import] Soulseek not available, using Lidarr as fallback`
@@ -1054,6 +1052,18 @@ class SpotifyImportService {
                                         console.log(
                                             `[Spotify Import] ✗ Failed to download Unknown Album tracks: ${soulseekResult.error}`
                                         );
+                                        await prisma.downloadJob
+                                            .update({
+                                                where: { id: downloadJobId },
+                                                data: {
+                                                    status: "failed",
+                                                    error:
+                                                        soulseekResult.error ||
+                                                        "Soulseek download failed",
+                                                    completedAt: new Date(),
+                                                },
+                                            })
+                                            .catch(() => {});
                                     }
                                 } else if (downloadSource === "soulseek") {
                                     // === SOULSEEK PRIMARY: Per-track downloads ===
@@ -1269,7 +1279,11 @@ class SpotifyImportService {
                                     error.message
                                 );
 
-                                const downloadJobId = `spotify_${job.id}_${albumMbid}`;
+                                const downloadJobId = `spotify_${job.id}_${
+                                    album.albumMbid ||
+                                    album.spotifyAlbumId ||
+                                    "unknown"
+                                }`;
                                 await prisma.downloadJob
                                     .update({
                                         where: { id: downloadJobId },
@@ -1322,7 +1336,7 @@ class SpotifyImportService {
     /**
      * Try Soulseek for downloading tracks
      * Uses TRACK-based searching (more effective on Soulseek than album search)
-     * Downloads directly to Singles/Artist/Album/ using slsk-client
+     * Downloads directly to Singles/Artist/Album/ using soulseek-ts
      */
     private async trySoulseekDownload(
         job: ImportJob,
@@ -1383,7 +1397,11 @@ class SpotifyImportService {
             const result = await soulseekService.searchAndDownloadBatch(
                 tracks,
                 musicPath,
-                4 // concurrency
+                4, // concurrency
+                {
+                    // Namespace playlist downloads to avoid collisions with /music paths
+                    downloadSubdir: "Playlists",
+                }
             );
 
             if (result.successful === 0) {
@@ -1559,10 +1577,14 @@ class SpotifyImportService {
             `All ${total} download jobs finished (${completed} completed, ${failed} failed)`
         );
 
-        // Trigger library scan to import the new files
+        // Trigger library scan to import the new files from the download path
         const { scanQueue } = await import("../workers/queues");
+        const settings = await getSystemSettings();
+        const downloadBase = settings?.downloadPath || "/soulseek-downloads";
+        const playlistScanPath = path.join(downloadBase, "Playlists");
         const scanJob = await scanQueue.add("scan", {
             userId: job.userId,
+            musicPath: playlistScanPath,
             source: "spotify-import",
             spotifyImportJobId: importJobId,
         });
@@ -2218,9 +2240,12 @@ class SpotifyImportService {
             existingItems.map((item) => item.trackId)
         );
 
-        // Get next position
-        const maxPosition = existingItems.length;
-        let nextPosition = maxPosition;
+        // Get next sort position (use max sort, not item count)
+        const maxSortResult = await prisma.playlistItem.aggregate({
+            where: { playlistId: job.createdPlaylistId },
+            _max: { sort: true },
+        });
+        let nextSort = (maxSortResult._max.sort ?? -1) + 1;
 
         // Try to match each pending track
         for (const pendingTrack of job.pendingTracks) {
@@ -2247,7 +2272,7 @@ class SpotifyImportService {
                     data: {
                         playlistId: job.createdPlaylistId,
                         trackId: localTrack.id,
-                        position: nextPosition++,
+                        sort: nextSort++,
                     },
                 });
                 existingTrackIds.add(localTrack.id);

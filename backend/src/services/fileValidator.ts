@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import fs from "fs";
 import { prisma } from "../utils/db";
 import { config } from "../config";
 import PQueue from "p-queue";
@@ -14,6 +15,19 @@ export interface ValidationResult {
 export class FileValidatorService {
     private validationQueue = new PQueue({ concurrency: 50 });
 
+    private resolveCandidate(root: string, filePath: string): string | null {
+        const normalizedFilePath = filePath.replace(/\\/g, "/");
+        const normalizedRoot = path.normalize(root);
+        const candidate = path.normalize(path.join(root, normalizedFilePath));
+
+        // Prevent path traversal attacks
+        if (!candidate.startsWith(normalizedRoot + path.sep) && candidate !== normalizedRoot) {
+            return null;
+        }
+
+        return candidate;
+    }
+
     /**
      * Validate all tracks in the library and remove missing files
      */
@@ -27,6 +41,9 @@ export class FileValidatorService {
         };
 
         console.log("[FileValidator] Starting library validation...");
+
+        const settings = await prisma.systemSettings.findFirst();
+        const downloadPath = settings?.downloadPath || "/soulseek-downloads";
 
         // Get all tracks from the database
         const tracks = await prisma.track.findMany({
@@ -47,21 +64,19 @@ export class FileValidatorService {
         for (const track of tracks) {
             await this.validationQueue.add(async () => {
                 try {
-                    const absolutePath = path.normalize(
-                        path.join(config.music.musicPath, track.filePath)
+                    const candidateMusic = this.resolveCandidate(
+                        config.music.musicPath,
+                        track.filePath
+                    );
+                    const candidateDownload = this.resolveCandidate(
+                        downloadPath,
+                        track.filePath
                     );
 
-                    // Prevent path traversal attacks
-                    if (!absolutePath.startsWith(path.normalize(config.music.musicPath))) {
-                        console.warn(
-                            `[FileValidator] Path traversal attempt detected: ${track.filePath}`
-                        );
-                        missingTrackIds.push(track.id);
-                        result.tracksChecked++;
-                        return;
-                    }
-
-                    const exists = await this.fileExists(absolutePath);
+                    const exists =
+                        (candidateMusic && (await this.fileExists(candidateMusic))) ||
+                        (candidateDownload &&
+                            (await this.fileExists(candidateDownload)));
 
                     if (!exists) {
                         console.log(
@@ -144,19 +159,18 @@ export class FileValidatorService {
             return false;
         }
 
-        const absolutePath = path.normalize(
-            path.join(config.music.musicPath, track.filePath)
+        const settings = await prisma.systemSettings.findFirst();
+        const downloadPath = settings?.downloadPath || "/soulseek-downloads";
+
+        const candidateMusic = this.resolveCandidate(
+            config.music.musicPath,
+            track.filePath
         );
+        const candidateDownload = this.resolveCandidate(downloadPath, track.filePath);
 
-        // Prevent path traversal attacks
-        if (!absolutePath.startsWith(path.normalize(config.music.musicPath))) {
-            console.warn(
-                `[FileValidator] Path traversal attempt detected: ${track.filePath}`
-            );
-            return false;
-        }
-
-        const exists = await this.fileExists(absolutePath);
+        const exists =
+            (candidateMusic && (await this.fileExists(candidateMusic))) ||
+            (candidateDownload && (await this.fileExists(candidateDownload)));
 
         if (!exists) {
             console.log(

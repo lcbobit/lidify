@@ -39,6 +39,16 @@ services:
             LIDIFY_CALLBACK_URL: ${LIDIFY_CALLBACK_URL:-http://backend:3006}
             # Debug: enable extra podcast stream/cache logging
             PODCAST_DEBUG: ${PODCAST_DEBUG:-0}
+
+            # Podcast ad removal (requires --profile ad-removal or ad-removal-gpu)
+            PODCAST_AD_REMOVAL: ${PODCAST_AD_REMOVAL:-false}
+            WHISHPER_URL: ${WHISHPER_URL:-http://whishper:8080}
+            # Whisper model for transcription (must be preloaded in Whishper)
+            WHISPER_MODEL: ${WHISPER_MODEL:-medium}
+            # LLM for ad detection - uses your configured OpenRouter model by default
+            # Set AD_REMOVAL_MODEL to override (e.g., google/gemini-2.0-flash-001)
+            AD_REMOVAL_MODEL: ${AD_REMOVAL_MODEL:-}
+            OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
         volumes:
             - ${MUSIC_PATH:-./music}:/music
             - backend_cache:/app/cache
@@ -212,6 +222,78 @@ services:
         restart: unless-stopped
 
     # ==============================================================================
+    # PODCAST AD REMOVAL (Whishper + AI)
+    # ==============================================================================
+
+    # Whishper - Self-hosted Whisper transcription for podcast ad detection
+    # Enable with: docker compose --profile ad-removal up -d
+    # For GPU: docker compose --profile ad-removal-gpu up -d
+    whishper:
+        image: pluja/whishper:latest
+        container_name: lidify_whishper
+        environment:
+            # Whisper models to preload (comma-separated)
+            # Options: tiny, base, small, medium, large-v3
+            # large-v3 is most accurate but needs ~10GB VRAM
+            - WHISPER_MODELS=${WHISPER_MODELS:-small,medium}
+            # Compute type: int8 (CPU), float16 (GPU), int8_float16 (mixed)
+            - WHISPER_COMPUTE_TYPE=${WHISPER_COMPUTE_TYPE:-int8}
+            # Language: en for English, auto for auto-detect
+            - WHISPER_LANG=${WHISPER_LANG:-en}
+            # Database
+            - MONGO_URL=mongodb://whishper-mongo:27017/whishper
+        volumes:
+            - whishper_uploads:/app/uploads
+            - whishper_models:/app/models
+        ports:
+            - "${WHISHPER_PORT:-8082}:8080"
+        depends_on:
+            - whishper-mongo
+        restart: unless-stopped
+        profiles:
+            - ad-removal
+
+    # Whishper with GPU acceleration (NVIDIA)
+    # Use this instead if you have a CUDA GPU
+    whishper-gpu:
+        image: pluja/whishper:latest-gpu
+        container_name: lidify_whishper
+        environment:
+            # With GPU, use larger models for better accuracy
+            - WHISPER_MODELS=${WHISPER_MODELS:-medium,large-v3}
+            # float16 for GPU (fastest), int8_float16 for lower VRAM
+            - WHISPER_COMPUTE_TYPE=${WHISPER_COMPUTE_TYPE:-float16}
+            - WHISPER_LANG=${WHISPER_LANG:-en}
+            - MONGO_URL=mongodb://whishper-mongo:27017/whishper
+        volumes:
+            - whishper_uploads:/app/uploads
+            - whishper_models:/app/models
+        ports:
+            - "${WHISHPER_PORT:-8082}:8080"
+        depends_on:
+            - whishper-mongo
+        restart: unless-stopped
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        - driver: nvidia
+                          count: 1
+                          capabilities: [gpu]
+        profiles:
+            - ad-removal-gpu
+
+    # MongoDB for Whishper (stores transcription jobs/history)
+    whishper-mongo:
+        image: mongo:7
+        container_name: lidify_whishper_mongo
+        volumes:
+            - whishper_mongo_data:/data/db
+        restart: unless-stopped
+        profiles:
+            - ad-removal
+
+    # ==============================================================================
     # AUDIO ANALYSIS SERVICE (Essentia)
     # ==============================================================================
 
@@ -224,11 +306,13 @@ services:
             REDIS_URL: redis://redis:6379
             DATABASE_URL: postgresql://${POSTGRES_USER:-lidifydb}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-lidify}
             MUSIC_PATH: /music
+            DOWNLOAD_PATH: /soulseek-downloads
             BATCH_SIZE: ${AUDIO_ANALYSIS_BATCH_SIZE:-10}
             SLEEP_INTERVAL: ${AUDIO_ANALYSIS_INTERVAL:-5}
             NUM_WORKERS: ${AUDIO_ANALYSIS_WORKERS:-8}
         volumes:
             - ${MUSIC_PATH:-./music}:/music:ro
+            - ${DOWNLOAD_PATH:-./soulseek-downloads}:/soulseek-downloads:ro
             - audio_analyzer_models:/app/models
         depends_on:
             postgres:
@@ -247,6 +331,10 @@ volumes:
     backend_logs:
     # Audio analysis
     audio_analyzer_models:
+    # Podcast ad removal (Whishper)
+    whishper_uploads:
+    whishper_models:
+    whishper_mongo_data:
     # External services
     lidarr_config:
     prowlarr_config:

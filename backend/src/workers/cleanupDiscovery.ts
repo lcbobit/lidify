@@ -1,6 +1,7 @@
 import { prisma } from "../utils/db";
 import fs from "fs/promises";
 import path from "path";
+import { prisma } from "../utils/db";
 
 export async function cleanupDiscoveryTracks() {
     console.log("\nCleaning up old discovery tracks...");
@@ -115,7 +116,19 @@ export async function cleanupDiscoveryTracks() {
                     // Delete physical file
                     if (track.filePath) {
                         try {
-                            await fs.unlink(track.filePath);
+                            const filePath = path.isAbsolute(track.filePath)
+                                ? track.filePath
+                                : album.folderPath && path.isAbsolute(album.folderPath)
+                                  ? path.join(album.folderPath, track.filePath)
+                                  : null;
+
+                            if (!filePath) {
+                                console.warn(
+                                    `    Could not resolve path for discovery track: ${track.filePath}`
+                                );
+                            } else {
+                                await fs.unlink(filePath);
+                            }
                             console.log(`    Deleted: ${track.fileName}`);
                         } catch (err) {
                             console.warn(`    Could not delete file: ${err}`);
