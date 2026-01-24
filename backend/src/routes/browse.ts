@@ -348,12 +348,12 @@ router.post("/playlists/parse", async (req, res) => {
 
 /**
  * GET /api/browse/all
- * Get a combined view of featured content (playlists, genres)
+ * Get a combined view of featured content (playlists, genres) from Deezer
  * Note: Radio stations are now internal (library-based), not from Deezer
  */
 router.get("/all", async (req, res) => {
     try {
-        console.log("[Browse] Fetching browse content (playlists + genres)...");
+        console.log("[Browse] Fetching Deezer browse content (playlists + genres)...");
 
         // Only fetch playlists and genres - radios are now internal library-based
         const [playlists, genres] = await Promise.all([
@@ -371,6 +371,181 @@ router.get("/all", async (req, res) => {
     } catch (error: any) {
         console.error("Browse all error:", error);
         res.status(500).json({ error: error.message || "Failed to fetch browse content" });
+    }
+});
+
+// ============================================
+// Spotify Browse Endpoints
+// ============================================
+
+/**
+ * Convert Spotify playlist to unified format
+ */
+function spotifyPlaylistToUnified(playlist: { id: string; name: string; description: string | null; owner: string; imageUrl: string | null; trackCount: number }): PlaylistPreview {
+    return {
+        id: playlist.id,
+        source: "spotify",
+        type: "playlist",
+        title: playlist.name,
+        description: playlist.description,
+        creator: playlist.owner,
+        imageUrl: playlist.imageUrl,
+        trackCount: playlist.trackCount,
+        url: `https://open.spotify.com/playlist/${playlist.id}`,
+    };
+}
+
+/**
+ * GET /api/browse/spotify/all
+ * Get Spotify featured playlists and categories
+ */
+router.get("/spotify/all", async (req, res) => {
+    try {
+        console.log("[Browse] Fetching Spotify browse content (playlists + categories)...");
+
+        const [playlists, categories] = await Promise.all([
+            spotifyService.getFeaturedPlaylists(50),
+            spotifyService.getCategories(50),
+        ]);
+
+        console.log(`[Browse] Spotify: ${playlists.length} playlists, ${categories.length} categories`);
+
+        res.json({
+            playlists: playlists.map(spotifyPlaylistToUnified),
+            categories,
+            source: "spotify",
+        });
+    } catch (error: any) {
+        console.error("Spotify browse all error:", error);
+        res.status(500).json({ error: error.message || "Failed to fetch Spotify content" });
+    }
+});
+
+/**
+ * GET /api/browse/spotify/categories/:id/playlists
+ * Get playlists for a specific Spotify category
+ * Accepts optional `name` query param for fallback search
+ */
+router.get("/spotify/categories/:id/playlists", async (req, res) => {
+    try {
+        const categoryId = req.params.id;
+        const categoryName = req.query.name as string;
+        const limit = Math.min(parseInt(req.query.limit as string) || 50, 50);
+
+        console.log(`[Browse] Fetching Spotify playlists for category ${categoryId}...`);
+        
+        // Try the category API first
+        let playlists = await spotifyService.getCategoryPlaylists(categoryId, limit);
+        
+        // If no results and we have a category name, search by name as fallback
+        if (playlists.length === 0 && categoryName) {
+            console.log(`[Browse] Category API returned empty, searching by name "${categoryName}"...`);
+            playlists = await spotifyService.getCategoryPlaylistsByName(categoryName, limit);
+        }
+
+        res.json({
+            playlists: playlists.map(spotifyPlaylistToUnified),
+            total: playlists.length,
+            categoryId,
+            source: "spotify",
+        });
+    } catch (error: any) {
+        console.error("Spotify category playlists error:", error);
+        res.status(500).json({ error: error.message || "Failed to fetch category playlists" });
+    }
+});
+
+/**
+ * GET /api/browse/spotify/playlists/search
+ * Search for playlists on Spotify
+ */
+router.get("/spotify/playlists/search", async (req, res) => {
+    try {
+        const query = req.query.q as string;
+        if (!query || query.length < 2) {
+            return res.status(400).json({ error: "Search query must be at least 2 characters" });
+        }
+
+        const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+        console.log(`[Browse] Searching Spotify playlists for "${query}"...`);
+
+        const playlists = await spotifyService.searchPlaylists(query, limit);
+        console.log(`[Browse] Spotify search "${query}": ${playlists.length} results`);
+
+        res.json({
+            playlists: playlists.map(spotifyPlaylistToUnified),
+            total: playlists.length,
+            query,
+            source: "spotify",
+        });
+    } catch (error: any) {
+        console.error("Spotify search playlists error:", error);
+        res.status(500).json({ error: error.message || "Failed to search Spotify playlists" });
+    }
+});
+
+// ============================================
+// Combined Search Endpoint (both sources)
+// ============================================
+
+/**
+ * GET /api/browse/search
+ * Search for playlists on both Deezer and Spotify
+ * Returns interleaved results from both sources
+ */
+router.get("/search", async (req, res) => {
+    try {
+        const query = req.query.q as string;
+        if (!query || query.length < 2) {
+            return res.status(400).json({ error: "Search query must be at least 2 characters" });
+        }
+
+        const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+        console.log(`[Browse] Combined search for "${query}" (limit: ${limit})...`);
+
+        // Search both sources in parallel
+        const [deezerResults, spotifyResults] = await Promise.all([
+            deezerService.searchPlaylists(query, limit).catch(err => {
+                console.error("Deezer search failed:", err.message);
+                return [];
+            }),
+            spotifyService.searchPlaylists(query, limit).catch(err => {
+                console.error("Spotify search failed:", err.message);
+                return [];
+            }),
+        ]);
+
+        console.log(`[Browse] Combined search "${query}": Deezer=${deezerResults.length}, Spotify=${spotifyResults.length}`);
+
+        // Convert to unified format
+        const deezerPlaylists = deezerResults.map(deezerPlaylistToUnified);
+        const spotifyPlaylists = spotifyResults.map(spotifyPlaylistToUnified);
+
+        // Interleave results (Deezer, Spotify, Deezer, Spotify, ...)
+        const interleaved: PlaylistPreview[] = [];
+        const maxLen = Math.max(deezerPlaylists.length, spotifyPlaylists.length);
+        
+        for (let i = 0; i < maxLen; i++) {
+            if (i < deezerPlaylists.length) {
+                interleaved.push(deezerPlaylists[i]);
+            }
+            if (i < spotifyPlaylists.length) {
+                interleaved.push(spotifyPlaylists[i]);
+            }
+        }
+
+        res.json({
+            playlists: interleaved,
+            total: interleaved.length,
+            query,
+            sources: {
+                deezer: deezerResults.length,
+                spotify: spotifyResults.length,
+            },
+        });
+    } catch (error: any) {
+        console.error("Combined search error:", error);
+        res.status(500).json({ error: error.message || "Failed to search playlists" });
     }
 });
 

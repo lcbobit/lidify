@@ -1,4 +1,5 @@
 import { Router } from "express";
+import path from "path";
 import { requireAuthOrToken } from "../middleware/auth";
 import { prisma } from "../utils/db";
 import { z } from "zod";
@@ -69,6 +70,19 @@ router.get("/", async (req, res) => {
             trackCount: playlist.items.length,
             isOwner: playlist.userId === userId,
             isHidden: hiddenPlaylistIds.has(playlist.id),
+            // Map items to include coverArt (frontend expects this field name)
+            items: playlist.items.map((item) => ({
+                ...item,
+                track: {
+                    ...item.track,
+                    album: item.track.album
+                        ? {
+                              ...item.track.album,
+                              coverArt: item.track.album.coverUrl,
+                          }
+                        : null,
+                },
+            })),
         }));
 
         // Debug: log shared playlists with user info
@@ -852,7 +866,11 @@ router.post("/:id/pending/:trackId/retry", async (req, res) => {
                 pendingTrack.spotifyTitle,
                 albumName,
                 searchResult.allMatches,
-                settings.musicPath
+                settings.musicPath,
+                {
+                    // Namespace playlist downloads to avoid collisions with /music paths
+                    downloadSubdir: "Playlists",
+                }
             )
             .then(async (result) => {
                 if (result.success) {
@@ -879,10 +897,17 @@ router.post("/:id/pending/:trackId/retry", async (req, res) => {
                     // Trigger a library scan to add the track and reconcile pending
                     try {
                         const { scanQueue } = await import("../workers/queues");
+                        const downloadBase =
+                            settings.downloadPath || "/soulseek-downloads";
                         const scanJob = await scanQueue.add(
                             "scan",
                             {
                                 userId,
+                                musicPath: path.join(
+                                    downloadBase,
+                                    "Playlists"
+                                ),
+                                basePath: downloadBase,
                                 source: "retry-pending-track",
                                 albumMbid: pendingTrack.albumMbid || undefined,
                                 artistMbid:
@@ -961,6 +986,179 @@ router.post("/:id/pending/:trackId/retry", async (req, res) => {
         );
         res.status(500).json({
             error: "Failed to retry download",
+            details: error.message,
+        });
+    }
+});
+
+/**
+ * POST /playlists/:id/pending/retry-all
+ * Retry downloading all pending tracks for a playlist via Soulseek.
+ * Returns immediately; downloads and scan run in background.
+ */
+router.post("/:id/pending/retry-all", async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const playlistId = req.params.id;
+
+        // Check ownership
+        const playlist = await prisma.playlist.findUnique({
+            where: { id: playlistId },
+            select: { id: true, userId: true, name: true },
+        });
+
+        if (!playlist) {
+            return res.status(404).json({ error: "Playlist not found" });
+        }
+
+        if (playlist.userId !== userId) {
+            return res.status(403).json({ error: "Access denied" });
+        }
+
+        const pendingTracks = await prisma.playlistPendingTrack.findMany({
+            where: { playlistId },
+            orderBy: { sort: "asc" },
+        });
+
+        if (pendingTracks.length === 0) {
+            return res.json({
+                success: true,
+                count: 0,
+                message: "No missing tracks to retry",
+            });
+        }
+
+        const downloadJob = await prisma.downloadJob.create({
+            data: {
+                userId,
+                subject: `Retry missing tracks: ${playlist.name}`,
+                type: "track",
+                targetMbid: `playlist:${playlistId}:retry-all`,
+                status: "processing",
+                attempts: 1,
+                startedAt: new Date(),
+                metadata: {
+                    downloadType: "pending-tracks-retry-all",
+                    source: "soulseek",
+                    playlistId,
+                    playlistName: playlist.name,
+                    pendingCount: pendingTracks.length,
+                },
+            },
+        });
+
+        res.json({
+            success: true,
+            count: pendingTracks.length,
+            message: `Retry started for ${pendingTracks.length} track(s)`,
+            downloadJobId: downloadJob.id,
+        });
+
+        // Background: batch download + scan
+        (async () => {
+            try {
+                const { soulseekService } = await import("../services/soulseek");
+                const { getSystemSettings } = await import(
+                    "../utils/systemSettings"
+                );
+                const { scanQueue } = await import("../workers/queues");
+
+                const settings = await getSystemSettings();
+                const downloadBase = settings?.downloadPath || "/soulseek-downloads";
+                const playlistScanPath = path.join(downloadBase, "Playlists");
+
+                if (!settings?.musicPath) {
+                    throw new Error("Music path not configured");
+                }
+                if (!settings?.soulseekUsername || !settings?.soulseekPassword) {
+                    throw new Error("Soulseek credentials not configured");
+                }
+
+                sessionLog(
+                    "PENDING-RETRY",
+                    `Bulk retry start: playlistId=${playlistId} pending=${pendingTracks.length}`
+                );
+
+                const tracksToDownload = pendingTracks.map((t) => ({
+                    artist: t.spotifyArtist,
+                    title: t.spotifyTitle,
+                    album:
+                        t.spotifyAlbum && t.spotifyAlbum !== "Unknown Album"
+                            ? t.spotifyAlbum
+                            : t.spotifyArtist,
+                }));
+
+                const dlResult = await soulseekService.searchAndDownloadBatch(
+                    tracksToDownload,
+                    settings.musicPath,
+                    3, // Reduced download concurrency to avoid rate limiting
+                    {
+                        downloadSubdir: "Playlists",
+                        preferFlac: true,
+                        allowMp3320Fallback: true,
+                        searchTimeoutMs: 3500,
+                        searchTimeoutLongMs: 12000,
+                        searchConcurrency: 3, // Reduced from 10 to avoid rate limiting
+                    }
+                );
+
+                await prisma.downloadJob.update({
+                    where: { id: downloadJob.id },
+                    data: {
+                        status: dlResult.successful > 0 ? "completed" : "failed",
+                        error:
+                            dlResult.successful > 0
+                                ? null
+                                : "No tracks downloaded",
+                        completedAt: new Date(),
+                        metadata: {
+                            ...(downloadJob.metadata as any),
+                            successful: dlResult.successful,
+                            failed: dlResult.failed,
+                        },
+                    },
+                });
+
+                if (dlResult.successful > 0) {
+                    await scanQueue.add(
+                        "scan",
+                        {
+                            userId,
+                            musicPath: playlistScanPath,
+                            basePath: downloadBase,
+                            source: "retry-missing-tracks",
+                        },
+                        { priority: 1, removeOnComplete: true }
+                    );
+                }
+
+                sessionLog(
+                    "PENDING-RETRY",
+                    `Bulk retry complete: playlistId=${playlistId} ok=${dlResult.successful} failed=${dlResult.failed}`
+                );
+            } catch (err: any) {
+                await prisma.downloadJob
+                    .update({
+                        where: { id: downloadJob.id },
+                        data: {
+                            status: "failed",
+                            error: err?.message || "Bulk retry failed",
+                            completedAt: new Date(),
+                        },
+                    })
+                    .catch(() => undefined);
+
+                sessionLog(
+                    "PENDING-RETRY",
+                    `Bulk retry failed: playlistId=${playlistId} error=${err?.message || err}`,
+                    "ERROR"
+                );
+            }
+        })();
+    } catch (error: any) {
+        console.error("Retry all pending tracks error:", error);
+        res.status(500).json({
+            error: "Failed to retry missing tracks",
             details: error.message,
         });
     }

@@ -1,4 +1,5 @@
 import axios from "axios";
+import { redisClient } from "../utils/redis";
 
 /**
  * Spotify Service
@@ -59,10 +60,34 @@ const SPOTIFY_TRACK_REGEX = /(?:spotify\.com\/track\/|spotify:track:)([a-zA-Z0-9
 class SpotifyService {
     private anonymousToken: string | null = null;
     private tokenExpiry: number = 0;
+    private readonly cachePrefix = "spotify:";
+    private readonly cacheTTL = 86400; // 24 hours
 
     /**
-     * Get anonymous access token from Spotify web player
-     * Try multiple endpoints for reliability
+     * Get cached value from Redis
+     */
+    private async getCached(key: string): Promise<string | null> {
+        try {
+            return await redisClient.get(`${this.cachePrefix}${key}`);
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Set cached value in Redis
+     */
+    private async setCache(key: string, value: string): Promise<void> {
+        try {
+            await redisClient.setex(`${this.cachePrefix}${key}`, this.cacheTTL, value);
+        } catch {
+            // Ignore cache errors
+        }
+    }
+
+    /**
+     * Get anonymous access token from Spotify
+     * Uses the client credentials flow with public embed credentials
      */
     private async getAnonymousToken(): Promise<string | null> {
         // Check if we have a valid token
@@ -70,7 +95,36 @@ class SpotifyService {
             return this.anonymousToken;
         }
 
-        // Try multiple endpoints
+        // Try the embed token endpoint first (more reliable)
+        try {
+            console.log("Spotify: Fetching embed token...");
+            
+            // Fetch an embed page to extract the token
+            const embedResponse = await axios.get(
+                "https://open.spotify.com/embed/playlist/37i9dQZF1DXcBWIGoYBM5M",
+                {
+                    headers: {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    },
+                    timeout: 10000,
+                }
+            );
+
+            // Extract access token from the embed page HTML
+            const html = embedResponse.data;
+            const tokenMatch = html.match(/"accessToken":"([^"]+)"/);
+            if (tokenMatch && tokenMatch[1]) {
+                this.anonymousToken = tokenMatch[1];
+                this.tokenExpiry = Date.now() + 3600 * 1000;
+                console.log("Spotify: Got embed token");
+                return this.anonymousToken;
+            }
+        } catch (error: any) {
+            console.log(`Spotify: Embed token failed (${error.response?.status || error.message})`);
+        }
+
+        // Fallback: Try the web player endpoints
         const endpoints = [
             {
                 url: "https://open.spotify.com/get_access_token",
@@ -84,7 +138,7 @@ class SpotifyService {
 
         for (const endpoint of endpoints) {
             try {
-                console.log(`Spotify: Fetching anonymous token from ${endpoint.url}...`);
+                console.log(`Spotify: Trying token from ${endpoint.url}...`);
                 
                 const response = await axios.get(endpoint.url, {
                     params: endpoint.params,
@@ -94,6 +148,7 @@ class SpotifyService {
                         "Accept-Language": "en-US,en;q=0.9",
                         "Origin": "https://open.spotify.com",
                         "Referer": "https://open.spotify.com/",
+                        "Cookie": "sp_t=; sp_landing=",
                     },
                     timeout: 10000,
                 });
@@ -101,10 +156,8 @@ class SpotifyService {
                 const token = response.data?.accessToken;
                 if (token) {
                     this.anonymousToken = token;
-                    // Anonymous tokens last about an hour
                     this.tokenExpiry = Date.now() + 3600 * 1000;
-                    
-                    console.log("Spotify: Got anonymous token");
+                    console.log("Spotify: Got web player token");
                     return token;
                 }
             } catch (error: any) {
@@ -112,7 +165,7 @@ class SpotifyService {
             }
         }
 
-        console.error("Spotify: All token endpoints failed - API browsing unavailable");
+        console.error("Spotify: All token methods failed - API browsing unavailable");
         return null;
     }
 
@@ -337,8 +390,16 @@ class SpotifyService {
     /**
      * Get featured/popular playlists from Spotify
      * Uses multiple fallback approaches
+     * Cached for 24 hours
      */
     async getFeaturedPlaylists(limit: number = 20): Promise<SpotifyPlaylistPreview[]> {
+        const cacheKey = `playlists:featured:${limit}`;
+        const cached = await this.getCached(cacheKey);
+        if (cached) {
+            console.log("Spotify: Returning cached featured playlists");
+            return JSON.parse(cached);
+        }
+
         const token = await this.getAnonymousToken();
         if (!token) {
             console.error("Spotify: Cannot fetch featured playlists without token");
@@ -367,7 +428,7 @@ class SpotifyService {
             const playlists = response.data?.playlists?.items || [];
             if (playlists.length > 0) {
                 console.log(`Spotify: Got ${playlists.length} featured playlists via official API`);
-                return playlists.map((playlist: any) => ({
+                const result = playlists.map((playlist: any) => ({
                     id: playlist.id,
                     name: playlist.name,
                     description: playlist.description || null,
@@ -375,33 +436,44 @@ class SpotifyService {
                     imageUrl: playlist.images?.[0]?.url || null,
                     trackCount: playlist.tracks?.total || 0,
                 }));
+                await this.setCache(cacheKey, JSON.stringify(result));
+                return result;
             }
         } catch (error: any) {
             console.log("Spotify: Featured playlists API failed, trying search fallback...", error.response?.status || error.message);
         }
 
-        // Fallback: Search for popular playlists
+        // Fallback: Search for popular playlists by genre/mood
         try {
             console.log("Spotify: Trying search fallback for featured playlists...");
             
-            // Search for popular/curated playlists
-            const searches = ["Today's Top Hits", "Hot Hits", "Viral Hits", "All Out", "Rock Classics", "Chill Hits"];
+            // Search for popular playlist categories
+            const searches = [
+                "top hits", "pop hits", "hip hop", "rock classics", 
+                "chill vibes", "workout", "party", "indie", 
+                "r&b", "electronic", "country", "latin"
+            ];
             const allPlaylists: SpotifyPlaylistPreview[] = [];
+            const seenIds = new Set<string>();
             
-            for (const query of searches.slice(0, 3)) {
-                const results = await this.searchPlaylists(query, 5);
-                // Filter to only include Spotify-owned playlists
-                const spotifyOwned = results.filter(p => 
-                    p.owner.toLowerCase() === "spotify" || 
-                    p.owner.toLowerCase().includes("spotify")
-                );
-                allPlaylists.push(...spotifyOwned);
-                
+            for (const query of searches) {
                 if (allPlaylists.length >= limit) break;
+                
+                const results = await this.searchPlaylists(query, 10);
+                for (const p of results) {
+                    if (!seenIds.has(p.id) && allPlaylists.length < limit) {
+                        seenIds.add(p.id);
+                        allPlaylists.push(p);
+                    }
+                }
             }
             
             console.log(`Spotify: Got ${allPlaylists.length} playlists via search fallback`);
-            return allPlaylists.slice(0, limit);
+            const result = allPlaylists.slice(0, limit);
+            if (result.length > 0) {
+                await this.setCache(cacheKey, JSON.stringify(result));
+            }
+            return result;
         } catch (searchError: any) {
             console.error("Spotify: Search fallback also failed:", searchError.message);
             return [];
@@ -537,14 +609,23 @@ class SpotifyService {
 
     /**
      * Get available browse categories
+     * Cached for 24 hours
      */
-    async getCategories(limit: number = 20): Promise<Array<{ id: string; name: string; imageUrl: string | null }>> {
+    async getCategories(limit: number = 50): Promise<Array<{ id: string; name: string; imageUrl: string | null }>> {
+        const cacheKey = `categories:${limit}`;
+        const cached = await this.getCached(cacheKey);
+        if (cached) {
+            console.log("Spotify: Returning cached categories");
+            return JSON.parse(cached);
+        }
+
         const token = await this.getAnonymousToken();
         if (!token) {
             return [];
         }
 
         try {
+            console.log("Spotify: Fetching categories from API...");
             const response = await axios.get(
                 "https://api.spotify.com/v1/browse/categories",
                 {
@@ -560,15 +641,98 @@ class SpotifyService {
                 }
             );
 
-            return (response.data?.categories?.items || []).map((cat: any) => ({
+            const result = (response.data?.categories?.items || []).map((cat: any) => ({
                 id: cat.id,
                 name: cat.name,
                 imageUrl: cat.icons?.[0]?.url || null,
             }));
+            console.log(`Spotify: Got ${result.length} categories, caching...`);
+            await this.setCache(cacheKey, JSON.stringify(result));
+            return result;
         } catch (error: any) {
             console.error("Spotify categories error:", error.message);
             return [];
         }
+    }
+
+    /**
+     * Get playlists for a specific category
+     * Cached for 24 hours
+     */
+    async getCategoryPlaylists(categoryId: string, limit: number = 50): Promise<SpotifyPlaylistPreview[]> {
+        const cacheKey = `category:${categoryId}:playlists:${limit}`;
+        const cached = await this.getCached(cacheKey);
+        if (cached) {
+            console.log(`Spotify: Returning cached playlists for category ${categoryId}`);
+            return JSON.parse(cached);
+        }
+
+        const token = await this.getAnonymousToken();
+        if (!token) {
+            return [];
+        }
+
+        try {
+            console.log(`Spotify: Fetching playlists for category ${categoryId}...`);
+
+            const response = await axios.get(
+                `https://api.spotify.com/v1/browse/categories/${categoryId}/playlists`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    },
+                    params: {
+                        limit,
+                        country: "US",
+                    },
+                    timeout: 10000,
+                }
+            );
+
+            const playlists = response.data?.playlists?.items || [];
+            const result = playlists
+                .filter((p: any) => p && p.id)
+                .map((playlist: any) => ({
+                    id: playlist.id,
+                    name: playlist.name,
+                    description: playlist.description || null,
+                    owner: playlist.owner?.display_name || "Spotify",
+                    imageUrl: playlist.images?.[0]?.url || null,
+                    trackCount: playlist.tracks?.total || 0,
+                }));
+
+            console.log(`Spotify: Got ${result.length} playlists for category ${categoryId}, caching...`);
+            await this.setCache(cacheKey, JSON.stringify(result));
+            return result;
+        } catch (error: any) {
+            console.log(`Spotify: Category API failed for ${categoryId}, trying search fallback...`);
+            // Fallback: We don't have category name here, so return empty
+            // The frontend should use searchPlaylists instead
+            return [];
+        }
+    }
+
+    /**
+     * Get playlists for a category by searching for the category name
+     * More reliable than the category API which often 404s
+     */
+    async getCategoryPlaylistsByName(categoryName: string, limit: number = 50): Promise<SpotifyPlaylistPreview[]> {
+        const cacheKey = `category-name:${categoryName.toLowerCase()}:playlists:${limit}`;
+        const cached = await this.getCached(cacheKey);
+        if (cached) {
+            console.log(`Spotify: Returning cached playlists for category name "${categoryName}"`);
+            return JSON.parse(cached);
+        }
+
+        console.log(`Spotify: Searching playlists for category "${categoryName}"...`);
+        const results = await this.searchPlaylists(categoryName, limit);
+        
+        if (results.length > 0) {
+            await this.setCache(cacheKey, JSON.stringify(results));
+        }
+        
+        return results;
     }
 }
 

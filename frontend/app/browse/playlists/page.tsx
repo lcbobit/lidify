@@ -25,12 +25,28 @@ interface Genre {
     imageUrl: string | null;
 }
 
+interface Category {
+    id: string;
+    name: string;
+    imageUrl: string | null;
+}
+
 // Deezer icon component
 const DeezerIcon = ({ className }: { className?: string }) => (
     <svg viewBox="0 0 24 24" className={className} fill="currentColor">
         <path d="M18.81 4.16v3.03H24V4.16h-5.19zM6.27 8.38v3.027h5.189V8.38h-5.19zm12.54 0v3.027H24V8.38h-5.19zM6.27 12.595v3.027h5.189v-3.027h-5.19zm6.27 0v3.027h5.19v-3.027h-5.19zm6.27 0v3.027H24v-3.027h-5.19zM0 16.81v3.029h5.19v-3.03H0zm6.27 0v3.029h5.189v-3.03h-5.19zm6.27 0v3.029h5.19v-3.03h-5.19zm6.27 0v3.029H24v-3.03h-5.19z" />
     </svg>
 );
+
+// Spotify icon component
+const SpotifyIcon = ({ className }: { className?: string }) => (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor">
+        <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z" />
+    </svg>
+);
+
+// Source type
+type BrowseSource = "deezer" | "spotify";
 
 // Tab type (radios removed - now personal library content at /radio)
 type BrowseTab = "playlists" | "genres";
@@ -49,6 +65,7 @@ export default function BrowsePlaylistsPage() {
     const { toast } = useToast();
 
     // UI State
+    const [activeSource, setActiveSource] = useState<BrowseSource>("deezer");
     const [activeTab, setActiveTab] = useState<BrowseTab>("playlists");
     const [searchQuery, setSearchQuery] = useState("");
     const [isLoading, setIsLoading] = useState(true);
@@ -59,14 +76,33 @@ export default function BrowsePlaylistsPage() {
     const [isParsing, setIsParsing] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
 
-    // Data State
-    const [playlists, setPlaylists] = useState<PlaylistPreview[]>([]);
-    const [genres, setGenres] = useState<Genre[]>([]);
+    // Deezer Data State
+    const [deezerPlaylists, setDeezerPlaylists] = useState<PlaylistPreview[]>([]);
+    const [deezerGenres, setDeezerGenres] = useState<Genre[]>([]);
+    const [deezerLoaded, setDeezerLoaded] = useState(false);
+
+    // Spotify Data State
+    const [spotifyPlaylists, setSpotifyPlaylists] = useState<PlaylistPreview[]>([]);
+    const [spotifyCategories, setSpotifyCategories] = useState<Category[]>([]);
+    const [spotifyLoaded, setSpotifyLoaded] = useState(false);
+
+    // Search results (combined from both sources)
+    const [searchResults, setSearchResults] = useState<PlaylistPreview[]>([]);
+
+    // Selected genre/category playlists
     const [selectedGenre, setSelectedGenre] = useState<Genre | null>(null);
+    const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
     const [genrePlaylists, setGenrePlaylists] = useState<PlaylistPreview[]>([]);
 
-    // Fetch all browse content on mount
-    const fetchAllContent = useCallback(async () => {
+    // Get current playlists based on active source
+    const playlists = activeSource === "deezer" ? deezerPlaylists : spotifyPlaylists;
+    const genres = deezerGenres;
+    const categories = spotifyCategories;
+
+    // Fetch Deezer content
+    const fetchDeezerContent = useCallback(async () => {
+        if (deezerLoaded) return;
+        
         setIsLoading(true);
         setLoadError(null);
         try {
@@ -75,23 +111,68 @@ export default function BrowsePlaylistsPage() {
                 genres: Genre[];
             }>("/browse/all");
 
-            setPlaylists(response.playlists);
-            setGenres(response.genres);
+            setDeezerPlaylists(response.playlists);
+            setDeezerGenres(response.genres);
+            setDeezerLoaded(true);
         } catch (error) {
-            console.error("Failed to fetch browse content:", error);
+            console.error("Failed to fetch Deezer content:", error);
             setLoadError(
-                "Couldn't load playlists. Check your connection and try again."
+                "Couldn't load Deezer playlists. Check your connection and try again."
             );
         } finally {
             setIsLoading(false);
         }
-    }, []);
+    }, [deezerLoaded]);
 
+    // Fetch Spotify content
+    const fetchSpotifyContent = useCallback(async () => {
+        if (spotifyLoaded) return;
+        
+        setIsLoading(true);
+        setLoadError(null);
+        try {
+            const response = await api.get<{
+                playlists: PlaylistPreview[];
+                categories: Category[];
+            }>("/browse/spotify/all");
+
+            setSpotifyPlaylists(response.playlists);
+            setSpotifyCategories(response.categories);
+            setSpotifyLoaded(true);
+        } catch (error) {
+            console.error("Failed to fetch Spotify content:", error);
+            setLoadError(
+                "Couldn't load Spotify playlists. Check your connection and try again."
+            );
+        } finally {
+            setIsLoading(false);
+        }
+    }, [spotifyLoaded]);
+
+    // Load Deezer on mount (default source)
     useEffect(() => {
-        fetchAllContent();
-    }, [fetchAllContent]);
+        fetchDeezerContent();
+    }, [fetchDeezerContent]);
 
-    // Search playlists
+    // Load Spotify when switching to it
+    useEffect(() => {
+        if (activeSource === "spotify" && !spotifyLoaded) {
+            fetchSpotifyContent();
+        }
+    }, [activeSource, spotifyLoaded, fetchSpotifyContent]);
+
+    // Handle source change
+    const handleSourceChange = (source: BrowseSource) => {
+        setActiveSource(source);
+        setActiveTab("playlists");
+        setSelectedGenre(null);
+        setSelectedCategory(null);
+        setGenrePlaylists([]);
+        setHasSearched(false);
+        setSearchQuery("");
+    };
+
+    // Search playlists (combined search from both sources)
     const handleSearch = async (e?: React.FormEvent) => {
         e?.preventDefault();
         if (!searchQuery.trim() || searchQuery.length < 2) {
@@ -103,17 +184,19 @@ export default function BrowsePlaylistsPage() {
 
         setIsSearching(true);
         setHasSearched(true);
-        setActiveTab("playlists"); // Switch to playlists for search results
+        setActiveTab("playlists");
+        setSelectedGenre(null);
+        setSelectedCategory(null);
 
         try {
+            // Use combined search endpoint (both Deezer and Spotify)
             const response = await api.get<{
                 playlists: PlaylistPreview[];
+                sources: { deezer: number; spotify: number };
             }>(
-                `/browse/playlists/search?q=${encodeURIComponent(
-                    searchQuery
-                )}&limit=100`
+                `/browse/search?q=${encodeURIComponent(searchQuery)}&limit=50`
             );
-            setPlaylists(response.playlists);
+            setSearchResults(response.playlists);
         } catch (error) {
             console.error("Search failed:", error);
             toast.error("Failed to search playlists");
@@ -126,7 +209,7 @@ export default function BrowsePlaylistsPage() {
     const clearSearch = () => {
         setSearchQuery("");
         setHasSearched(false);
-        fetchAllContent();
+        setSearchResults([]);
     };
 
     // Parse URL and redirect to import
@@ -157,12 +240,18 @@ export default function BrowsePlaylistsPage() {
 
     // Handle playlist click - navigate to detail page
     const handleItemClick = (item: PlaylistPreview) => {
-        router.push(`/browse/playlists/${item.id}`);
+        // For Spotify playlists, use the spotify source in the URL
+        if (item.source === "spotify") {
+            router.push(`/browse/playlists/${item.id}?source=spotify`);
+        } else {
+            router.push(`/browse/playlists/${item.id}`);
+        }
     };
 
-    // Handle genre click
+    // Handle Deezer genre click
     const handleGenreClick = async (genre: Genre) => {
         setSelectedGenre(genre);
+        setSelectedCategory(null);
         setIsLoading(true);
 
         try {
@@ -178,9 +267,30 @@ export default function BrowsePlaylistsPage() {
         }
     };
 
-    // Back from genre view
+    // Handle Spotify category click
+    const handleCategoryClick = async (category: Category) => {
+        setSelectedCategory(category);
+        setSelectedGenre(null);
+        setIsLoading(true);
+
+        try {
+            // Pass category name for fallback search if API fails
+            const response = await api.get<{
+                playlists: PlaylistPreview[];
+            }>(`/browse/spotify/categories/${category.id}/playlists?limit=50&name=${encodeURIComponent(category.name)}`);
+            setGenrePlaylists(response.playlists);
+        } catch (error) {
+            console.error("Failed to fetch category playlists:", error);
+            toast.error("Failed to load category playlists");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // Back from genre/category view
     const handleBackFromGenre = () => {
         setSelectedGenre(null);
+        setSelectedCategory(null);
         setGenrePlaylists([]);
     };
 
@@ -188,7 +298,8 @@ export default function BrowsePlaylistsPage() {
     const renderCard = (
         item: PlaylistPreview,
         index: number,
-        context?: string
+        context?: string,
+        showSourceBadge?: boolean
     ) => (
         <div
             key={`${item.source}-${item.type}-${item.id}-${
@@ -207,6 +318,21 @@ export default function BrowsePlaylistsPage() {
                 ) : (
                     <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-[#AD47FF]/30 to-[#AD47FF]/10">
                         <Music2 className="w-12 h-12 text-gray-600" />
+                    </div>
+                )}
+                {/* Source badge for search results */}
+                {showSourceBadge && (
+                    <div className={`absolute top-2 left-2 px-2 py-1 rounded-full text-[10px] font-semibold flex items-center gap-1 ${
+                        item.source === "spotify" 
+                            ? "bg-[#1DB954]/90 text-white" 
+                            : "bg-[#AD47FF]/90 text-white"
+                    }`}>
+                        {item.source === "spotify" ? (
+                            <SpotifyIcon className="w-3 h-3" />
+                        ) : (
+                            <DeezerIcon className="w-3 h-3" />
+                        )}
+                        <span className="uppercase">{item.source}</span>
                     </div>
                 )}
                 {/* Import button on hover */}
@@ -231,7 +357,7 @@ export default function BrowsePlaylistsPage() {
         </div>
     );
 
-    // Render genre card
+    // Render genre card (Deezer)
     const renderGenreCard = (genre: Genre) => (
         <div
             key={genre.id}
@@ -254,16 +380,47 @@ export default function BrowsePlaylistsPage() {
         </div>
     );
 
+    // Render category card (Spotify)
+    const renderCategoryCard = (category: Category) => (
+        <div
+            key={category.id}
+            onClick={() => handleCategoryClick(category)}
+            className="group cursor-pointer relative aspect-square rounded-lg overflow-hidden"
+        >
+            {category.imageUrl ? (
+                <img
+                    src={category.imageUrl}
+                    alt={category.name}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                />
+            ) : (
+                <div className="w-full h-full bg-gradient-to-br from-[#1DB954] to-[#191414]" />
+            )}
+            <div className="absolute inset-0 bg-black/40 group-hover:bg-black/30 transition-colors" />
+            <div className="absolute bottom-3 left-3 right-3">
+                <h3 className="text-lg font-bold text-white">{category.name}</h3>
+            </div>
+        </div>
+    );
+
     return (
         <div className="min-h-screen relative">
-            {/* Gradient - Same as home page (yellow → purple) */}
+            {/* Gradient - changes based on source */}
             <div className="absolute inset-0 pointer-events-none">
                 <div
-                    className="absolute inset-0 bg-gradient-to-b from-[#ecb200]/15 via-purple-900/10 to-transparent"
+                    className={`absolute inset-0 bg-gradient-to-b ${
+                        activeSource === "spotify" 
+                            ? "from-[#1DB954]/15 via-[#191414]/10" 
+                            : "from-[#ecb200]/15 via-purple-900/10"
+                    } to-transparent`}
                     style={{ height: "35vh" }}
                 />
                 <div
-                    className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,var(--tw-gradient-stops))] from-[#ecb200]/8 via-transparent to-transparent"
+                    className={`absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,var(--tw-gradient-stops))] ${
+                        activeSource === "spotify"
+                            ? "from-[#1DB954]/8"
+                            : "from-[#ecb200]/8"
+                    } via-transparent to-transparent`}
                     style={{ height: "25vh" }}
                 />
             </div>
@@ -272,7 +429,11 @@ export default function BrowsePlaylistsPage() {
                 {/* Header */}
                 <div className="mb-6">
                     <div className="flex items-center gap-3 mb-1">
-                        <DeezerIcon className="w-8 h-8 text-[#AD47FF]" />
+                        {activeSource === "spotify" ? (
+                            <SpotifyIcon className="w-8 h-8 text-[#1DB954]" />
+                        ) : (
+                            <DeezerIcon className="w-8 h-8 text-[#AD47FF]" />
+                        )}
                         <h1 className="text-3xl font-bold text-white">
                             Browse
                         </h1>
@@ -281,8 +442,34 @@ export default function BrowsePlaylistsPage() {
                         </span>
                     </div>
                     <p className="text-sm text-gray-400">
-                        Discover and import playlists from Deezer
+                        Discover and import playlists from {activeSource === "spotify" ? "Spotify" : "Deezer"}
                     </p>
+                </div>
+
+                {/* Source Toggle */}
+                <div className="flex items-center gap-2 mb-6">
+                    <button
+                        onClick={() => handleSourceChange("deezer")}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                            activeSource === "deezer"
+                                ? "bg-[#AD47FF] text-white"
+                                : "bg-white/10 text-gray-400 hover:text-white hover:bg-white/20"
+                        }`}
+                    >
+                        <DeezerIcon className="w-4 h-4" />
+                        Deezer
+                    </button>
+                    <button
+                        onClick={() => handleSourceChange("spotify")}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                            activeSource === "spotify"
+                                ? "bg-[#1DB954] text-white"
+                                : "bg-white/10 text-gray-400 hover:text-white hover:bg-white/20"
+                        }`}
+                    >
+                        <SpotifyIcon className="w-4 h-4" />
+                        Spotify
+                    </button>
                 </div>
 
                 {/* Beta Notice */}
@@ -330,7 +517,7 @@ export default function BrowsePlaylistsPage() {
                 </div>
 
                 {/* Tabs */}
-                {!selectedGenre && !hasSearched && (
+                {!selectedGenre && !selectedCategory && !hasSearched && (
                     <div className="flex items-center gap-2 mb-6">
                         <button
                             onClick={() => setActiveTab("playlists")}
@@ -346,27 +533,27 @@ export default function BrowsePlaylistsPage() {
                             onClick={() => setActiveTab("genres")}
                             className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
                                 activeTab === "genres"
-                                    ? "bg-[#ecb200] text-black"
+                                    ? activeSource === "spotify" ? "bg-[#1DB954] text-white" : "bg-[#AD47FF] text-white"
                                     : "bg-white/10 text-white hover:bg-white/20"
                             }`}
                         >
-                            Genres
+                            {activeSource === "spotify" ? "Categories" : "Genres"}
                         </button>
                     </div>
                 )}
 
-                {/* Genre Breadcrumb */}
-                {selectedGenre && (
+                {/* Genre/Category Breadcrumb */}
+                {(selectedGenre || selectedCategory) && (
                     <div className="flex items-center gap-2 mb-6">
                         <button
                             onClick={handleBackFromGenre}
                             className="text-sm text-gray-400 hover:text-white transition-colors"
                         >
-                            Genres
+                            {activeSource === "spotify" ? "Categories" : "Genres"}
                         </button>
                         <ChevronRight className="w-4 h-4 text-gray-600" />
                         <span className="text-sm text-white font-medium">
-                            {selectedGenre.name}
+                            {selectedGenre?.name || selectedCategory?.name}
                         </span>
                     </div>
                 )}
@@ -396,7 +583,7 @@ export default function BrowsePlaylistsPage() {
                             {loadError}
                         </p>
                         <button
-                            onClick={fetchAllContent}
+                            onClick={() => activeSource === "deezer" ? fetchDeezerContent() : fetchSpotifyContent()}
                             className="px-6 py-2.5 rounded-full bg-white text-black text-sm font-medium hover:scale-105 transition-transform"
                         >
                             Try again
@@ -404,13 +591,13 @@ export default function BrowsePlaylistsPage() {
                     </div>
                 )}
 
-                {/* Search Results */}
+                {/* Search Results (combined from both sources) */}
                 {!isLoading && !isSearching && hasSearched && (
                     <>
                         <h2 className="text-xl font-bold text-white mb-4">
                             Results for &ldquo;{searchQuery}&rdquo;
                         </h2>
-                        {playlists.length === 0 ? (
+                        {searchResults.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-20 text-center">
                                 <h3 className="text-lg font-medium text-white mb-2">
                                     No playlists found
@@ -428,23 +615,23 @@ export default function BrowsePlaylistsPage() {
                             </div>
                         ) : (
                             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-6">
-                                {playlists.map((item, idx) =>
-                                    renderCard(item, idx, "search")
+                                {searchResults.map((item, idx) =>
+                                    renderCard(item, idx, "search", true)
                                 )}
                             </div>
                         )}
                     </>
                 )}
 
-                {/* Genre Playlists View */}
-                {!isLoading && selectedGenre && (
+                {/* Genre/Category Playlists View */}
+                {!isLoading && (selectedGenre || selectedCategory) && (
                     <>
                         <h2 className="text-xl font-bold text-white mb-4">
-                            {selectedGenre.name} Playlists
+                            {selectedGenre?.name || selectedCategory?.name} Playlists
                         </h2>
                         {genrePlaylists.length === 0 ? (
                             <p className="text-gray-400">
-                                No playlists found for this genre
+                                No playlists found for this {activeSource === "spotify" ? "category" : "genre"}
                             </p>
                         ) : (
                             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-6">
@@ -456,17 +643,18 @@ export default function BrowsePlaylistsPage() {
                     </>
                 )}
 
-                {/* Main Content (no search, no genre selected) */}
+                {/* Main Content (no search, no genre/category selected) */}
                 {!isLoading &&
                     !isSearching &&
                     !hasSearched &&
-                    !selectedGenre && (
+                    !selectedGenre &&
+                    !selectedCategory && (
                         <>
                             {/* Playlists Tab */}
                             {activeTab === "playlists" && (
                                 <>
                                     <h2 className="text-xl font-bold text-white mb-4">
-                                        Featured Playlists
+                                        {activeSource === "spotify" ? "Featured Playlists" : "Featured Playlists"}
                                     </h2>
                                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-6">
                                         {playlists.map((item, idx) =>
@@ -482,18 +670,20 @@ export default function BrowsePlaylistsPage() {
                                 </>
                             )}
 
-                            {/* Genres Tab */}
+                            {/* Genres/Categories Tab */}
                             {activeTab === "genres" && (
                                 <>
                                     <h2 className="text-xl font-bold text-white mb-4">
-                                        Browse by Genre
+                                        Browse by {activeSource === "spotify" ? "Category" : "Genre"}
                                     </h2>
                                     <p className="text-sm text-gray-400 mb-6">
-                                        Explore playlists organized by musical
-                                        genre
+                                        Explore playlists organized by {activeSource === "spotify" ? "category" : "musical genre"}
                                     </p>
                                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                                        {genres.map(renderGenreCard)}
+                                        {activeSource === "spotify" 
+                                            ? categories.map(renderCategoryCard)
+                                            : genres.map(renderGenreCard)
+                                        }
                                     </div>
                                 </>
                             )}

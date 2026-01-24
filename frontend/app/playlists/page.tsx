@@ -9,7 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/hooks/useQueries";
 import { useAuth } from "@/lib/auth-context";
 import { useAudio } from "@/lib/audio-context";
-import { Play, Music, Eye, EyeOff } from "lucide-react";
+import { Play, Music } from "lucide-react";
 import { GradientSpinner } from "@/components/ui/GradientSpinner";
 import { api } from "@/lib/api";
 import { cn, isLocalUrl } from "@/utils/cn";
@@ -168,33 +168,7 @@ function PlaylistCard({
                         greyed={isHiddenView}
                     />
 
-                    {/* Hide/Unhide button for shared playlists */}
-                    {isShared && (
-                        <button
-                            onClick={handleToggleHide}
-                            disabled={isHiding}
-                            className={cn(
-                                "absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center",
-                                "bg-black/60  transition-all duration-200",
-                                "opacity-0 group-hover:opacity-100",
-                                playlist.isHidden
-                                    ? "text-green-400"
-                                    : "text-gray-400",
-                                isHiding && "opacity-50 cursor-not-allowed"
-                            )}
-                            title={
-                                playlist.isHidden
-                                    ? "Show playlist"
-                                    : "Hide playlist"
-                            }
-                        >
-                            {playlist.isHidden ? (
-                                <Eye className="w-3.5 h-3.5" />
-                            ) : (
-                                <EyeOff className="w-3.5 h-3.5" />
-                            )}
-                        </button>
-                    )}
+{/* Hide/Unhide button disabled - feature removed */}
 
                     {/* Play button overlay */}
                     <button
@@ -371,22 +345,7 @@ export default function PlaylistsPage() {
                             Browse Playlists
                         </Link>
 
-                        {/* Hidden Playlists Toggle */}
-                        {hiddenPlaylists.length > 0 && (
-                            <button
-                                onClick={() => setShowHiddenTab(!showHiddenTab)}
-                                className={cn(
-                                    "px-4 py-2 rounded-full text-sm font-medium transition-all",
-                                    showHiddenTab
-                                        ? "bg-white/10 text-white"
-                                        : "bg-transparent text-gray-400 hover:text-white hover:bg-white/5"
-                                )}
-                            >
-                                {showHiddenTab
-                                    ? "Show All"
-                                    : `Hidden (${hiddenPlaylists.length})`}
-                            </button>
-                        )}
+{/* Hidden Playlists Toggle - feature disabled */}
                     </div>
                 </div>
             </div>
