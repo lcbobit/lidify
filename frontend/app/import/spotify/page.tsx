@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, Suspense } from "react";
+import { useState, useEffect, useRef, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import {
@@ -120,6 +120,15 @@ function SpotifyImportPageContent() {
         "matched" | "download" | "notfound" | null
     >("matched");
 
+    const selectedTrackCount = useMemo(() => {
+        if (!preview) return 0;
+        return preview.albumsToDownload.reduce((sum, album) => {
+            const albumKey = album.albumMbid || album.spotifyAlbumId;
+            if (!albumKey || !selectedAlbums.has(albumKey)) return sum;
+            return sum + album.tracksNeeded.length;
+        }, 0);
+    }, [preview, selectedAlbums]);
+
     // Auto-fetch preview if URL is provided in query params
     useEffect(() => {
         const urlParam = searchParams.get("url");
@@ -132,9 +141,8 @@ function SpotifyImportPageContent() {
                 try {
                     const result = await api.post<ImportPreview>(
                         "/spotify/preview",
-                        {
-                            url: urlParam,
-                        }
+                        { url: urlParam },
+                        { timeout: 180000 } // 3 min timeout for large playlists
                     );
                     setPreview(result);
                     setPlaylistName(result.playlist.name);
@@ -217,9 +225,11 @@ function SpotifyImportPageContent() {
 
         setIsLoading(true);
         try {
-            const result = await api.post<ImportPreview>("/spotify/preview", {
-                url,
-            });
+            const result = await api.post<ImportPreview>(
+                "/spotify/preview",
+                { url },
+                { timeout: 180000 } // 3 min timeout for large playlists
+            );
             setPreview(result);
             setPlaylistName(result.playlist.name);
 
@@ -507,11 +517,7 @@ function SpotifyImportPageContent() {
                             </div>
                             <div className="text-center py-3 bg-[#1DB954]/10 rounded-lg">
                                 <div className="text-xl font-bold text-[#1DB954]">
-                                    {
-                                        preview.albumsToDownload.filter(
-                                            (a) => a.albumMbid
-                                        ).length
-                                    }
+                                    {preview.summary.downloadable}
                                 </div>
                                 <div className="text-xs text-gray-500">
                                     To Download
@@ -608,9 +614,8 @@ function SpotifyImportPageContent() {
                             </div>
                         )}
 
-                        {/* Albums to download */}
-                        {preview.albumsToDownload.filter((a) => a.albumMbid)
-                            .length > 0 && (
+                        {/* Songs to download via Soulseek */}
+                        {preview.summary.downloadable > 0 && (
                             <div className="bg-white/5 rounded-lg overflow-hidden">
                                 <button
                                     onClick={() =>
@@ -625,15 +630,8 @@ function SpotifyImportPageContent() {
                                     <div className="flex items-center gap-2">
                                         <Download className="w-4 h-4 text-[#1DB954]" />
                                         <span className="text-sm font-medium text-white">
-                                            {
-                                                preview.albumsToDownload.filter(
-                                                    (a) =>
-                                                        a.albumMbid ||
-                                                        a.albumName ===
-                                                            "Unknown Album"
-                                                ).length
-                                            }{" "}
-                                            albums to download
+                                            {preview.summary.downloadable} songs
+                                            to download
                                         </span>
                                     </div>
                                     {expandedSection === "download" ? (
@@ -655,7 +653,8 @@ function SpotifyImportPageContent() {
                                                     : "Select All"}
                                             </button>
                                             <span className="text-xs text-gray-500">
-                                                {selectedAlbums.size} selected
+                                                {selectedTrackCount} songs
+                                                selected
                                             </span>
                                         </div>
                                         <div className="max-h-48 overflow-y-auto">
@@ -824,13 +823,13 @@ function SpotifyImportPageContent() {
                                     </>
                                 ) : preview.summary.inLibrary > 0 &&
                                   selectedAlbums.size > 0 ? (
-                                    `Import ${preview.summary.inLibrary} songs + Download ${selectedAlbums.size} albums`
+                                    `Import ${preview.summary.inLibrary} songs + Download ${selectedTrackCount} songs`
                                 ) : preview.summary.inLibrary > 0 ? (
                                     `Import ${preview.summary.inLibrary} songs`
                                 ) : selectedAlbums.size > 0 ? (
-                                    `Download ${selectedAlbums.size} albums`
+                                    `Download ${selectedTrackCount} songs`
                                 ) : (
-                                    "Select albums to download"
+                                    "Select songs to download"
                                 )}
                             </button>
                         </div>
@@ -843,7 +842,7 @@ function SpotifyImportPageContent() {
                         <Loader2 className="w-10 h-10 text-[#1DB954] animate-spin mx-auto mb-4" />
                         <h2 className="text-lg font-bold text-white mb-1">
                             {importJob.status === "downloading"
-                                ? "Queueing Album Downloads"
+                                ? "Queueing Song Downloads"
                                 : importJob.status === "scanning"
                                 ? "Scanning Library"
                                 : importJob.status === "creating_playlist" ||
@@ -857,7 +856,7 @@ function SpotifyImportPageContent() {
                             {importJob.status === "downloading" && (
                                 <>
                                     Queued {importJob.albumsCompleted} of{" "}
-                                    {importJob.albumsTotal} albums
+                                    {importJob.albumsTotal} songs
                                 </>
                             )}
                             {importJob.status === "pending" && (

@@ -56,14 +56,7 @@ const ArtistCard = memo(
                     data-tv-card-index={index}
                     tabIndex={0}
                 >
-                    <div className="p-3 rounded-md group/card cursor-pointer hover:bg-white/5 transition-colors relative" title={artist.reason || undefined}>
-                        {/* Reason tooltip on hover - shown below card */}
-                        {artist.reason && (
-                            <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 px-3 py-2 bg-gray-900 border border-white/10 rounded-lg shadow-xl opacity-0 group-hover/card:opacity-100 transition-opacity duration-200 pointer-events-none z-50 w-[200px]">
-                                <div className="absolute left-1/2 -translate-x-1/2 bottom-full w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-b-[6px] border-b-gray-900" />
-                                <p className="text-xs text-gray-200 text-center leading-relaxed">{artist.reason}</p>
-                            </div>
-                        )}
+                    <div className="p-3 rounded-md group/card cursor-pointer hover:bg-white/5 transition-colors relative">
                         <div className="aspect-square bg-[#282828] rounded-full mb-2 flex items-center justify-center overflow-hidden relative shadow-lg">
                             {artist.coverArt && imageSrc ? (
                                 <Image
@@ -90,7 +83,14 @@ const ArtistCard = memo(
                         <h3 className="text-sm font-semibold text-white truncate text-center">
                             {artist.name}
                         </h3>
-                        <p className="text-xs text-gray-400 mt-0.5 text-center">{tier ? "" : "Artist"}</p>
+                        {/* Show AI reason always, or fallback to "Artist" label */}
+                        {artist.reason ? (
+                            <p className="text-[11px] text-gray-400 mt-1 text-center leading-snug">
+                                {artist.reason}
+                            </p>
+                        ) : (
+                            <p className="text-xs text-gray-400 mt-0.5 text-center">Artist</p>
+                        )}
                     </div>
                 </Link>
             </CarouselItem>

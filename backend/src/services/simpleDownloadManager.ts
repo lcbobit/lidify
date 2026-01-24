@@ -1212,7 +1212,7 @@ class SimpleDownloadManager {
                 ? new Date(metadata.startedAt)
                 : job.createdAt;
 
-            // Skip Soulseek jobs - they complete immediately with direct slsk-client
+            // Skip Soulseek jobs - they complete immediately with direct soulseek-ts
             // Old SLSKD jobs used source: "slskd", new direct jobs use source: "soulseek_direct"
             if (metadata?.source === "slskd" || metadata?.source === "soulseek_direct") {
                 console.log(`   ${job.subject}: Soulseek download, skipping stale check`);

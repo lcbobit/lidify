@@ -20,7 +20,7 @@ const defaultSystemSettings: SystemSettings = {
     spotifyClientId: "",
     spotifyClientSecret: "",
     musicPath: "/music",
-    downloadPath: "/downloads",
+    downloadPath: "/soulseek-downloads",
     transcodeCacheMaxGb: 10,
     maxCacheSizeMb: 10240,
     autoSync: true,

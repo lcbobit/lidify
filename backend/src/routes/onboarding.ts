@@ -312,7 +312,7 @@ router.post("/audiobookshelf", requireAuth, async (req, res) => {
 
 /**
  * POST /onboarding/soulseek
- * Step 2c: Configure Soulseek integration (direct connection via slsk-client)
+ * Step 2c: Configure Soulseek integration (direct connection via soulseek-ts)
  */
 router.post("/soulseek", requireAuth, async (req, res) => {
     try {

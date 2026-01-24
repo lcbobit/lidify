@@ -36,7 +36,7 @@ export function StoragePathsSection({ settings, onUpdate }: StoragePathsSectionP
                 <SettingsInput
                     value={settings.downloadPath}
                     onChange={(v) => onUpdate({ downloadPath: v })}
-                    placeholder="/downloads"
+                    placeholder="/soulseek-downloads"
                     className="w-64"
                 />
             </SettingsRow>

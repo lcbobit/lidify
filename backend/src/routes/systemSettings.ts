@@ -115,7 +115,7 @@ const systemSettingsSchema = z.object({
     audiobookshelfUrl: z.string().optional(),
     audiobookshelfApiKey: z.string().nullable().optional(),
 
-    // Soulseek (direct connection via slsk-client)
+    // Soulseek (direct connection via soulseek-ts)
     soulseekUsername: z.string().nullable().optional(),
     soulseekPassword: z.string().nullable().optional(),
 
@@ -161,7 +161,7 @@ router.get("/", async (req, res) => {
                     audiobookshelfEnabled: false,
                     audiobookshelfUrl: "http://localhost:13378",
                     musicPath: "/music",
-                    downloadPath: "/downloads",
+                    downloadPath: "/soulseek-downloads",
                     autoSync: true,
                     autoEnrichMetadata: true,
                     maxConcurrentDownloads: 3,
@@ -601,7 +601,7 @@ router.post("/test-audiobookshelf", async (req, res) => {
     }
 });
 
-// Test Soulseek connection (direct via slsk-client)
+// Test Soulseek connection (direct via soulseek-ts)
 router.post("/test-soulseek", async (req, res) => {
     try {
         const { username, password } = req.body;
@@ -614,29 +614,11 @@ router.post("/test-soulseek", async (req, res) => {
 
         console.log(`[SOULSEEK-TEST] Testing connection as "${username}"...`);
 
-        // Import soulseek service
-        const { soulseekService } = await import("../services/soulseek");
-
-        // Temporarily set credentials for test
-        // The service will use the provided credentials
         try {
-            // Try to connect with the provided credentials
-            const slsk = require("slsk-client");
-
-            await new Promise<void>((resolve, reject) => {
-                slsk.connect(
-                    { user: username, pass: password },
-                    (err: Error | null, client: any) => {
-                        if (err) {
-                            console.log(`[SOULSEEK-TEST] Connection failed: ${err.message}`);
-                            return reject(err);
-                        }
-                        console.log(`[SOULSEEK-TEST] Connected successfully`);
-                        // We don't need to keep the connection open for the test
-                        resolve();
-                    }
-                );
-            });
+            const { SlskClient } = await import("soulseek-ts");
+            const client = new SlskClient();
+            await client.login(username, password);
+            client.destroy();
 
             res.json({
                 success: true,

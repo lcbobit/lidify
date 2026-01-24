@@ -141,37 +141,14 @@ export function ActivityPanel({
         );
     }
 
-    // Desktop: Side panel
+    // Desktop: Side panel - only render when open
+    if (!isOpen) return null;
+
     return (
         <div
-            className={cn(
-                "shrink-0 h-full bg-[#0d0d0d] rounded-tl-lg rounded-bl-lg border-l border-white/5 flex flex-col z-10 transition-all duration-300 ease-out overflow-hidden relative",
-                isOpen ? "w-[400px]" : "w-12"
-            )}
+            className="shrink-0 h-full w-[400px] bg-[#0d0d0d] rounded-tl-lg rounded-bl-lg border-l border-white/5 flex flex-col z-10 overflow-hidden relative"
         >
-            {/* Collapsed state overlay */}
-            {!isOpen && (
-                <div
-                    onClick={onToggle}
-                    className="absolute inset-0 flex items-center justify-center cursor-pointer hover:bg-[#141414] transition-colors"
-                    title="Open activity panel"
-                >
-                    <ChevronLeft className="w-5 h-5 text-white/40" />
-
-                    {/* Activity badge */}
-                    {hasActivity && (
-                        <span className="absolute top-4 right-3 w-2.5 h-2.5 rounded-full bg-[#ecb200]" />
-                    )}
-                </div>
-            )}
-
-            {/* Expanded content - only visible when open */}
-            <div
-                className={cn(
-                    "flex flex-col h-full transition-opacity duration-200",
-                    isOpen ? "opacity-100" : "opacity-0 pointer-events-none"
-                )}
-            >
+            <div className="flex flex-col h-full">
                 {/* Header */}
                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
                     <h2 className="text-base font-semibold text-white whitespace-nowrap">

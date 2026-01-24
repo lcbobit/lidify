@@ -1,7 +1,7 @@
 /**
  * Organization worker for Singles directory
  *
- * With direct slsk-client integration, downloads go straight to Singles/Artist/Album/
+ * With direct soulseek-ts integration, downloads go straight to Singles/Artist/Album/
  * This file now only handles:
  * 1. One-time migration of existing Soulseek/ files to Singles/ structure
  * 2. Legacy SLSKD job cleanup (if any remain from before migration)
@@ -173,7 +173,7 @@ async function migrateExistingSoulseekFiles(musicPath: string): Promise<void> {
 
 /**
  * Clean up any legacy SLSKD download jobs that are stuck in processing
- * This handles the transition from SLSKD to direct slsk-client
+ * This handles the transition from SLSKD to direct soulseek-ts
  */
 async function cleanupLegacySlskdJobs(): Promise<void> {
     try {
@@ -210,7 +210,7 @@ async function cleanupLegacySlskdJobs(): Promise<void> {
 
 /**
  * Main organization function
- * With direct slsk-client, this mainly handles migration and cleanup
+ * With direct soulseek-ts, this mainly handles migration and cleanup
  */
 export async function organizeSingles(): Promise<void> {
     sessionLog('ORGANIZE', '=== STARTING SINGLES ORGANIZATION ===');
@@ -251,7 +251,7 @@ export async function organizeSingles(): Promise<void> {
 
 /**
  * Queue organization task
- * With direct slsk-client, this is a simple one-shot task
+ * With direct soulseek-ts, this is a simple one-shot task
  */
 export async function queueOrganizeSingles(): Promise<void> {
     console.log("[ORGANIZE] Running organization task...");

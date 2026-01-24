@@ -24,9 +24,6 @@ export function useSoulseekSearch({
     );
     const [isSoulseekSearching, setIsSoulseekSearching] = useState(false);
     const [isSoulseekPolling, setIsSoulseekPolling] = useState(false);
-    const [soulseekSearchId, setSoulseekSearchId] = useState<string | null>(
-        null
-    );
     const [soulseekEnabled, setSoulseekEnabled] = useState(false);
     const [downloadingFiles, setDownloadingFiles] = useState<Set<string>>(
         new Set()
@@ -56,66 +53,38 @@ export function useSoulseekSearch({
     useEffect(() => {
         if (!query.trim() || !soulseekEnabled) {
             setSoulseekResults([]);
-            setSoulseekSearchId(null);
+            setIsSoulseekSearching(false);
+            setIsSoulseekPolling(false);
             return;
         }
 
-        let pollInterval: NodeJS.Timeout | null = null;
+        let cancelled = false;
 
         const timer = setTimeout(async () => {
             setIsSoulseekSearching(true);
             setIsSoulseekPolling(true);
 
             try {
-                const { searchId } = await api.searchSoulseek(query);
-                setSoulseekSearchId(searchId);
-                setSoulseekResults([]);
-
-                // Poll for results - limit to 5 for inline display
-                let pollCount = 0;
-                const maxPolls = 10;
-
-                // Wait 3 seconds before starting to poll
-                await new Promise((resolve) => setTimeout(resolve, 3000));
-                setIsSoulseekSearching(false); // Initial search request complete
-
-                pollInterval = setInterval(async () => {
-                    try {
-                        const { results } = await api.getSoulseekResults(
-                            searchId
-                        );
-
-                        if (results && results.length > 0) {
-                            setSoulseekResults(results);
-                        }
-
-                        pollCount++;
-
-                        if (results.length >= 5 || pollCount >= maxPolls) {
-                            if (pollInterval) clearInterval(pollInterval);
-                            setIsSoulseekPolling(false);
-                        }
-                    } catch (error) {
-                        console.error("Error polling Soulseek results:", error);
-                        if (pollInterval) clearInterval(pollInterval);
-                        setIsSoulseekPolling(false);
-                    }
-                }, 2000);
+                const { results } = await api.searchSoulseek(query);
+                if (!cancelled) {
+                    setSoulseekResults(results || []);
+                }
             } catch (error: any) {
                 console.error("Soulseek search error:", error);
                 if (error.message?.includes("not enabled")) {
                     setSoulseekEnabled(false);
                 }
-                setIsSoulseekSearching(false);
-                setIsSoulseekPolling(false);
+            } finally {
+                if (!cancelled) {
+                    setIsSoulseekSearching(false);
+                    setIsSoulseekPolling(false);
+                }
             }
         }, 800);
 
         return () => {
+            cancelled = true;
             clearTimeout(timer);
-            if (pollInterval) {
-                clearInterval(pollInterval);
-            }
             setIsSoulseekPolling(false);
         };
     }, [query, soulseekEnabled]);

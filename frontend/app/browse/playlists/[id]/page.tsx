@@ -169,8 +169,9 @@ export default function DeezerPlaylistDetailPage() {
 
     // Handle import/download
     const handleImport = () => {
-        if (!playlist) return;
+        if (!playlist || isImporting) return;
         // Navigate to import page with the Deezer URL
+        setIsImporting(true);
         router.push(
             `/import/spotify?url=${encodeURIComponent(playlist.url)}`
         );
