@@ -55,34 +55,14 @@ export async function runDataIntegrityCheck(): Promise<IntegrityReport> {
     }
 
     // 1.5. Remove tracks pointing to deleted files
-    // This catches tracks that weren't cleaned up during scan (e.g., if scan was interrupted)
-    if (config.music?.musicPath) {
-        const musicPath = config.music.musicPath;
-        const allTracks = await prisma.track.findMany({
-            select: { id: true, filePath: true },
-        });
-
-        const tracksToDelete: string[] = [];
-        for (const track of allTracks) {
-            const fullPath = path.join(musicPath, track.filePath);
-            try {
-                await fs.promises.access(fullPath, fs.constants.F_OK);
-            } catch {
-                // File doesn't exist
-                tracksToDelete.push(track.id);
-            }
-        }
-
-        if (tracksToDelete.length > 0) {
-            await prisma.track.deleteMany({
-                where: { id: { in: tracksToDelete } },
-            });
-            report.missingFileTracks = tracksToDelete.length;
-            console.log(
-                `     Removed ${tracksToDelete.length} tracks pointing to deleted files`
-            );
-        }
-    }
+    // DISABLED: This check has caused catastrophic data loss multiple times.
+    // The check can't reliably determine which base path a track belongs to,
+    // especially after database restores or when downloadPath settings are stale.
+    // Orphaned tracks are harmless; mass deletion is catastrophic.
+    // If file cleanup is needed, user should trigger a full library rescan.
+    //
+    // Original logic checked: musicPath + downloadPath for each track.filePath
+    // But file paths are relative and can't reliably be matched to their source.
 
     // 2. Clean up orphaned DiscoveryTrack records (tracks whose Track record was deleted)
     const orphanedDiscoveryTracks = await prisma.discoveryTrack.deleteMany({
@@ -97,13 +77,18 @@ export async function runDataIntegrityCheck(): Promise<IntegrityReport> {
         );
     }
 
-    // 3. Clean up orphaned DISCOVER albums (no active DiscoveryAlbum record AND no OwnedAlbum)
+    // 3. Clean up orphaned DISCOVER albums (no active DiscoveryAlbum record AND no OwnedAlbum AND no tracks)
+    // IMPORTANT: Only delete if album has NO tracks - playlist downloads use DISCOVER location
+    // but have no DiscoveryAlbum/OwnedAlbum records, so we must check for tracks
     const discoverAlbums = await prisma.album.findMany({
         where: { location: "DISCOVER" },
-        include: { artist: true },
+        include: { artist: true, _count: { select: { tracks: true } } },
     });
 
     for (const album of discoverAlbums) {
+        // NEVER delete albums that have tracks (could be playlist downloads)
+        if (album._count.tracks > 0) continue;
+
         // Check if there's an ACTIVE, LIKED, or MOVED DiscoveryAlbum record
         const hasActiveRecord = await prisma.discoveryAlbum.findFirst({
             where: {
@@ -127,11 +112,7 @@ export async function runDataIntegrityCheck(): Promise<IntegrityReport> {
         });
 
         if (!hasActiveRecord && !hasOwnedRecord) {
-            // Delete tracks first
-            await prisma.track.deleteMany({
-                where: { albumId: album.id },
-            });
-            // Delete album
+            // Delete album (no tracks, so no cascade needed)
             await prisma.album.delete({
                 where: { id: album.id },
             });

@@ -2914,14 +2914,23 @@ router.get("/tracks/:id/stream", async (req, res) => {
 
                 // Get absolute path to source file
                 // Normalize path separators for cross-platform compatibility (Windows -> Linux)
+                // Check BOTH musicPath AND downloadPath (for Soulseek downloads)
                 const normalizedFilePath = track.filePath.replace(/\\/g, "/");
-                const absolutePath = path.join(
-                    config.music.musicPath,
-                    normalizedFilePath
-                );
+                const settings = await prisma.systemSettings.findFirst();
+                const downloadPath = settings?.downloadPath || "/soulseek-downloads";
+
+                let absolutePath = path.join(config.music.musicPath, normalizedFilePath);
+
+                // If not found in music path, check download path
+                if (!fs.existsSync(absolutePath)) {
+                    const dlPath = path.join(downloadPath, normalizedFilePath);
+                    if (fs.existsSync(dlPath)) {
+                        absolutePath = dlPath;
+                    }
+                }
 
                 console.log(
-                    `[STREAM] Using native file: ${track.filePath} (${requestedQuality})`
+                    `[STREAM] Using native file: ${absolutePath} (${requestedQuality})`
                 );
 
                 // Get stream file (either original or transcoded)
@@ -2977,10 +2986,14 @@ router.get("/tracks/:id/stream", async (req, res) => {
                         `[STREAM] FFmpeg not available, falling back to original quality`
                     );
                     const fallbackFilePath = track.filePath.replace(/\\/g, "/");
-                    const absolutePath = path.join(
-                        config.music.musicPath,
-                        fallbackFilePath
-                    );
+                    let absolutePath = path.join(config.music.musicPath, fallbackFilePath);
+
+                    // Check download path if not found in music path
+                    if (!fs.existsSync(absolutePath)) {
+                        const dlSettings = await prisma.systemSettings.findFirst();
+                        const dlPath = path.join(dlSettings?.downloadPath || "/soulseek-downloads", fallbackFilePath);
+                        if (fs.existsSync(dlPath)) absolutePath = dlPath;
+                    }
 
                     const streamingService = new AudioStreamingService(
                         config.music.musicPath,

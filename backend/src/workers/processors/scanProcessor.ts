@@ -65,6 +65,16 @@ export async function processScan(
         "../covers"
     );
 
+    // Use provided music path or fall back to config
+    const scanPath = musicPath || config.music.musicPath;
+
+    // Check if scanning the download path (soulseek-downloads)
+    // If so, use "playlist only" mode: albums marked as DISCOVER, hidden from library views
+    const { prisma } = await import("../../utils/db");
+    const settings = await prisma.systemSettings.findFirst();
+    const downloadPath = settings?.downloadPath || "/soulseek-downloads";
+    const playlistOnlyMode = scanPath === downloadPath || scanPath.includes("soulseek-download");
+
     // Create scanner with progress callback and cover cache path
     const scanner = new MusicScannerService((progress) => {
         // Calculate percentage (filesScanned / filesTotal * 100)
@@ -74,12 +84,9 @@ export async function processScan(
         job.progress(percent).catch((err) =>
             console.error(`Failed to update job progress:`, err)
         );
-    }, coverCachePath);
+    }, coverCachePath, playlistOnlyMode);
 
-    // Use provided music path or fall back to config
-    const scanPath = musicPath || config.music.musicPath;
-
-    console.log(`[ScanJob ${job.id}] Scanning path: ${scanPath}`);
+    console.log(`[ScanJob ${job.id}] Scanning path: ${scanPath}${playlistOnlyMode ? " (playlist-only mode)" : ""}`);
 
     try {
         const result = await scanner.scanLibrary(scanPath);

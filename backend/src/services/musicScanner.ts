@@ -59,12 +59,17 @@ export class MusicScannerService {
     private scanQueue = new PQueue({ concurrency: 10 });
     private progressCallback?: (progress: ScanProgress) => void;
     private coverArtExtractor?: CoverArtExtractor;
+    // When true: marks albums as DISCOVER (hidden from library), skips OwnedAlbum, skips lastSynced
+    // Used for Soulseek/playlist downloads that should only appear in playlists
+    private playlistOnlyMode: boolean;
 
     constructor(
         progressCallback?: (progress: ScanProgress) => void,
-        coverCachePath?: string
+        coverCachePath?: string,
+        playlistOnlyMode: boolean = false
     ) {
         this.progressCallback = progressCallback;
+        this.playlistOnlyMode = playlistOnlyMode;
         if (coverCachePath) {
             this.coverArtExtractor = new CoverArtExtractor(coverCachePath);
         }
@@ -167,56 +172,81 @@ export class MusicScannerService {
 
         await this.scanQueue.onIdle();
 
-        // Step 4: Remove tracks for files that no longer exist
-        const scannedPaths = new Set(
-            audioFiles.map((f) => path.relative(musicPath, f))
-        );
-        const tracksToRemove = existingTracks.filter(
-            (t) => !scannedPaths.has(t.filePath)
-        );
+        // Step 4-6: Remove orphaned tracks/albums/artists
+        // SKIP for playlistOnlyMode (partial scans like /soulseek-downloads)
+        // These scans should ONLY add tracks, never remove from other paths
+        if (!this.playlistOnlyMode) {
+            // Step 4: Remove tracks for files that no longer exist
+            // IMPORTANT: Check BOTH musicPath AND downloadPath before deleting
+            // Tracks can exist in either location
+            const settings = await prisma.systemSettings.findFirst();
+            const downloadPath = settings?.downloadPath || "/soulseek-downloads";
 
-        if (tracksToRemove.length > 0) {
-            await prisma.track.deleteMany({
+            const scannedPaths = new Set(
+                audioFiles.map((f) => path.relative(musicPath, f))
+            );
+
+            // Only remove tracks that don't exist in EITHER location
+            const tracksToRemove: typeof existingTracks = [];
+            for (const track of existingTracks) {
+                if (scannedPaths.has(track.filePath)) continue; // Found in scan
+
+                // Check if file exists in download path
+                const dlFullPath = path.join(downloadPath, track.filePath);
+                try {
+                    await fs.promises.access(dlFullPath, fs.constants.F_OK);
+                    continue; // File exists in download path, don't delete
+                } catch {
+                    // File doesn't exist in either location
+                    tracksToRemove.push(track);
+                }
+            }
+
+            if (tracksToRemove.length > 0) {
+                await prisma.track.deleteMany({
+                    where: {
+                        id: { in: tracksToRemove.map((t) => t.id) },
+                    },
+                });
+                result.tracksRemoved = tracksToRemove.length;
+                console.log(`Removed ${tracksToRemove.length} missing tracks`);
+            }
+
+            // Step 5: Clean up orphaned albums (albums with no tracks)
+            const orphanedAlbums = await prisma.album.findMany({
                 where: {
-                    id: { in: tracksToRemove.map((t) => t.id) },
+                    tracks: { none: {} },
                 },
+                select: { id: true, title: true },
             });
-            result.tracksRemoved = tracksToRemove.length;
-            console.log(`Removed ${tracksToRemove.length} missing tracks`);
-        }
 
-        // Step 5: Clean up orphaned albums (albums with no tracks)
-        const orphanedAlbums = await prisma.album.findMany({
-            where: {
-                tracks: { none: {} },
-            },
-            select: { id: true, title: true },
-        });
+            if (orphanedAlbums.length > 0) {
+                console.log(`Removing ${orphanedAlbums.length} orphaned albums...`);
+                await prisma.album.deleteMany({
+                    where: {
+                        id: { in: orphanedAlbums.map((a) => a.id) },
+                    },
+                });
+            }
 
-        if (orphanedAlbums.length > 0) {
-            console.log(`Removing ${orphanedAlbums.length} orphaned albums...`);
-            await prisma.album.deleteMany({
+            // Step 6: Clean up orphaned artists (artists with no albums)
+            const orphanedArtists = await prisma.artist.findMany({
                 where: {
-                    id: { in: orphanedAlbums.map((a) => a.id) },
+                    albums: { none: {} },
                 },
+                select: { id: true, name: true },
             });
-        }
 
-        // Step 6: Clean up orphaned artists (artists with no albums)
-        const orphanedArtists = await prisma.artist.findMany({
-            where: {
-                albums: { none: {} },
-            },
-            select: { id: true, name: true },
-        });
-
-        if (orphanedArtists.length > 0) {
-            console.log(`Removing ${orphanedArtists.length} orphaned artists: ${orphanedArtists.map(a => a.name).join(', ')}`);
-            await prisma.artist.deleteMany({
-                where: {
-                    id: { in: orphanedArtists.map((a) => a.id) },
-                },
-            });
+            if (orphanedArtists.length > 0) {
+                console.log(`Removing ${orphanedArtists.length} orphaned artists: ${orphanedArtists.map(a => a.name).join(', ')}`);
+                await prisma.artist.deleteMany({
+                    where: {
+                        id: { in: orphanedArtists.map((a) => a.id) },
+                    },
+                });
+            }
+        } else {
+            console.log(`Skipping orphan cleanup (playlist-only mode)`);
         }
 
         result.duration = Date.now() - startTime;
@@ -806,6 +836,8 @@ export class MusicScannerService {
                 const isDiscoveryByJob = await this.isDiscoveryDownload(artistName, albumTitle);
 
                 const isDiscoveryAlbum = isDiscoveryByPath || isDiscoveryByJob;
+                // Playlist-only mode also uses DISCOVER location to hide from library
+                const shouldBeHiddenFromLibrary = isDiscoveryAlbum || this.playlistOnlyMode;
 
                 // Only create album if not found by MBID lookup above
                 if (!album) {
@@ -818,7 +850,7 @@ export class MusicScannerService {
                                 year,
                                 genres: genres.length > 0 ? genres : undefined,
                                 primaryType: "Album",
-                                location: isDiscoveryAlbum ? "DISCOVER" : "LIBRARY",
+                                location: shouldBeHiddenFromLibrary ? "DISCOVER" : "LIBRARY",
                             },
                         });
                     } catch (err: any) {
@@ -842,9 +874,9 @@ export class MusicScannerService {
                         }
                     }
 
-                    // Only create OwnedAlbum record for library albums (not discovery)
-                    // Discovery albums are temporary and should not appear in the user's library
-                    if (!isDiscoveryAlbum) {
+                    // Only create OwnedAlbum record and update lastSynced for library albums
+                    // Skip for: discovery albums, playlist-only downloads (Soulseek for playlists)
+                    if (!shouldBeHiddenFromLibrary) {
                         await prisma.ownedAlbum.create({
                             data: {
                                 rgMbid,
