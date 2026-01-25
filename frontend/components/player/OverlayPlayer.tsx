@@ -43,6 +43,7 @@ export function OverlayPlayer() {
         vibeMode,
         queue,
         currentIndex,
+        currentSource,
         pause,
         resume,
         next,
@@ -386,17 +387,24 @@ export function OverlayPlayer() {
                 <div className="w-full max-w-[320px] landscape:max-w-[280px] landscape:flex-1 flex flex-col">
                     {/* Track Info */}
                     <div className="text-center landscape:text-left mb-6">
-                        {mediaLink ? (
-                            <Link href={mediaLink} onClick={returnToPreviousMode} className="block hover:underline">
-                                <h1 className="text-xl font-bold text-white mb-1 truncate">
+                        <div className="flex items-center justify-center landscape:justify-start gap-2 mb-1">
+                            {mediaLink ? (
+                                <Link href={mediaLink} onClick={returnToPreviousMode} className="block hover:underline min-w-0">
+                                    <h1 className="text-xl font-bold text-white truncate">
+                                        {title}
+                                    </h1>
+                                </Link>
+                            ) : (
+                                <h1 className="text-xl font-bold text-white truncate">
                                     {title}
                                 </h1>
-                            </Link>
-                        ) : (
-                            <h1 className="text-xl font-bold text-white mb-1 truncate">
-                                {title}
-                            </h1>
-                        )}
+                            )}
+                            {currentSource === "youtube" && playbackType === "track" && (
+                                <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-semibold rounded bg-red-600/80 text-white leading-none" title="Streaming from YouTube Music">
+                                    YT
+                                </span>
+                            )}
+                        </div>
                         {artistLink ? (
                             <Link href={artistLink} onClick={returnToPreviousMode} className="block hover:underline">
                                 <p className="text-base text-gray-400 truncate">

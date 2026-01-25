@@ -50,6 +50,7 @@ export function MiniPlayer() {
         vibeMode,
         queue,
         currentIndex,
+        currentSource,
         pause,
         resume,
         next,
@@ -449,9 +450,16 @@ export function MiniPlayer() {
 
                     {/* Track Info */}
                     <div className="flex-1 min-w-0">
-                        <p className="text-white text-sm font-medium truncate leading-tight">
-                            {title}
-                        </p>
+                        <div className="flex items-center gap-1.5">
+                            <p className="text-white text-sm font-medium truncate leading-tight">
+                                {title}
+                            </p>
+                            {currentSource === "youtube" && playbackType === "track" && (
+                                <span className="flex-shrink-0 px-1 py-0.5 text-[9px] font-semibold rounded bg-red-600/80 text-white leading-none">
+                                    YT
+                                </span>
+                            )}
+                        </div>
                         <p className="text-gray-300/70 text-xs truncate leading-tight mt-0.5">
                             {subtitle}
                         </p>

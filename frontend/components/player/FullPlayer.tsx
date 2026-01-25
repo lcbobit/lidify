@@ -55,6 +55,7 @@ export function FullPlayer() {
         vibeSourceFeatures,
         queue,
         currentIndex,
+        currentSource,
     } = useAudioState();
 
     const {
@@ -415,13 +416,20 @@ export function FullPlayer() {
                         </div>
                     )}
                     <div className="flex-1 min-w-0">
-                        {mediaLink ? (
-                            <Link href={mediaLink} className="block hover:underline">
+                        <div className="flex items-center gap-1.5">
+                            {mediaLink ? (
+                                <Link href={mediaLink} className="block hover:underline min-w-0">
+                                    <h4 className="text-white font-semibold truncate text-sm">{title}</h4>
+                                </Link>
+                            ) : (
                                 <h4 className="text-white font-semibold truncate text-sm">{title}</h4>
-                            </Link>
-                        ) : (
-                            <h4 className="text-white font-semibold truncate text-sm">{title}</h4>
-                        )}
+                            )}
+                            {currentSource === "youtube" && playbackType === "track" && (
+                                <span className="flex-shrink-0 px-1 py-0.5 text-[9px] font-semibold rounded bg-red-600/80 text-white leading-none" title="Streaming from YouTube Music">
+                                    YT
+                                </span>
+                            )}
+                        </div>
                         {artistLink ? (
                             <Link href={artistLink} className="block hover:underline">
                                 <p className="text-xs text-gray-400 truncate">{subtitle}</p>
