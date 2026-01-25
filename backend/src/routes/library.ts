@@ -25,6 +25,8 @@ import { enrichSimilarArtist, prefetchDiscographyCovers } from "../workers/artis
 import { extractColorsFromImage } from "../utils/colorExtractor";
 import { dataCacheService } from "../services/dataCache";
 import { fetchExternalImage, normalizeExternalImageUrl } from "../services/imageProxy";
+import { youtubeMusicService } from "../services/youtube-music";
+import axios from "axios";
 // MusicBrainz secondary types to exclude from discography
 const EXCLUDED_SECONDARY_TYPES = [
     "Live", "Compilation", "Soundtrack", "Remix", "DJ-mix",
@@ -3073,6 +3075,350 @@ router.get("/tracks/:id/stream", async (req, res) => {
     } catch (error) {
         console.error("Stream track error:", error);
         res.status(500).json({ error: "Failed to stream track" });
+    }
+});
+
+// ============================================
+// YouTube Music Streaming Routes
+// ============================================
+
+// Debug middleware for YouTube routes
+router.use("/youtube", (req, res, next) => {
+    console.log(`[YouTube API] ${req.method} ${req.path}`);
+    next();
+});
+
+/**
+ * GET /library/youtube/status
+ * Check if YouTube Music streaming is available
+ */
+router.get("/youtube/status", async (req, res) => {
+    try {
+        const enabled = youtubeMusicService.isEnabled();
+        const ytdlpAvailable = await youtubeMusicService.checkYtDlpAvailable();
+        const ytdlpVersion = ytdlpAvailable ? await youtubeMusicService.getYtDlpVersion() : null;
+
+        res.json({
+            enabled,
+            available: enabled && ytdlpAvailable,
+            ytdlpVersion,
+        });
+    } catch (error) {
+        console.error("[YouTube] Status check error:", error);
+        res.json({
+            enabled: false,
+            available: false,
+            error: "Failed to check status",
+        });
+    }
+});
+
+/**
+ * GET /library/youtube/search
+ * Search YouTube Music for tracks
+ * Query params: q (search query), limit (max results, default 10)
+ */
+router.get("/youtube/search", async (req, res) => {
+    try {
+        const { q, limit } = req.query;
+
+        if (!q || typeof q !== "string") {
+            return res.status(400).json({ error: "Search query (q) is required" });
+        }
+
+        const maxResults = Math.min(parseInt(limit as string) || 10, 50);
+        const results = await youtubeMusicService.search(q, maxResults);
+
+        res.json({
+            query: q,
+            results,
+            count: results.length,
+        });
+    } catch (error: any) {
+        console.error("[YouTube] Search error:", error);
+        res.status(500).json({ error: error.message || "Search failed" });
+    }
+});
+
+/**
+ * GET /library/youtube/match
+ * Find the best YouTube Music match for a track
+ * Query params: artist, title, duration (optional, in seconds), album (optional)
+ */
+router.get("/youtube/match", async (req, res) => {
+    try {
+        const { artist, title, duration, album } = req.query;
+
+        if (!artist || typeof artist !== "string") {
+            return res.status(400).json({ error: "Artist is required" });
+        }
+        if (!title || typeof title !== "string") {
+            return res.status(400).json({ error: "Title is required" });
+        }
+
+        const durationSec = duration ? parseInt(duration as string) : undefined;
+        const albumStr = album ? String(album) : undefined;
+
+        const match = await youtubeMusicService.findTrack(artist, title, durationSec, albumStr);
+
+        if (!match) {
+            return res.status(404).json({
+                error: "No match found",
+                query: { artist, title, duration: durationSec, album: albumStr },
+            });
+        }
+
+        res.json({
+            match,
+            query: { artist, title, duration: durationSec, album: albumStr },
+        });
+    } catch (error: any) {
+        console.error("[YouTube] Match error:", error);
+        res.status(500).json({ error: error.message || "Match failed" });
+    }
+});
+
+/**
+ * POST /library/youtube/match-batch
+ * Find YouTube Music matches for multiple tracks at once (for pre-fetching)
+ * Body: { tracks: [{ artist, title, duration?, album? }] }
+ * Returns matches in parallel, caching each result
+ */
+router.post("/youtube/match-batch", async (req, res) => {
+    try {
+        const { tracks } = req.body;
+
+        if (!Array.isArray(tracks) || tracks.length === 0) {
+            return res.status(400).json({ error: "tracks array is required" });
+        }
+
+        // Limit batch size to prevent abuse
+        const maxBatchSize = 50;
+        const tracksToProcess = tracks.slice(0, maxBatchSize);
+
+        console.log(`[YouTube] Batch match request for ${tracksToProcess.length} tracks`);
+
+        // Process in parallel with concurrency limit
+        const concurrency = 5; // Max concurrent requests
+        const results: Array<{
+            query: { artist: string; title: string; duration?: number; album?: string };
+            match: any | null;
+            cached: boolean;
+        }> = [];
+
+        // Process in batches of `concurrency`
+        for (let i = 0; i < tracksToProcess.length; i += concurrency) {
+            const batch = tracksToProcess.slice(i, i + concurrency);
+            const batchResults = await Promise.all(
+                batch.map(async (track: { artist: string; title: string; duration?: number; album?: string }) => {
+                    const { artist, title, duration, album } = track;
+
+                    if (!artist || !title) {
+                        return {
+                            query: { artist, title, duration, album },
+                            match: null,
+                            cached: false,
+                            error: "artist and title are required",
+                        };
+                    }
+
+                    try {
+                        const match = await youtubeMusicService.findTrack(
+                            artist,
+                            title,
+                            duration,
+                            album
+                        );
+                        return {
+                            query: { artist, title, duration, album },
+                            match,
+                            cached: true, // Will be cached by the service
+                        };
+                    } catch (err: any) {
+                        return {
+                            query: { artist, title, duration, album },
+                            match: null,
+                            cached: false,
+                            error: err.message,
+                        };
+                    }
+                })
+            );
+            results.push(...batchResults);
+        }
+
+        const matchedCount = results.filter(r => r.match !== null).length;
+        console.log(`[YouTube] Batch match complete: ${matchedCount}/${results.length} matched`);
+
+        // Pre-fetch stream URLs for matched tracks
+        // First 3 are awaited (so user can click immediately), rest run in background
+        const matchedResults = results.filter(r => r.match !== null);
+        const immediateCount = Math.min(3, matchedResults.length);
+        const backgroundCount = Math.min(10, matchedResults.length) - immediateCount;
+        
+        // Prefetch first 3 BEFORE responding (parallel)
+        if (immediateCount > 0) {
+            console.log(`[YouTube] Pre-fetching first ${immediateCount} stream URLs (blocking)...`);
+            const immediateIds = matchedResults.slice(0, immediateCount).map(r => r.match.videoId);
+            await Promise.all(
+                immediateIds.map(async (videoId, idx) => {
+                    try {
+                        await youtubeMusicService.getStreamUrl(videoId);
+                        console.log(`[YouTube] Pre-fetched stream URL ${idx + 1}/${immediateCount}: ${videoId} (immediate)`);
+                    } catch (err: any) {
+                        console.warn(`[YouTube] Failed to pre-fetch stream URL for ${videoId}:`, err.message);
+                    }
+                })
+            );
+        }
+
+        // Prefetch remaining 7 in background after response
+        if (backgroundCount > 0) {
+            const backgroundIds = matchedResults.slice(immediateCount, immediateCount + backgroundCount).map(r => r.match.videoId);
+            // Don't await - let this run in background
+            (async () => {
+                console.log(`[YouTube] Pre-fetching ${backgroundCount} more stream URLs (background)...`);
+                await Promise.all(
+                    backgroundIds.map(async (videoId, idx) => {
+                        try {
+                            await youtubeMusicService.getStreamUrl(videoId);
+                            console.log(`[YouTube] Pre-fetched stream URL ${immediateCount + idx + 1}/${immediateCount + backgroundCount}: ${videoId}`);
+                        } catch (err: any) {
+                            console.warn(`[YouTube] Failed to pre-fetch stream URL for ${videoId}:`, err.message);
+                        }
+                    })
+                );
+                console.log(`[YouTube] Stream URL pre-fetch complete`);
+            })();
+        }
+
+        res.json({
+            results,
+            total: results.length,
+            matched: matchedCount,
+        });
+    } catch (error: any) {
+        console.error("[YouTube] Batch match error:", error);
+        res.status(500).json({ error: error.message || "Batch match failed" });
+    }
+});
+
+/**
+ * GET /library/youtube/stream/:videoId
+ * Proxy YouTube Music audio stream to client
+ * The stream URL is IP-locked, so we must proxy it through the server
+ */
+router.get("/youtube/stream/:videoId", async (req, res) => {
+    try {
+        const { videoId } = req.params;
+
+        if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+            return res.status(400).json({ error: "Invalid video ID" });
+        }
+
+        console.log(`[YouTube] Stream request for ${videoId}`);
+
+        // Get stream URL (cached)
+        const streamInfo = await youtubeMusicService.getStreamUrl(videoId);
+
+        // Determine content type based on format
+        const contentType = streamInfo.format === "m4a" ? "audio/mp4" : "audio/webm";
+
+        // Fetch the stream from YouTube and proxy to client
+        const response = await axios.get(streamInfo.url, {
+            responseType: "stream",
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "*/*",
+                "Accept-Encoding": "identity", // Don't compress - we're proxying
+                "Range": req.headers.range || "bytes=0-", // Forward range header for seeking
+            },
+            timeout: 30000,
+        });
+
+        // Forward relevant headers
+        res.setHeader("Content-Type", contentType);
+        res.setHeader("Accept-Ranges", "bytes");
+        res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+        res.setHeader("Access-Control-Allow-Credentials", "true");
+        res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+
+        // Forward content-length and content-range if present
+        if (response.headers["content-length"]) {
+            res.setHeader("Content-Length", response.headers["content-length"]);
+        }
+        if (response.headers["content-range"]) {
+            res.setHeader("Content-Range", response.headers["content-range"]);
+            res.status(206); // Partial content
+        }
+
+        // Pipe the stream to the client
+        response.data.pipe(res);
+
+        // Handle client disconnect
+        req.on("close", () => {
+            response.data.destroy();
+        });
+    } catch (error: any) {
+        console.error(`[YouTube] Stream error for ${req.params.videoId}:`, error.message);
+
+        // Don't send error if headers already sent (stream started)
+        if (!res.headersSent) {
+            res.status(500).json({ error: error.message || "Stream failed" });
+        }
+    }
+});
+
+/**
+ * POST /library/youtube/download/:videoId
+ * Download a YouTube Music track to the library
+ * Body: { outputDir?, filename? }
+ */
+router.post("/youtube/download/:videoId", async (req, res) => {
+    try {
+        const { videoId } = req.params;
+        const { outputDir, filename } = req.body;
+
+        if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+            return res.status(400).json({ error: "Invalid video ID" });
+        }
+
+        // Default to soulseek downloads directory
+        const settings = await prisma.systemSettings.findFirst();
+        const downloadPath = outputDir || settings?.downloadPath || "/soulseek-downloads";
+
+        console.log(`[YouTube] Download request for ${videoId} to ${downloadPath}`);
+
+        const result = await youtubeMusicService.downloadTrack(videoId, downloadPath, filename);
+
+        // Trigger library scan to pick up the new file
+        await scanQueue.add(
+            "scan-library",
+            { source: "youtube-download", paths: [result.filePath] },
+            { priority: 2 }
+        );
+
+        res.json({
+            success: true,
+            ...result,
+        });
+    } catch (error: any) {
+        console.error(`[YouTube] Download error for ${req.params.videoId}:`, error.message);
+        res.status(500).json({ error: error.message || "Download failed" });
+    }
+});
+
+/**
+ * DELETE /library/youtube/cache
+ * Clear YouTube Music cache (admin only)
+ */
+router.delete("/youtube/cache", requireAdmin, async (req, res) => {
+    try {
+        await youtubeMusicService.clearCache();
+        res.json({ success: true, message: "YouTube Music cache cleared" });
+    } catch (error: any) {
+        console.error("[YouTube] Cache clear error:", error);
+        res.status(500).json({ error: error.message || "Failed to clear cache" });
     }
 });
 

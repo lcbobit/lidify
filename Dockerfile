@@ -42,12 +42,13 @@ RUN mkdir -p /app/backend /app/frontend /app/audio-analyzer /app/models \
 # ============================================
 WORKDIR /app/audio-analyzer
 
-# Install Python dependencies for audio analysis (with cache mount for speed)
+# Install Python dependencies for audio analysis and yt-dlp (with cache mount for speed)
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install --break-system-packages \
     essentia-tensorflow \
     redis \
-    psycopg2-binary
+    psycopg2-binary \
+    yt-dlp
 
 # Download Essentia ML models (~200MB total) - these enable Enhanced vibe matching
 RUN echo "Downloading Essentia ML models for Enhanced vibe matching..." && \
