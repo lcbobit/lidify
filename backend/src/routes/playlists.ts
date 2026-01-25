@@ -1,13 +1,20 @@
 import { Router } from "express";
 import path from "path";
+import PQueue from "p-queue";
 import { requireAuthOrToken } from "../middleware/auth";
 import { prisma } from "../utils/db";
 import { z } from "zod";
 import { sessionLog } from "../utils/playlistLogger";
+import { youtubeMusicService } from "../services/youtube-music";
+import { rewriteAudioTags } from "../utils/audioTags";
 
 const router = Router();
 
 router.use(requireAuthOrToken);
+
+function sanitizePathPart(name: string): string {
+    return (name || "").replace(/[<>:"/\\|?*]/g, "_").trim();
+}
 
 const createPlaylistSchema = z.object({
     name: z.string().min(1).max(200),
@@ -783,24 +790,11 @@ router.post("/:id/pending/:trackId/retry", async (req, res) => {
             return res.status(400).json({ error: "Music path not configured" });
         }
 
-        if (!settings?.soulseekUsername || !settings?.soulseekPassword) {
-            sessionLog(
-                "PENDING-RETRY",
-                `Soulseek credentials not configured`,
-                "WARN"
-            );
-            await prisma.downloadJob.update({
-                where: { id: downloadJob.id },
-                data: {
-                    status: "failed",
-                    error: "Soulseek credentials not configured",
-                    completedAt: new Date(),
-                },
-            });
-            return res
-                .status(400)
-                .json({ error: "Soulseek credentials not configured" });
-        }
+        const soulseekUsable = Boolean(
+            settings?.soulseekUsername &&
+                settings?.soulseekPassword &&
+                (await soulseekService.isAvailable())
+        );
 
         // Use a better album name if possible - extract from stored title or use artist name
         const albumName =
@@ -816,167 +810,254 @@ router.post("/:id/pending/:trackId/retry", async (req, res) => {
             `Search: ${pendingTrack.spotifyArtist} - ${pendingTrack.spotifyTitle}`
         );
 
-        // First do a quick search to see if track is available (15s timeout)
-        // This way we can tell the user immediately if it's not found
-        const searchResult = await soulseekService.searchTrack(
-            pendingTrack.spotifyArtist,
-            pendingTrack.spotifyTitle
-        );
+        const searchResult = soulseekUsable
+            ? await soulseekService.searchTrack(
+                  pendingTrack.spotifyArtist,
+                  pendingTrack.spotifyTitle
+              )
+            : { found: false, bestMatch: null, allMatches: [] as any[] };
 
-        if (!searchResult.found || searchResult.allMatches.length === 0) {
-            console.log(`[Retry] ✗ No results found on Soulseek`);
-            sessionLog("PENDING-RETRY", `No results found on Soulseek`, "INFO");
+        const youtubeMatch =
+            !searchResult.found || searchResult.allMatches.length === 0
+                ? await youtubeMusicService.findTrack(
+                      pendingTrack.spotifyArtist,
+                      pendingTrack.spotifyTitle,
+                      undefined,
+                      albumName
+                  )
+                : null;
+
+        if (
+            (!searchResult.found || searchResult.allMatches.length === 0) &&
+            !youtubeMatch
+        ) {
+            console.log(`[Retry] ✗ No results found (Soulseek/YouTube)`);
+            sessionLog(
+                "PENDING-RETRY",
+                `No results found (soulseek=${soulseekUsable ? "yes" : "no"})`,
+                "INFO"
+            );
 
             await prisma.downloadJob.update({
                 where: { id: downloadJob.id },
                 data: {
                     status: "failed",
-                    error: "No matching files found",
+                    error: "No matching sources found",
                     completedAt: new Date(),
                 },
             });
 
             return res.status(200).json({
                 success: false,
-                message: "Track not found on Soulseek",
-                error: "No matching files found",
+                message: "Track not found",
+                error: "No matching sources found",
             });
         }
 
-        console.log(
-            `[Retry] ✓ Found ${searchResult.allMatches.length} results, starting download in background`
-        );
+        console.log(`[Retry] ✓ Starting download in background`);
         sessionLog(
             "PENDING-RETRY",
-            `Found ${searchResult.allMatches.length} candidate(s); starting background download`
+            `Starting background download (soulseek=${soulseekUsable ? "yes" : "no"}, youtube=${youtubeMatch ? "yes" : "maybe"})`
         );
 
         // Return immediately - download happens in background
         res.json({
             success: true,
             message: "Download started",
-            note: `Found ${searchResult.allMatches.length} sources. Downloading... Track will appear after scan.`,
+            note: `Downloading... Track will appear after scan.`,
             downloadJobId: downloadJob.id,
         });
 
         // Start download in background (don't await)
-        soulseekService
-            .downloadBestMatch(
-                pendingTrack.spotifyArtist,
-                pendingTrack.spotifyTitle,
-                albumName,
-                searchResult.allMatches,
-                settings.musicPath,
-                {
-                    // Namespace playlist downloads to avoid collisions with /music paths
-                    downloadSubdir: "Playlists",
-                }
-            )
-            .then(async (result) => {
-                if (result.success) {
-                    console.log(
-                        `[Retry] ✓ Download complete: ${result.filePath}`
-                    );
-                    sessionLog(
-                        "PENDING-RETRY",
-                        `Download complete: filePath=${result.filePath}`
-                    );
+        (async () => {
+            let final:
+                | { success: true; filePath: string; source: "soulseek" | "youtube" }
+                | { success: false; error: string };
 
-                    await prisma.downloadJob.update({
-                        where: { id: downloadJob.id },
-                        data: {
-                            status: "completed",
-                            completedAt: new Date(),
-                            metadata: {
-                                ...(downloadJob.metadata as any),
-                                filePath: result.filePath,
-                            },
-                        },
-                    });
-
-                    // Trigger a library scan to add the track and reconcile pending
-                    try {
-                        const { scanQueue } = await import("../workers/queues");
-                        const downloadBase =
-                            settings.downloadPath || "/soulseek-downloads";
-                        const scanJob = await scanQueue.add(
-                            "scan",
-                            {
-                                userId,
-                                musicPath: path.join(
-                                    downloadBase,
-                                    "Playlists"
-                                ),
-                                basePath: downloadBase,
-                                source: "retry-pending-track",
-                                albumMbid: pendingTrack.albumMbid || undefined,
-                                artistMbid:
-                                    pendingTrack.artistMbid || undefined,
-                            },
-                            {
-                                priority: 1, // High priority
-                                removeOnComplete: true,
-                            }
-                        );
-                        console.log(
-                            `[Retry] Queued library scan to reconcile pending tracks`
-                        );
-                        sessionLog(
-                            "PENDING-RETRY",
-                            `Queued library scan (bullJobId=${
-                                scanJob.id ?? "unknown"
-                            })`
-                        );
-                    } catch (scanError) {
-                        console.error(
-                            `[Retry] Failed to queue scan:`,
-                            scanError
-                        );
-                        sessionLog(
-                            "PENDING-RETRY",
-                            `Failed to queue scan: ${
-                                (scanError as any)?.message || scanError
-                            }`,
-                            "ERROR"
-                        );
+            // 1) Soulseek attempt (if usable)
+            if (soulseekUsable && searchResult.allMatches.length > 0) {
+                const dl = await soulseekService.downloadBestMatch(
+                    pendingTrack.spotifyArtist,
+                    pendingTrack.spotifyTitle,
+                    albumName,
+                    searchResult.allMatches,
+                    settings.musicPath,
+                    {
+                        downloadSubdir: "Playlists",
                     }
+                );
+                if (dl.success && dl.filePath) {
+                    final = {
+                        success: true,
+                        filePath: dl.filePath,
+                        source: "soulseek",
+                    };
                 } else {
-                    console.log(`[Retry] ✗ Download failed: ${result.error}`);
-                    sessionLog(
-                        "PENDING-RETRY",
-                        `Download failed: ${result.error || "unknown error"}`,
-                        "WARN"
-                    );
-
-                    await prisma.downloadJob.update({
-                        where: { id: downloadJob.id },
-                        data: {
-                            status: "failed",
-                            error: result.error || "Download failed",
-                            completedAt: new Date(),
-                        },
-                    });
+                    final = {
+                        success: false,
+                        error: dl.error || "Soulseek download failed",
+                    };
                 }
-            })
-            .catch((error) => {
-                console.error(`[Retry] Download error:`, error);
+            } else {
+                final = {
+                    success: false,
+                    error: soulseekUsable
+                        ? "No Soulseek candidates"
+                        : "Soulseek not configured/available",
+                };
+            }
+
+            // 2) YouTube fallback
+            if (!final.success) {
+                const match = youtubeMatch
+                    ? youtubeMatch
+                    : await youtubeMusicService.findTrack(
+                          pendingTrack.spotifyArtist,
+                          pendingTrack.spotifyTitle,
+                          undefined,
+                          albumName
+                      );
+
+                if (!match?.videoId) {
+                    final = {
+                        success: false,
+                        error: `No YouTube match found (prev: ${final.error})`,
+                    };
+                } else {
+                    const downloadBase =
+                        settings.downloadPath || "/soulseek-downloads";
+                    const outputDir = path.join(
+                        downloadBase,
+                        "Playlists",
+                        sanitizePathPart(pendingTrack.spotifyArtist),
+                        sanitizePathPart(albumName)
+                    );
+                    const filename = `${sanitizePathPart(pendingTrack.spotifyArtist)} - ${sanitizePathPart(pendingTrack.spotifyTitle)} - ${match.videoId}`;
+                    try {
+                        const dl = await youtubeMusicService.downloadTrack(
+                            match.videoId,
+                            outputDir,
+                            filename
+                        );
+                        try {
+                            await rewriteAudioTags(dl.filePath, {
+                                title: pendingTrack.spotifyTitle,
+                                artist: pendingTrack.spotifyArtist,
+                                album: albumName,
+                            });
+                        } catch (tagErr: any) {
+                            console.warn(
+                                `[Retry] Tag rewrite failed for ${dl.filePath}: ${tagErr.message}`
+                            );
+                        }
+                        final = {
+                            success: true,
+                            filePath: dl.filePath,
+                            source: "youtube",
+                        };
+                    } catch (err: any) {
+                        final = {
+                            success: false,
+                            error: err?.message || "YouTube download failed",
+                        };
+                    }
+                }
+            }
+
+            if (final.success) {
+                console.log(
+                    `[Retry] ✓ Download complete (${final.source}): ${final.filePath}`
+                );
                 sessionLog(
                     "PENDING-RETRY",
-                    `Download exception: ${error?.message || error}`,
-                    "ERROR"
+                    `Download complete (${final.source}): filePath=${final.filePath}`
                 );
 
-                prisma.downloadJob
-                    .update({
-                        where: { id: downloadJob.id },
-                        data: {
-                            status: "failed",
-                            error: error?.message || "Download exception",
-                            completedAt: new Date(),
+                await prisma.downloadJob.update({
+                    where: { id: downloadJob.id },
+                    data: {
+                        status: "completed",
+                        completedAt: new Date(),
+                        metadata: {
+                            ...(downloadJob.metadata as any),
+                            filePath: final.filePath,
+                            source: final.source,
                         },
-                    })
-                    .catch(() => undefined);
+                    },
+                });
+
+                // Trigger a library scan to add the track and reconcile pending
+                try {
+                    const { scanQueue } = await import("../workers/queues");
+                    const downloadBase =
+                        settings.downloadPath || "/soulseek-downloads";
+                    const scanJob = await scanQueue.add(
+                        "scan",
+                        {
+                            userId,
+                            musicPath: path.join(downloadBase, "Playlists"),
+                            basePath: downloadBase,
+                            source: "retry-pending-track",
+                            albumMbid: pendingTrack.albumMbid || undefined,
+                            artistMbid: pendingTrack.artistMbid || undefined,
+                        },
+                        {
+                            priority: 1,
+                            removeOnComplete: true,
+                        }
+                    );
+                    console.log(
+                        `[Retry] Queued library scan to reconcile pending tracks`
+                    );
+                    sessionLog(
+                        "PENDING-RETRY",
+                        `Queued library scan (bullJobId=${scanJob.id ?? "unknown"})`
+                    );
+                } catch (scanError) {
+                    console.error(`[Retry] Failed to queue scan:`, scanError);
+                    sessionLog(
+                        "PENDING-RETRY",
+                        `Failed to queue scan: ${(scanError as any)?.message || scanError}`,
+                        "ERROR"
+                    );
+                }
+                return;
+            }
+
+            console.log(`[Retry] ✗ Download failed: ${final.error}`);
+            sessionLog(
+                "PENDING-RETRY",
+                `Download failed: ${final.error || "unknown error"}`,
+                "WARN"
+            );
+
+            await prisma.downloadJob.update({
+                where: { id: downloadJob.id },
+                data: {
+                    status: "failed",
+                    error: final.error || "Download failed",
+                    completedAt: new Date(),
+                },
             });
+        })().catch((error) => {
+            console.error(`[Retry] Download error:`, error);
+            sessionLog(
+                "PENDING-RETRY",
+                `Download exception: ${error?.message || error}`,
+                "ERROR"
+            );
+
+            prisma.downloadJob
+                .update({
+                    where: { id: downloadJob.id },
+                    data: {
+                        status: "failed",
+                        error: error?.message || "Download exception",
+                        completedAt: new Date(),
+                    },
+                })
+                .catch(() => undefined);
+        });
     } catch (error: any) {
         console.error("Retry pending track error:", error);
         sessionLog(
@@ -1054,7 +1135,7 @@ router.post("/:id/pending/retry-all", async (req, res) => {
             downloadJobId: downloadJob.id,
         });
 
-        // Background: batch download + scan
+        // Background: per-track downloads (Soulseek -> YouTube fallback) + scan
         (async () => {
             try {
                 const { soulseekService } = await import("../services/soulseek");
@@ -1070,9 +1151,14 @@ router.post("/:id/pending/retry-all", async (req, res) => {
                 if (!settings?.musicPath) {
                     throw new Error("Music path not configured");
                 }
-                if (!settings?.soulseekUsername || !settings?.soulseekPassword) {
-                    throw new Error("Soulseek credentials not configured");
-                }
+
+                const soulseekUsable = Boolean(
+                    settings?.soulseekEnabled !== false &&
+                        settings?.soulseekUsername &&
+                        settings?.soulseekPassword &&
+                        (await soulseekService.isAvailable())
+                );
+                const youtubeUsable = settings?.youtubeEnabled !== false;
 
                 sessionLog(
                     "PENDING-RETRY",
@@ -1088,38 +1174,110 @@ router.post("/:id/pending/retry-all", async (req, res) => {
                             : t.spotifyArtist,
                 }));
 
-                const dlResult = await soulseekService.searchAndDownloadBatch(
-                    tracksToDownload,
-                    settings.musicPath,
-                    3, // Reduced download concurrency to avoid rate limiting
-                    {
-                        downloadSubdir: "Playlists",
-                        preferFlac: true,
-                        allowMp3320Fallback: true,
-                        searchTimeoutMs: 3500,
-                        searchTimeoutLongMs: 12000,
-                        searchConcurrency: 3, // Reduced from 10 to avoid rate limiting
-                    }
+                const queue = new PQueue({ concurrency: 3 });
+                let successful = 0;
+                let failed = 0;
+
+                await Promise.all(
+                    tracksToDownload.map((t) =>
+                        queue.add(async () => {
+                            let ok = false;
+
+                            if (soulseekUsable) {
+                                try {
+                                    const searchResult = await soulseekService.searchTrack(
+                                        t.artist,
+                                        t.title,
+                                        false,
+                                        {
+                                            preferFlac: true,
+                                            allowMp3320Fallback: true,
+                                            allowMp3256Fallback: true,
+                                            timeoutMs: 3500,
+                                        }
+                                    );
+                                    if (
+                                        searchResult.found &&
+                                        searchResult.allMatches.length > 0
+                                    ) {
+                                        const dl = await soulseekService.downloadBestMatch(
+                                            t.artist,
+                                            t.title,
+                                            t.album,
+                                            searchResult.allMatches,
+                                            settings.musicPath,
+                                            { downloadSubdir: "Playlists" }
+                                        );
+                                        ok = Boolean(dl.success);
+                                    }
+                                } catch {
+                                    ok = false;
+                                }
+                            }
+
+                            if (!ok && youtubeUsable) {
+                                const match = await youtubeMusicService.findTrack(
+                                    t.artist,
+                                    t.title,
+                                    undefined,
+                                    t.album
+                                );
+                                if (match?.videoId) {
+                                    const outputDir = path.join(
+                                        downloadBase,
+                                        "Playlists",
+                                        sanitizePathPart(t.artist),
+                                        sanitizePathPart(t.album)
+                                    );
+                                    const filename = `${sanitizePathPart(t.artist)} - ${sanitizePathPart(t.title)} - ${match.videoId}`;
+                                    try {
+                                        const dl =
+                                            await youtubeMusicService.downloadTrack(
+                                                match.videoId,
+                                                outputDir,
+                                                filename
+                                            );
+                                        try {
+                                            await rewriteAudioTags(dl.filePath, {
+                                                title: t.title,
+                                                artist: t.artist,
+                                                album: t.album,
+                                            });
+                                        } catch {
+                                            // non-fatal
+                                        }
+                                        ok = true;
+                                    } catch {
+                                        ok = false;
+                                    }
+                                }
+                            }
+
+                            if (ok) {
+                                successful++;
+                            } else {
+                                failed++;
+                            }
+                        })
+                    )
                 );
 
                 await prisma.downloadJob.update({
                     where: { id: downloadJob.id },
                     data: {
-                        status: dlResult.successful > 0 ? "completed" : "failed",
-                        error:
-                            dlResult.successful > 0
-                                ? null
-                                : "No tracks downloaded",
+                        status: successful > 0 ? "completed" : "failed",
+                        error: successful > 0 ? null : "No tracks downloaded",
                         completedAt: new Date(),
                         metadata: {
                             ...(downloadJob.metadata as any),
-                            successful: dlResult.successful,
-                            failed: dlResult.failed,
+                            successful,
+                            failed,
+                            soulseekUsable,
                         },
                     },
                 });
 
-                if (dlResult.successful > 0) {
+                if (successful > 0) {
                     await scanQueue.add(
                         "scan",
                         {
@@ -1134,7 +1292,7 @@ router.post("/:id/pending/retry-all", async (req, res) => {
 
                 sessionLog(
                     "PENDING-RETRY",
-                    `Bulk retry complete: playlistId=${playlistId} ok=${dlResult.successful} failed=${dlResult.failed}`
+                    `Bulk retry complete: playlistId=${playlistId} ok=${successful} failed=${failed}`
                 );
             } catch (err: any) {
                 await prisma.downloadJob

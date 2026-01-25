@@ -12,6 +12,8 @@ import { getSystemSettings } from "../utils/systemSettings";
 import { prisma } from "../utils/db";
 import { redisClient } from "../utils/redis";
 import { normalizeArtistName } from "../utils/artistNormalization";
+import { youtubeMusicService } from "./youtube-music";
+import { rewriteAudioTags } from "../utils/audioTags";
 import PQueue from "p-queue";
 import path from "path";
 // Note: We DON'T use simpleDownloadManager here because it has same-artist fallback logic
@@ -99,6 +101,7 @@ export interface ImportJob {
         artist: string;
         title: string;
         album: string;
+        durationMs: number;
         sort: number;
         previewUrl: string | null;
         preMatchedTrackId: string | null; // Track ID if already matched in preview
@@ -202,7 +205,10 @@ async function getImportJob(importJobId: string): Promise<ImportJob | null> {
         error: dbJob.error,
         createdAt: dbJob.createdAt,
         updatedAt: dbJob.updatedAt,
-        pendingTracks: (dbJob.pendingTracks as any) || [],
+        pendingTracks: ((dbJob.pendingTracks as any) || []).map((t: any) => ({
+            ...t,
+            durationMs: typeof t?.durationMs === "number" ? t.durationMs : 0,
+        })),
     };
 
     // Populate Redis for next time
@@ -328,6 +334,119 @@ function stringSimilarity(a: string, b: string): number {
 }
 
 class SpotifyImportService {
+    private async acquirePlaylistTrack(
+        track: { artist: string; title: string; album: string; durationMs: number },
+        settings: any,
+        options: {
+            soulseekUsable: boolean;
+            youtubeUsable: boolean;
+        }
+    ): Promise<{ success: boolean; source: "soulseek" | "youtube" | "none"; filePath?: string; error?: string }> {
+        const albumFolder =
+            track.album && track.album !== "Unknown Album" ? track.album : track.artist;
+
+        const musicPath = settings?.musicPath || "/music";
+        const downloadBase = settings?.downloadPath || "/soulseek-downloads";
+
+        if (options.soulseekUsable) {
+            try {
+                const searchResult = await soulseekService.searchTrack(
+                    track.artist,
+                    track.title,
+                    false,
+                    {
+                        preferFlac: true,
+                        allowMp3320Fallback: true,
+                        allowMp3256Fallback: true,
+                        timeoutMs: 3500,
+                    }
+                );
+
+                if (searchResult.found && searchResult.allMatches.length > 0) {
+                    const dl = await soulseekService.downloadBestMatch(
+                        track.artist,
+                        track.title,
+                        albumFolder,
+                        searchResult.allMatches,
+                        musicPath,
+                        { downloadSubdir: "Playlists" }
+                    );
+                    if (dl.success) {
+                        return { success: true, source: "soulseek", filePath: dl.filePath };
+                    }
+                }
+            } catch (err: any) {
+                // Fall through to YouTube
+                void err;
+            }
+        }
+
+        // YouTube fallback (if enabled)
+        if (!options.youtubeUsable) {
+            return {
+                success: false,
+                source: "none",
+                error: "Soulseek failed and YouTube is disabled",
+            };
+        }
+
+        const durationSeconds = track.durationMs
+            ? Math.round(track.durationMs / 1000)
+            : undefined;
+
+        const match = await youtubeMusicService.findTrack(
+            track.artist,
+            track.title,
+            durationSeconds,
+            albumFolder
+        );
+        if (!match?.videoId) {
+            return {
+                success: false,
+                source: "youtube",
+                error: "No YouTube match found",
+            };
+        }
+
+        const outputDir = path.join(
+            downloadBase,
+            "Playlists",
+            sanitizePathPart(track.artist),
+            sanitizePathPart(albumFolder)
+        );
+
+        const filename = `${sanitizePathPart(track.artist)} - ${sanitizePathPart(track.title)} - ${match.videoId}`;
+
+        try {
+            const dl = await youtubeMusicService.downloadTrack(
+                match.videoId,
+                outputDir,
+                filename
+            );
+
+            try {
+                await rewriteAudioTags(dl.filePath, {
+                    title: track.title,
+                    artist: track.artist,
+                    album: albumFolder,
+                });
+            } catch (tagErr: any) {
+                // Tagging improves reconcile reliability but isn't required for scan.
+                console.warn(
+                    `[Spotify Import] Tag rewrite failed for ${dl.filePath}: ${tagErr.message}`
+                );
+            }
+
+            return { success: true, source: "youtube", filePath: dl.filePath };
+        } catch (err: any) {
+            return {
+                success: false,
+                source: "youtube",
+                error: err?.message || "YouTube download failed",
+            };
+        }
+    }
+
     private async findLocalTrackForPendingTrack(pendingTrack: {
         artist: string;
         title: string;
@@ -879,6 +998,7 @@ class SpotifyImportService {
             artist: m.spotifyTrack.artist,
             title: m.spotifyTrack.title,
             album: m.spotifyTrack.album || "Unknown Album",
+            durationMs: m.spotifyTrack.durationMs || 0,
             sort: index,
             previewUrl: m.spotifyTrack.previewUrl || null,
             preMatchedTrackId: m.localTrack?.id || null,
@@ -992,47 +1112,63 @@ class SpotifyImportService {
             });
         }
 
-        // Download missing tracks via Soulseek
+        // Download missing tracks (Soulseek -> YouTube fallback)
         const tracksToDownload = job.pendingTracks
             .filter((t) => !t.preMatchedTrackId)
-            .map((t) => ({ artist: t.artist, title: t.title, album: t.album }));
+            .map((t) => ({
+                artist: t.artist,
+                title: t.title,
+                album: t.album,
+                durationMs: t.durationMs,
+            }));
 
         if (tracksToDownload.length > 0) {
-            try {
-                const dlResult = await soulseekService.searchAndDownloadBatch(
-                    tracksToDownload,
-                    settings?.musicPath || "/music",
-                    3, // Reduced download concurrency to avoid rate limiting
-                    {
-                        downloadSubdir: "Playlists",
-                        preferFlac: true,
-                        allowMp3320Fallback: true,
-                        // Fast first pass + slower retry pass
-                        searchTimeoutMs: 3500,
-                        searchTimeoutLongMs: 12000,
-                        searchConcurrency: 3, // Reduced from 10 to avoid rate limiting
-                    }
-                );
+            const soulseekUsable = Boolean(
+                settings?.soulseekEnabled !== false &&
+                    settings?.soulseekUsername &&
+                    settings?.soulseekPassword &&
+                    (await soulseekService.isAvailable())
+            );
+            const youtubeUsable = settings?.youtubeEnabled !== false;
 
-                logger?.info(
-                    `Soulseek batch complete: ${dlResult.successful} succeeded, ${dlResult.failed} failed`
-                );
+            logger?.info(
+                `Playlist download: tracks=${tracksToDownload.length} soulseek=${
+                    soulseekUsable ? "yes" : "no"
+                } youtube=${youtubeUsable ? "yes" : "no"}`
+            );
 
-                job.albumsCompleted = dlResult.successful;
-                job.updatedAt = new Date();
-                await saveImportJob(job);
+            const queue = new PQueue({ concurrency: 3 });
+            let successful = 0;
+            let failed = 0;
 
-                if (dlResult.successful === 0) {
-                    logger?.warn(
-                        `Soulseek downloaded 0/${tracksToDownload.length} tracks (connection issues or no sources)`
-                    );
-                }
-            } catch (err: any) {
-                logger?.error(`Soulseek batch download error: ${err.message}`);
-                job.albumsCompleted = 0;
-                job.updatedAt = new Date();
-                await saveImportJob(job);
-            }
+            await Promise.all(
+                tracksToDownload.map((t) =>
+                    queue.add(async () => {
+                        const result = await this.acquirePlaylistTrack(t, settings, {
+                            soulseekUsable,
+                            youtubeUsable,
+                        });
+                        if (result.success) {
+                            successful++;
+                        } else {
+                            failed++;
+                            logger?.warn(
+                                `Track download failed: ${t.artist} - ${t.title} (${result.source}): ${
+                                    result.error || "unknown error"
+                                }`
+                            );
+                        }
+                    })
+                )
+            );
+
+            job.albumsCompleted = successful;
+            job.updatedAt = new Date();
+            await saveImportJob(job);
+
+            logger?.info(
+                `Playlist download complete: ${successful} succeeded, ${failed} failed`
+            );
         }
 
         job.status = "scanning";
@@ -2268,7 +2404,10 @@ class SpotifyImportService {
                 error: dbJob.error,
                 createdAt: dbJob.createdAt,
                 updatedAt: dbJob.updatedAt,
-                pendingTracks: (dbJob.pendingTracks as any) || [],
+                pendingTracks: ((dbJob.pendingTracks as any) || []).map((t: any) => ({
+                    ...t,
+                    durationMs: typeof t?.durationMs === "number" ? t.durationMs : 0,
+                })),
             }))
             .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     }

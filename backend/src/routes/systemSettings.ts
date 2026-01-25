@@ -116,8 +116,12 @@ const systemSettingsSchema = z.object({
     audiobookshelfApiKey: z.string().nullable().optional(),
 
     // Soulseek (direct connection via soulseek-ts)
+    soulseekEnabled: z.boolean().optional(),
     soulseekUsername: z.string().nullable().optional(),
     soulseekPassword: z.string().nullable().optional(),
+
+    // YouTube Music (yt-dlp fallback)
+    youtubeEnabled: z.boolean().optional(),
 
     // Spotify (for playlist import)
     spotifyClientId: z.string().nullable().optional(),

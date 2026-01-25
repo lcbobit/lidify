@@ -67,8 +67,9 @@ interface MatchScore {
 // ============================================
 
 const YOUTUBE_MUSIC_ENABLED = process.env.YOUTUBE_MUSIC_ENABLED !== "false";
-const DOWNLOAD_FORMAT = process.env.YOUTUBE_MUSIC_DOWNLOAD_FORMAT || "mp3";
-const DOWNLOAD_QUALITY = process.env.YOUTUBE_MUSIC_DOWNLOAD_QUALITY || "320";
+// Use opus (YouTube's native format ~130kbps) to avoid lossy transcoding
+// MP3 transcoding from opus source just wastes space without quality gain
+const DOWNLOAD_FORMAT = process.env.YOUTUBE_MUSIC_DOWNLOAD_FORMAT || "opus";
 
 // Cache TTLs
 const STREAM_URL_TTL = 4 * 60 * 60; // 4 hours (conservative vs 5-6h expiry)
@@ -537,7 +538,6 @@ class YouTubeMusicService {
 
         const url = `https://music.youtube.com/watch?v=${videoId}`;
         const format = DOWNLOAD_FORMAT;
-        const quality = DOWNLOAD_QUALITY;
 
         // Ensure output directory exists
         if (!fs.existsSync(outputDir)) {
@@ -553,11 +553,12 @@ class YouTubeMusicService {
 
         try {
             // Build yt-dlp command
+            // Use best audio quality available, no transcoding if using native format (opus)
             const command = [
                 "yt-dlp",
                 "-x", // Extract audio
                 "--audio-format", format,
-                "--audio-quality", quality === "320" ? "0" : quality, // 0 = best
+                "--audio-quality", "0", // 0 = best available (no upsampling)
                 "--embed-thumbnail",
                 "--add-metadata",
                 "--no-warnings",

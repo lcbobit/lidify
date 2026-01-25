@@ -28,8 +28,11 @@ export interface SystemSettings {
     audiobookshelfUrl: string;
     audiobookshelfApiKey: string;
     // Soulseek (direct connection via slsk-client)
+    soulseekEnabled: boolean;
     soulseekUsername: string;
     soulseekPassword: string;
+    // YouTube Music (yt-dlp fallback)
+    youtubeEnabled: boolean;
     // Spotify (for playlist import)
     spotifyClientId: string;
     spotifyClientSecret: string;

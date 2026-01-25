@@ -99,8 +99,12 @@ model SystemSettings {
   audiobookshelfApiKey  String? // Encrypted
 
   // Soulseek (direct connection via slsk-client)
+  soulseekEnabled  Boolean @default(true) // Enable/disable Soulseek downloads
   soulseekUsername String? // Soulseek network username
   soulseekPassword String? // Soulseek network password - Encrypted
+
+  // YouTube Music (yt-dlp fallback for streaming/downloads)
+  youtubeEnabled Boolean @default(true) // Enable/disable YouTube Music fallback
 
   // Spotify (for playlist import via URL)
   spotifyClientId     String?
