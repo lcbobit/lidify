@@ -26,6 +26,7 @@ export function LibraryTracksList({ tracks }: LibraryTracksListProps) {
             id: t.id,
             title: t.title,
             duration: t.duration,
+            filePath: t.filePath, // Include filePath to use local streaming
             artist: {
                 id: t.album.artist.id,
                 name: t.album.artist.name,

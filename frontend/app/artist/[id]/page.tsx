@@ -83,6 +83,7 @@ export default function ArtistPage() {
     const formattedTracks = playableTracks.map((t: any) => ({
       id: t.id,
       title: t.title,
+      filePath: t.filePath, // Include filePath to use local streaming
       artist: { name: artist.name, id: artist.id },
       album: {
         title: t.album?.title || "Unknown",

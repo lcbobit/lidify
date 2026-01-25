@@ -138,6 +138,7 @@ export default function LibraryPage() {
             id: track.id,
             title: track.title,
             duration: track.duration,
+            filePath: track.filePath, // Include filePath to use local streaming
             artist: {
                 id: track.album?.artist?.id,
                 name: track.album?.artist?.name || "Unknown Artist",

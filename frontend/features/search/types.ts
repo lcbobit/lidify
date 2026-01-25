@@ -30,6 +30,7 @@ export interface LibraryTrack {
     id: string;
     title: string;
     duration: number;
+    filePath?: string;
     album: {
         id: string;
         title: string;

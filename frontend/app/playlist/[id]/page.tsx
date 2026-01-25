@@ -338,6 +338,7 @@ export default function PlaylistDetailPage() {
         const tracks = playlist.items.map((item: PlaylistItem) => ({
             id: item.track.id,
             title: item.track.title,
+            filePath: item.track.filePath, // Include filePath to use local streaming
             artist: {
                 name: item.track.album.artist.name,
                 id: item.track.album.artist.id,
@@ -358,6 +359,7 @@ export default function PlaylistDetailPage() {
         const tracks = playlist.items.map((item: PlaylistItem) => ({
             id: item.track.id,
             title: item.track.title,
+            filePath: item.track.filePath, // Include filePath to use local streaming
             artist: {
                 name: item.track.album.artist.name,
                 id: item.track.album.artist.id,
@@ -376,6 +378,7 @@ export default function PlaylistDetailPage() {
         const formattedTrack = {
             id: track.id,
             title: track.title,
+            filePath: track.filePath, // Include filePath to use local streaming
             artist: {
                 name: track.album.artist.name,
                 id: track.album.artist.id,

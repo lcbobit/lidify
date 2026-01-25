@@ -150,6 +150,7 @@ export function MoodMixer({ isOpen, onClose }: MoodMixerProps) {
                 const tracks: Track[] = mix.tracks.map((t) => ({
                     id: t.id,
                     title: t.title,
+                    filePath: t.filePath, // Include filePath to use local streaming
                     artist: {
                         name: t.album?.artist?.name || "Unknown Artist",
                         id: t.album?.artist?.id,

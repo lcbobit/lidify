@@ -16,6 +16,7 @@ interface MixTrack {
     title: string;
     duration: number;
     albumId: string;
+    filePath?: string;
     album: {
         title: string;
         coverUrl?: string;
@@ -70,6 +71,7 @@ export default function MixPage() {
         return tracks.map((track) => ({
             id: track.id,
             title: track.title,
+            filePath: track.filePath, // Include filePath to use local streaming
             artist: {
                 name: track.album.artist.name,
                 id: track.album.artist.id,

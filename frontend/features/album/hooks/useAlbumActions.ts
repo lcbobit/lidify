@@ -24,6 +24,7 @@ export function useAlbumActions() {
                 id: track.id,
                 title: track.title,
                 duration: track.duration,
+                filePath: track.filePath, // Include filePath to use local streaming
                 artist: {
                     name: track.artist?.name || album.artist?.name || "",
                     id: track.artist?.id || album.artist?.id || "",
@@ -52,6 +53,7 @@ export function useAlbumActions() {
                 id: track.id,
                 title: track.title,
                 duration: track.duration,
+                filePath: track.filePath, // Include filePath to use local streaming
                 artist: {
                     name: track.artist?.name || album.artist?.name || "",
                     id: track.artist?.id || album.artist?.id || "",
@@ -82,6 +84,7 @@ export function useAlbumActions() {
             id: track.id,
             title: track.title,
             duration: track.duration,
+            filePath: track.filePath, // Include filePath to use local streaming
             artist: {
                 name: track.artist?.name || album.artist?.name || "",
                 id: track.artist?.id || album.artist?.id || "",
@@ -106,6 +109,7 @@ export function useAlbumActions() {
             id: track.id,
             title: track.title,
             duration: track.duration,
+            filePath: track.filePath, // Include filePath to use local streaming
             artist: {
                 name: track.artist?.name || album.artist?.name || "",
                 id: track.artist?.id || album.artist?.id || "",
