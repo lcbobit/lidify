@@ -134,6 +134,9 @@ interface AudioStateContextType {
     vibeSourceFeatures: AudioFeatures | null;
     vibeQueueIds: string[];
 
+    // Playback source (local file vs YouTube streaming)
+    currentSource: "local" | "youtube" | null;
+
     // Internal state
     isHydrated: boolean;
     lastServerSync: Date | null;
@@ -160,6 +163,7 @@ interface AudioStateContextType {
     setVibeMode: (mode: SetStateAction<boolean>) => void;
     setVibeSourceFeatures: (features: SetStateAction<AudioFeatures | null>) => void;
     setVibeQueueIds: (ids: SetStateAction<string[]>) => void;
+    setCurrentSource: (source: SetStateAction<"local" | "youtube" | null>) => void;
 }
 
 const AudioStateContext = createContext<AudioStateContextType | undefined>(
@@ -208,6 +212,9 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
     const [vibeMode, setVibeMode] = useState(false);
     const [vibeSourceFeatures, setVibeSourceFeatures] = useState<AudioFeatures | null>(null);
     const [vibeQueueIds, setVibeQueueIds] = useState<string[]>([]);
+    
+    // Playback source tracking (local file vs YouTube streaming)
+    const [currentSource, setCurrentSource] = useState<"local" | "youtube" | null>(null);
 
     // Restore state from localStorage on mount
     useEffect(() => {
@@ -676,6 +683,7 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
             vibeMode,
             vibeSourceFeatures,
             vibeQueueIds,
+            currentSource,
             isHydrated,
             lastServerSync,
             repeatOneCount,
@@ -697,6 +705,7 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
             setVibeMode,
             setVibeSourceFeatures,
             setVibeQueueIds,
+            setCurrentSource,
         }),
         [
             currentTrack,
@@ -715,6 +724,7 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
             vibeMode,
             vibeSourceFeatures,
             vibeQueueIds,
+            currentSource,
             isHydrated,
             lastServerSync,
             repeatOneCount,

@@ -42,6 +42,9 @@ export function useAudio() {
         vibeSourceFeatures: state.vibeSourceFeatures,
         vibeQueueIds: state.vibeQueueIds,
 
+        // Playback source (local file vs YouTube streaming)
+        currentSource: state.currentSource,
+
         // Playback
         isPlaying: playback.isPlaying,
         currentTime: playback.currentTime,

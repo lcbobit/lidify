@@ -181,12 +181,15 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
 
         if (playAccumulatedSecondsRef.current >= minPlaySeconds) {
             playLoggedRef.current = true;
-            api.logPlay(trackId, playAccumulatedSecondsRef.current).catch(
-                (error) => {
-                    console.error("Failed to log play:", error);
-                    playLoggedRef.current = false;
+            api.logPlay(trackId, playAccumulatedSecondsRef.current).catch((error: any) => {
+                // 404 means the track isn't in our DB (common for external playlist playback).
+                // Treat as a no-op so we don't retry every tick and spam logs.
+                if (error?.status === 404) {
+                    return;
                 }
-            );
+                console.error("Failed to log play:", error);
+                playLoggedRef.current = false;
+            });
         }
     }, [
         playback.currentTime,

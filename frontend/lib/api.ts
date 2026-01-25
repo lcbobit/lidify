@@ -96,6 +96,16 @@ export interface SavedMoodMixResponse {
     mix: MoodBucketMix & { generatedAt: string };
 }
 
+// YouTube Music Types
+export interface YouTubeMusicTrack {
+    videoId: string;
+    title: string;
+    artist: string;
+    album?: string;
+    duration: number; // seconds
+    thumbnail?: string;
+}
+
 // Dynamically determine API URL based on configuration
 const getApiBaseUrl = () => {
     // Server-side rendering
@@ -520,6 +530,212 @@ class ApiClient {
         return baseUrl;
     }
 
+    // ============================================
+    // YouTube Music Streaming
+    // ============================================
+
+    /**
+     * Get YouTube Music streaming status
+     */
+    async getYouTubeStatus(): Promise<{
+        enabled: boolean;
+        available: boolean;
+        ytdlpVersion: string | null;
+    }> {
+        return this.request("/library/youtube/status");
+    }
+
+    /**
+     * Search YouTube Music for tracks
+     */
+    async searchYouTubeMusic(
+        query: string,
+        limit: number = 10
+    ): Promise<{
+        query: string;
+        results: YouTubeMusicTrack[];
+        count: number;
+    }> {
+        const params = new URLSearchParams({ q: query, limit: String(limit) });
+        return this.request(`/library/youtube/search?${params.toString()}`);
+    }
+
+    /**
+     * Find the best YouTube Music match for a track
+     */
+    async findYouTubeMatch(
+        artist: string,
+        title: string,
+        duration?: number,
+        album?: string
+    ): Promise<{
+        match: YouTubeMusicTrack | null;
+        query: { artist: string; title: string; duration?: number; album?: string };
+    }> {
+        const params = new URLSearchParams({ artist, title });
+        if (duration) params.append("duration", String(duration));
+        if (album) params.append("album", album);
+
+        try {
+            return await this.request(`/library/youtube/match?${params.toString()}`);
+        } catch (error: any) {
+            // 404 means no match found - return null match instead of throwing
+            if (error.status === 404) {
+                return { match: null, query: { artist, title, duration, album } };
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Get YouTube Music stream URL for a video
+     * Returns the proxied stream URL (handles IP-locked streams)
+     */
+    getYouTubeStreamUrl(videoId: string): string {
+        const baseUrl = `${this.getBaseUrl()}/api/library/youtube/stream/${videoId}`;
+        if (this.token) {
+            return `${baseUrl}?token=${encodeURIComponent(this.token)}`;
+        }
+        return baseUrl;
+    }
+
+    /**
+     * Download a YouTube Music track to the library
+     */
+    async downloadYouTubeTrack(
+        videoId: string,
+        options?: { outputDir?: string; filename?: string }
+    ): Promise<{
+        success: boolean;
+        filePath: string;
+        format: string;
+        duration: number;
+    }> {
+        return this.request(`/library/youtube/download/${videoId}`, {
+            method: "POST",
+            body: JSON.stringify(options || {}),
+        });
+    }
+
+    /**
+     * Clear YouTube Music cache (admin only)
+     */
+    async clearYouTubeCache(): Promise<{ success: boolean; message: string }> {
+        return this.request("/library/youtube/cache", { method: "DELETE" });
+    }
+
+    // Prefetch configuration
+    private static readonly PREFETCH_DEBOUNCE_MS = 400;
+    private static readonly PREFETCH_CACHE_SIZE = 200;
+    private static prefetchedKeys = new Set<string>();
+    private static pendingPrefetch = new Map<
+        string,
+        { artist: string; title: string; duration?: number; album?: string }
+    >();
+    private static prefetchTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    /**
+     * Pre-fetch YouTube Music matches for multiple tracks (fire-and-forget)
+     * This warms the cache so subsequent findYouTubeMatch calls are instant
+     * Includes debouncing (400ms) and deduplication to prevent spam during rapid skipping
+     */
+    prefetchYouTubeMatches(
+        tracks: Array<{
+            artist: string;
+            title: string;
+            duration?: number;
+            album?: string;
+        }>
+    ): void {
+        if ((!tracks || tracks.length === 0) && ApiClient.pendingPrefetch.size === 0) return;
+
+        // Collect tracks into a pending set so rapid successive calls don't drop earlier work.
+        for (const t of tracks) {
+            if (!t?.artist || !t?.title) continue;
+            const artist = String(t.artist).trim();
+            const title = String(t.title).trim();
+            if (!artist || !title) continue;
+
+            const key = `${artist}|${title}|${t.duration || 0}`;
+            if (ApiClient.prefetchedKeys.has(key)) continue;
+
+            // Keep the latest payload for the key (album/duration may differ slightly)
+            ApiClient.pendingPrefetch.set(key, {
+                artist,
+                title,
+                duration: t.duration,
+                album: t.album,
+            });
+        }
+
+        if (ApiClient.pendingPrefetch.size === 0) {
+            return;
+        }
+
+        // Clear any pending prefetch (debounce)
+        if (ApiClient.prefetchTimeout) {
+            clearTimeout(ApiClient.prefetchTimeout);
+        }
+
+        ApiClient.prefetchTimeout = setTimeout(() => {
+            this.flushPendingYouTubePrefetch();
+        }, ApiClient.PREFETCH_DEBOUNCE_MS);
+    }
+
+    private flushPendingYouTubePrefetch(): void {
+        ApiClient.prefetchTimeout = null;
+
+        // Drain pending keys into a request batch (backend caps at 50).
+        const entries = Array.from(ApiClient.pendingPrefetch.entries());
+        const batchEntries = entries.slice(0, 50);
+        for (const [key] of batchEntries) {
+            ApiClient.pendingPrefetch.delete(key);
+            ApiClient.prefetchedKeys.add(key);
+
+            // LRU eviction if cache is full
+            if (ApiClient.prefetchedKeys.size > ApiClient.PREFETCH_CACHE_SIZE) {
+                const first = ApiClient.prefetchedKeys.values().next().value;
+                if (first) ApiClient.prefetchedKeys.delete(first);
+            }
+        }
+
+        const newTracks = batchEntries.map(([, payload]) => payload);
+        if (newTracks.length === 0) return;
+
+        console.log(`[YouTube] Prefetching ${newTracks.length} tracks...`);
+
+        // Fire and forget - don't await the result
+        this.request("/library/youtube/match-batch", {
+            method: "POST",
+            body: JSON.stringify({ tracks: newTracks }),
+        })
+            .then((result: any) => {
+                console.log(
+                    `[YouTube] Prefetch complete: ${result.matched}/${result.total} matched`
+                );
+            })
+            .catch((err) => {
+                // Log errors for debugging
+                console.warn("[YouTube] Prefetch failed:", err.message);
+
+                // Allow retry on next call by removing these keys from the recent-cache and re-queueing.
+                for (const [key] of batchEntries) {
+                    ApiClient.prefetchedKeys.delete(key);
+                }
+                for (const [key, payload] of batchEntries) {
+                    ApiClient.pendingPrefetch.set(key, payload);
+                }
+            })
+            .finally(() => {
+                // If we still have pending items (e.g., >50), flush the next chunk soon.
+                if (ApiClient.pendingPrefetch.size > 0 && !ApiClient.prefetchTimeout) {
+                    ApiClient.prefetchTimeout = setTimeout(() => {
+                        this.flushPendingYouTubePrefetch();
+                    }, 50);
+                }
+            });
+    }
+
     getCoverArtUrl(coverId: string, size?: number): string {
         const baseUrl = this.getBaseUrl();
 
@@ -737,6 +953,9 @@ class ApiClient {
         return this.request<any>("/plays", {
             method: "POST",
             body: JSON.stringify({ trackId, playedSeconds }),
+            // It's valid to play tracks that aren't in the local DB (e.g. external playlists).
+            // Don't spam console with expected 404s.
+            silent404: true,
         });
     }
 
