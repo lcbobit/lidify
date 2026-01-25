@@ -43,6 +43,7 @@ export function useArtistActions() {
           year: album.year,
         },
         duration: track.duration,
+        filePath: track.filePath, // Include filePath to use local streaming
       }));
 
       // Sort tracks within album by track number
@@ -113,6 +114,7 @@ export function useArtistActions() {
             id: track.album?.id,
           },
           duration: track.duration,
+          filePath: track.filePath, // Include filePath to use local streaming
         };
 
         playTrackFromContext(formattedTrack);

@@ -41,6 +41,7 @@ export interface Track {
     playCount?: number;
     userPlayCount?: number;
     listeners?: number;
+    filePath?: string;
     album?: {
         id?: string;
         title?: string;
