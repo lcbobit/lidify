@@ -44,7 +44,6 @@ export function useRemotePlaybackIntegration() {
 
     // Execute a command immediately (internal helper)
     const executeCommand = useCallback((command: RemoteCommand) => {
-        console.log("[RemoteIntegration] Executing command:", command.command, command.payload);
 
         switch (command.command) {
             case "play":
@@ -188,7 +187,6 @@ export function useRemotePlaybackIntegration() {
         }
 
         isProcessingQueueRef.current = true;
-        console.log(`[RemoteIntegration] Processing ${commandQueueRef.current.length} queued command(s)`);
 
         // Take the LAST command of each type (e.g., if multiple "next" commands, only execute once)
         const commandsByType = new Map<string, RemoteCommand>();
@@ -218,8 +216,6 @@ export function useRemotePlaybackIntegration() {
         const isLoading = howlerEngine.isCurrentlyLoading();
         const hasTrack = currentTrackRef.current !== null;
 
-        console.log(`[RemoteIntegration] Received command: ${command.command}, isLoading=${isLoading}, hasTrack=${hasTrack}`);
-
         // Commands that should always execute immediately
         const immediateCommands = ["pause", "volume", "setQueue", "playTrack", "transferPlayback"];
 
@@ -230,7 +226,6 @@ export function useRemotePlaybackIntegration() {
 
         // For play/next/prev: if loading OR no track loaded, queue the command
         if (isLoading || !hasTrack) {
-            console.log(`[RemoteIntegration] Queueing ${command.command} - loading or no track`);
             commandQueueRef.current.push(command);
 
             // If no track and not loading, this might be a fresh page
@@ -252,7 +247,6 @@ export function useRemotePlaybackIntegration() {
     // Listen for load complete to process queued commands
     useEffect(() => {
         const handleLoad = () => {
-            console.log("[RemoteIntegration] Audio loaded, processing queue");
             // Small delay to ensure state is fully updated
             setTimeout(() => {
                 processQueue();
@@ -296,7 +290,6 @@ export function useRemotePlaybackIntegration() {
     // Register stop playback handler (when another device becomes active)
     useEffect(() => {
         remote.setOnStopPlayback(() => {
-            console.log("[RemoteIntegration] Stopping local playback - another device is now active");
             // Pause through the controls context (updates state)
             controls.pause();
             // Also directly pause the audio engine to ensure immediate stop
@@ -308,8 +301,7 @@ export function useRemotePlaybackIntegration() {
     // Register become active player handler
     useEffect(() => {
         remote.setOnBecomeActivePlayer(() => {
-            console.log("[RemoteIntegration] This device is now the active player");
-            // Resume playback if we were playing before
+            // This device is now the active player
         });
     }, [remote]);
 
@@ -347,7 +339,6 @@ export function useRemotePlaybackIntegration() {
                     };
                 }
 
-                console.log(`[RemoteIntegration] Interval broadcast: time=${currentPlayback.currentTime.toFixed(1)}, playing=${currentPlayback.isPlaying}`);
                 remote.broadcastState({
                     isPlaying: currentPlayback.isPlaying,
                     currentTrack,
@@ -374,9 +365,7 @@ export function useRemotePlaybackIntegration() {
         // Don't broadcast if we're not the active player - we'd be overwriting
         // the actual playing device's state with our stale local state
         const isActive = remote.getIsActivePlayer();
-        console.log(`[RemoteIntegration] Broadcast check: isActive=${isActive}, currentTime=${playback.currentTime.toFixed(1)}, isPlaying=${playback.isPlaying}`);
         if (!isActive) {
-            console.log("[RemoteIntegration] Skipping broadcast - not active player");
             return;
         }
 
@@ -413,13 +402,6 @@ export function useRemotePlaybackIntegration() {
         const doBroadcast = () => {
             lastBroadcastRef.current = stateSignature;
             lastBroadcastTrackIdRef.current = currentTrackId;
-            console.log("[RemoteIntegration] Broadcasting state:", {
-                trackId: currentTrackId,
-                isPlaying: playback.isPlaying,
-                currentTime: playback.currentTime.toFixed(1),
-                volume: state.volume,
-                trackChanged
-            });
             remote.broadcastState({
                 isPlaying: playback.isPlaying,
                 currentTrack,
