@@ -3,7 +3,7 @@
 import { useAudioState } from "@/lib/audio-state-context";
 import { useAudioPlayback } from "@/lib/audio-playback-context";
 import { useRemoteAwareAudioControls } from "@/lib/remote-aware-audio-controls-context";
-import { useRemotePlayback } from "@/lib/remote-playback-context";
+
 import { api } from "@/lib/api";
 import Image from "next/image";
 import Link from "next/link";
@@ -25,9 +25,8 @@ import {
     AudioWaveform,
     ChevronUp,
     ChevronDown,
-    Cast,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { KeyboardShortcutsTooltip } from "./KeyboardShortcutsTooltip";
 import { DeviceSelector } from "./DeviceSelector";
@@ -87,12 +86,29 @@ export function FullPlayer() {
         activePlayerState,
     } = useRemoteAwareAudioControls();
 
-    // Get remote playback info for the indicator
-    const { devices, activePlayerId } = useRemotePlayback();
-    const activeDevice = devices.find(d => d.deviceId === activePlayerId);
-
     const [isVibeLoading, setIsVibeLoading] = useState(false);
     const [isVibePanelExpanded, setIsVibePanelExpanded] = useState(false);
+    const [optimisticRemoteVolume, setOptimisticRemoteVolume] = useState<number | null>(null);
+
+    const isControllingRemote = !isActivePlayer && !!activePlayerState;
+
+    // Clear optimistic volume when leaving remote control, or when remote catches up
+    useEffect(() => {
+        if (!isControllingRemote) {
+            if (optimisticRemoteVolume !== null) setOptimisticRemoteVolume(null);
+            return;
+        }
+        if (optimisticRemoteVolume === null) return;
+        const remoteVol = activePlayerState?.volume;
+        if (typeof remoteVol === "number" && Math.abs(remoteVol - optimisticRemoteVolume) < 0.02) {
+            setOptimisticRemoteVolume(null);
+        }
+    }, [isControllingRemote, activePlayerState?.volume, optimisticRemoteVolume]);
+
+    // Get display volume - use remote volume when controlling remote device
+    const displayVolume = isControllingRemote
+        ? (optimisticRemoteVolume ?? activePlayerState?.volume ?? volume)
+        : volume;
 
     // Get current track's audio features for vibe comparison
     const currentTrackFeatures = queue[currentIndex]?.audioFeatures || null;
@@ -230,6 +246,7 @@ export function FullPlayer() {
 
     const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const newVolume = parseInt(e.target.value) / 100;
+        if (isControllingRemote) setOptimisticRemoteVolume(newVolume);
         setVolume(newVolume);
     };
 
@@ -330,58 +347,6 @@ export function FullPlayer() {
                 </button>
             )}
 
-            {/* Remote Control Indicator - shows when controlling another device */}
-            {!isActivePlayer && activeDevice && (
-                <div className="absolute -top-12 left-4 right-4 z-10">
-                    <div className="bg-[#1a1a1a] border border-white/10 rounded-lg px-4 py-2 flex items-center gap-3 shadow-lg">
-                        <div className="flex items-center gap-2 text-emerald-400">
-                            <Cast className="w-4 h-4" />
-                            <span className="text-xs font-medium">
-                                Controlling: {activeDevice.deviceName}
-                            </span>
-                        </div>
-                        {activePlayerState?.currentTrack && (
-                            <>
-                                <div className="h-4 w-px bg-white/10" />
-                                <div className="flex items-center gap-3 flex-1 min-w-0">
-                                    {activePlayerState.currentTrack.coverArt && (
-                                        <div className="w-8 h-8 rounded overflow-hidden flex-shrink-0">
-                                            <Image
-                                                src={api.getCoverArtUrl(activePlayerState.currentTrack.coverArt, 50)}
-                                                alt=""
-                                                width={32}
-                                                height={32}
-                                                className="object-cover"
-                                                unoptimized
-                                            />
-                                        </div>
-                                    )}
-                                    <div className="min-w-0 flex-1">
-                                        <p className="text-sm text-white truncate">
-                                            {activePlayerState.currentTrack.title}
-                                        </p>
-                                        <p className="text-xs text-gray-400 truncate">
-                                            {activePlayerState.currentTrack.artist}
-                                        </p>
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                        {activePlayerState.isPlaying ? (
-                                            <div className="flex items-center gap-0.5">
-                                                <div className="w-0.5 h-3 bg-emerald-400 rounded-full animate-pulse" />
-                                                <div className="w-0.5 h-4 bg-emerald-400 rounded-full animate-pulse delay-75" />
-                                                <div className="w-0.5 h-2 bg-emerald-400 rounded-full animate-pulse delay-150" />
-                                            </div>
-                                        ) : (
-                                            <Pause className="w-3 h-3 text-gray-400" />
-                                        )}
-                                    </div>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                </div>
-            )}
-
             <div className="h-24 bg-black border-t border-white/[0.08]">
                 {/* Subtle top glow */}
                 <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
@@ -411,7 +376,20 @@ export function FullPlayer() {
                     ) : (
                         <div className="relative w-14 h-14 flex-shrink-0">
                             <div className="relative w-full h-full bg-gradient-to-br from-[#2a2a2a] to-[#1a1a1a] rounded-full overflow-hidden shadow-lg flex items-center justify-center">
-                                <MusicIcon className="w-6 h-6 text-gray-500" />
+                                {coverUrl ? (
+                                    <Image
+                                        key={coverUrl}
+                                        src={coverUrl}
+                                        alt={title}
+                                        fill
+                                        sizes="56px"
+                                        className="object-cover"
+                                        priority
+                                        unoptimized
+                                    />
+                                ) : (
+                                    <MusicIcon className="w-6 h-6 text-gray-500" />
+                                )}
                             </div>
                         </div>
                     )}
@@ -640,7 +618,7 @@ export function FullPlayer() {
                         onClick={toggleMute}
                         className="text-gray-400 hover:text-white transition-all duration-200 hover:scale-110"
                     >
-                        {isMuted || volume === 0 ? (
+                        {isMuted || displayVolume === 0 ? (
                             <VolumeX className="w-5 h-5" />
                         ) : (
                             <Volume2 className="w-5 h-5" />
@@ -652,7 +630,7 @@ export function FullPlayer() {
                             type="range"
                             min="0"
                             max="100"
-                            value={volume * 100}
+                            value={Math.round(displayVolume * 100)}
                             onChange={handleVolumeChange}
                             className="w-full h-1 bg-white/[0.15] rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:shadow-lg [&::-webkit-slider-thumb]:shadow-white/30 [&::-webkit-slider-thumb]:transition-all [&::-webkit-slider-thumb]:hover:scale-110"
                         />

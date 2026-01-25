@@ -6,6 +6,7 @@ import { useAudioState, Track } from "@/lib/audio-state-context";
 import { useAudioPlayback } from "@/lib/audio-playback-context";
 import { useAudioControls } from "@/lib/audio-controls-context";
 import { howlerEngine } from "@/lib/howler-engine";
+import { api } from "@/lib/api";
 
 /**
  * Hook that integrates the remote playback system with the audio controls.
@@ -42,8 +43,15 @@ export function useRemotePlaybackIntegration() {
     currentTrackRef.current = state.currentTrack;
     volumeRef.current = state.volume;
 
+    // Keep refs for full state/playback objects for callbacks that need current values
+    const playbackRef = useRef(playback);
+    const stateRef = useRef(state);
+    playbackRef.current = playback;
+    stateRef.current = state;
+
     // Execute a command immediately (internal helper)
     const executeCommand = useCallback((command: RemoteCommand) => {
+        console.log(`[RemoteIntegration] executeCommand: ${command.command}`, command.payload ? { payloadKeys: Object.keys(command.payload) } : {});
 
         switch (command.command) {
             case "play":
@@ -97,19 +105,34 @@ export function useRemotePlaybackIntegration() {
             case "playTrack":
                 if (command.payload?.track) {
                     const track = command.payload.track as Track;
-                    // Set pending for autoplay error recovery
-                    pendingRemotePlayRef.current = {
-                        track,
-                        currentTime: 0,
-                        volume: volumeRef.current,
-                    };
-                    controls.playTrack(track);
-                    // Clear pending after a delay if no error occurred
-                    setTimeout(() => {
-                        if (pendingRemotePlayRef.current?.track?.id === track.id) {
-                            pendingRemotePlayRef.current = null;
+
+                    const hydrateAndPlay = async () => {
+                        let hydratedTrack = track;
+                        if (hydratedTrack?.id && !hydratedTrack.filePath) {
+                            try {
+                                hydratedTrack = await api.getTrack(hydratedTrack.id);
+                            } catch {
+                                // If hydration fails, fall back to the provided payload
+                            }
                         }
-                    }, 2000);
+
+                        // Set pending for autoplay error recovery
+                        pendingRemotePlayRef.current = {
+                            track: hydratedTrack,
+                            currentTime: 0,
+                            volume: volumeRef.current,
+                        };
+                        controls.playTrack(hydratedTrack);
+                        // Clear pending after a delay if no error occurred
+                        setTimeout(() => {
+                            if (pendingRemotePlayRef.current?.track?.id === hydratedTrack.id) {
+                                pendingRemotePlayRef.current = null;
+                            }
+                        }, 2000);
+                    };
+
+                    // Set pending for autoplay error recovery
+                    hydrateAndPlay();
                 }
                 break;
 
@@ -118,21 +141,50 @@ export function useRemotePlaybackIntegration() {
                     const tracks = command.payload.tracks as Track[];
                     const startIndex = command.payload.startIndex || 0;
                     const firstTrack = tracks[startIndex];
-                    // Set pending for autoplay error recovery
-                    if (firstTrack) {
-                        pendingRemotePlayRef.current = {
-                            track: firstTrack,
-                            currentTime: 0,
-                            volume: volumeRef.current,
-                        };
-                    }
-                    controls.playTracks(tracks, startIndex);
-                    // Clear pending after a delay if no error occurred
-                    setTimeout(() => {
-                        if (firstTrack && pendingRemotePlayRef.current?.track?.id === firstTrack.id) {
-                            pendingRemotePlayRef.current = null;
+
+                    const hydrateAndPlay = async () => {
+                        // Hydrate missing filePath for local playback reliability
+                        const hydratedTracks = await Promise.all(
+                            tracks.map(async (t) => {
+                                if (t?.id && !t.filePath) {
+                                    try {
+                                        return await api.getTrack(t.id);
+                                    } catch {
+                                        return t;
+                                    }
+                                }
+                                return t;
+                            })
+                        );
+
+                        const hydratedFirst = hydratedTracks[startIndex];
+
+                        // Set pending for autoplay error recovery
+                        if (hydratedFirst) {
+                            pendingRemotePlayRef.current = {
+                                track: hydratedFirst,
+                                currentTime: 0,
+                                volume: volumeRef.current,
+                            };
                         }
-                    }, 2000);
+                        controls.playTracks(hydratedTracks, startIndex);
+                        // Clear pending after a delay if no error occurred
+                        setTimeout(() => {
+                            if (hydratedFirst && pendingRemotePlayRef.current?.track?.id === hydratedFirst.id) {
+                                pendingRemotePlayRef.current = null;
+                            }
+                        }, 2000);
+                    };
+                    
+                    // DEBUG: Log track details to verify filePath is being transmitted
+                    console.log(`[RemoteIntegration] setQueue: ${tracks.length} tracks, startIndex=${startIndex}`);
+                    if (firstTrack) {
+                        console.log(`[RemoteIntegration] First track: "${firstTrack.title}" by ${firstTrack.artist?.name}`);
+                        console.log(`[RemoteIntegration] First track filePath: ${firstTrack.filePath || 'MISSING'}`);
+                        console.log(`[RemoteIntegration] First track keys: ${Object.keys(firstTrack).join(', ')}`);
+                    }
+                    
+                    hydrateAndPlay();
                 }
                 break;
 
@@ -142,35 +194,47 @@ export function useRemotePlaybackIntegration() {
                     const { track, currentTime, isPlaying, volume } = command.payload;
 
                     if (track) {
-                        // Store pending playback info for autoplay error recovery
-                        pendingRemotePlayRef.current = {
-                            track: track as Track,
-                            currentTime: typeof currentTime === "number" ? currentTime : 0,
-                            volume: typeof volume === "number" ? volume : 1,
+                        const hydrateAndTransfer = async () => {
+                            let hydratedTrack = track as Track;
+                            if (hydratedTrack?.id && !hydratedTrack.filePath) {
+                                try {
+                                    hydratedTrack = await api.getTrack(hydratedTrack.id);
+                                } catch {
+                                    // ignore
+                                }
+                            }
+
+                            // Store pending playback info for autoplay error recovery
+                            pendingRemotePlayRef.current = {
+                                track: hydratedTrack,
+                                currentTime: typeof currentTime === "number" ? currentTime : 0,
+                                volume: typeof volume === "number" ? volume : 1,
+                            };
+
+                            // Play the track
+                            controls.playTrack(hydratedTrack);
+
+                            // After a short delay, seek to the position and set volume
+                            setTimeout(() => {
+                                if (typeof currentTime === "number" && currentTime > 0) {
+                                    controls.seek(currentTime);
+                                }
+                                if (typeof volume === "number") {
+                                    controls.setVolume(volume);
+                                }
+                                // If source was playing, make sure we're playing
+                                if (isPlaying) {
+                                    controls.resume();
+                                }
+
+                                setTimeout(() => {
+                                    pendingRemotePlayRef.current = null;
+                                }, 1000);
+                            }, 500);
                         };
 
-                        // Play the track
-                        controls.playTrack(track as Track);
-
-                        // After a short delay, seek to the position and set volume
-                        setTimeout(() => {
-                            if (typeof currentTime === "number" && currentTime > 0) {
-                                controls.seek(currentTime);
-                            }
-                            if (typeof volume === "number") {
-                                controls.setVolume(volume);
-                            }
-                            // If source was playing, make sure we're playing
-                            if (isPlaying) {
-                                controls.resume();
-                            }
-
-                            // Clear pending after successful setup
-                            // (will be cleared earlier if autoplay error occurs)
-                            setTimeout(() => {
-                                pendingRemotePlayRef.current = null;
-                            }, 1000);
-                        }, 500);
+                        // Store pending playback info for autoplay error recovery
+                        hydrateAndTransfer();
                     }
                 }
                 break;
@@ -215,6 +279,13 @@ export function useRemotePlaybackIntegration() {
     const handleRemoteCommand = useCallback((command: RemoteCommand) => {
         const isLoading = howlerEngine.isCurrentlyLoading();
         const hasTrack = currentTrackRef.current !== null;
+
+        console.log(`[RemoteIntegration] handleRemoteCommand received: ${command.command}`, {
+            isLoading,
+            hasTrack,
+            fromDeviceId: command.fromDeviceId,
+            payloadKeys: command.payload ? Object.keys(command.payload) : [],
+        });
 
         // Commands that should always execute immediately
         const immediateCommands = ["pause", "volume", "setQueue", "playTrack", "transferPlayback"];
@@ -305,20 +376,45 @@ export function useRemotePlaybackIntegration() {
         });
     }, [remote]);
 
+    // Register state request handler - another device wants our current playback state
+    // Use refs to avoid stale closures - the callback should read current values when invoked
+    useEffect(() => {
+        remote.setOnStateRequest(() => {
+            const currentState = stateRef.current;
+            const currentPlayback = playbackRef.current;
+            
+            console.log("[RemoteIntegration] State requested, broadcasting current state");
+            
+            let currentTrack = null;
+            if (currentState.playbackType === "track" && currentState.currentTrack) {
+                currentTrack = {
+                    id: currentState.currentTrack.id,
+                    title: currentState.currentTrack.title,
+                    artist: currentState.currentTrack.artist?.name || "Unknown Artist",
+                    album: currentState.currentTrack.album?.title || "Unknown Album",
+                    coverArt: currentState.currentTrack.album?.coverArt,
+                    duration: currentState.currentTrack.duration,
+                };
+            }
+
+            remote.broadcastState({
+                isPlaying: currentPlayback.isPlaying,
+                currentTrack,
+                currentTime: currentPlayback.currentTime,
+                volume: currentState.volume,
+            });
+        });
+    }, [remote]);
+
     // Track the last broadcast track ID to detect track changes
     const lastBroadcastTrackIdRef = useRef<string | null>(null);
 
     // Interval-based broadcast for continuous time updates when active player
     const broadcastIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-    // Keep refs for values needed in interval callback to avoid stale closures
-    const playbackRef = useRef(playback);
-    const stateRef = useRef(state);
-    playbackRef.current = playback;
-    stateRef.current = state;
-
     useEffect(() => {
         // Only set up interval if this device is the active player
+        // Active players should always broadcast their state so controllers can display it
         const isActive = remote.getIsActivePlayer();
 
         if (isActive && remote.isConnected && playback.isPlaying) {
@@ -359,7 +455,7 @@ export function useRemotePlaybackIntegration() {
     // Broadcast state changes (debounced, but immediate for track changes)
     // IMPORTANT: Only the active player should broadcast its state
     useEffect(() => {
-        // Only broadcast if connected AND this device is the active player
+        // Only broadcast if connected AND this device is the active player AND in local mode
         if (!remote.isConnected) return;
 
         // Don't broadcast if we're not the active player - we'd be overwriting

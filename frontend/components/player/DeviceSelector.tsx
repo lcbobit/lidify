@@ -16,6 +16,7 @@ import {
     Pause,
     Pencil,
     X,
+    Cast,
 } from "lucide-react";
 import { cn } from "@/utils/cn";
 
@@ -46,9 +47,13 @@ export function DeviceSelector({ className, compact = false }: DeviceSelectorPro
         currentDeviceName,
         activePlayerId,
         isActivePlayer,
+        controlMode,
+        controlTargetId,
         sendCommand,
         transferPlayback,
         becomeActivePlayer,
+        goLocalMode,
+        controlDevice,
         refreshDevices,
         setDeviceName,
     } = useRemotePlayback();
@@ -121,20 +126,31 @@ export function DeviceSelector({ className, compact = false }: DeviceSelectorPro
     // Find current device and other devices
     const otherDevices = devices.filter(d => d.deviceId !== currentDeviceId);
     const playingDevice = devices.find(d => d.isPlaying && d.deviceId !== currentDeviceId);
+    
+    // Is this device currently being controlled (in remote mode)?
+    const isControllingRemote = controlMode === "remote" && controlTargetId !== null;
+    // Which device are we controlling?
+    const controlledDevice = isControllingRemote 
+        ? devices.find(d => d.deviceId === controlTargetId) 
+        : null;
 
-    // Handle device click - transfer playback or become active
+    // Handle device click
     const handleDeviceClick = (device: RemoteDevice) => {
         if (device.deviceId === currentDeviceId) {
-            // Clicking on this device - become the active player
-            if (!isActivePlayer) {
-                becomeActivePlayer();
+            // Clicking on THIS device
+            if (isControllingRemote) {
+                // Currently controlling remote - switch to local mode
+                // This does NOT transfer playback, just stops remote controlling
+                goLocalMode();
             }
+            // If already in local mode, do nothing (could add "already local" feedback)
             setIsOpen(false);
             return;
         }
 
-        // Transfer to another device
-        transferPlayback(device.deviceId, true);
+        // Clicking on ANOTHER device - start controlling it
+        // This doesn't transfer playback, just sets up remote control mode
+        controlDevice(device.deviceId);
         setIsOpen(false);
     };
 
@@ -152,14 +168,16 @@ export function DeviceSelector({ className, compact = false }: DeviceSelectorPro
                 className={cn(
                     "flex items-center gap-1.5 transition-colors rounded p-1.5",
                     isConnected
-                        ? playingDevice
-                            ? "text-green-500 hover:text-green-400"
+                        ? isControllingRemote
+                            ? "text-green-500 hover:text-green-400" // Green when controlling remote (selected)
                             : "text-gray-400 hover:text-white"
                         : "text-gray-500 hover:text-gray-400",
                     compact && "p-1"
                 )}
                 title={isConnected
-                    ? `Connected devices (${devices.length})`
+                    ? isControllingRemote && controlledDevice
+                        ? `Controlling: ${controlledDevice.deviceName}`
+                        : `Connected devices (${devices.length})`
                     : "Connecting to remote playback..."
                 }
             >
@@ -167,7 +185,10 @@ export function DeviceSelector({ className, compact = false }: DeviceSelectorPro
                     <>
                         <Speaker className={cn("w-4 h-4", compact && "w-3.5 h-3.5")} />
                         {!compact && otherDevices.length > 0 && (
-                            <span className="text-xs bg-gray-700 rounded-full px-1.5 py-0.5 min-w-[18px] text-center">
+                            <span className={cn(
+                                "text-xs rounded-full px-1.5 py-0.5 min-w-[18px] text-center",
+                                isControllingRemote ? "bg-green-500/30" : "bg-gray-700"
+                            )}>
                                 {devices.length}
                             </span>
                         )}
@@ -176,6 +197,16 @@ export function DeviceSelector({ className, compact = false }: DeviceSelectorPro
                     <WifiOff className={cn("w-4 h-4", compact && "w-3.5 h-3.5")} />
                 )}
             </button>
+
+            {/* Controlled device indicator - shows below button when controlling remote */}
+            {isControllingRemote && controlledDevice && !compact && (
+                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-0.5 flex items-center gap-1 text-green-500 whitespace-nowrap pointer-events-none">
+                    <Cast className="w-2.5 h-2.5" />
+                    <span className="text-[10px] font-medium max-w-[80px] truncate">
+                        {controlledDevice.deviceName}
+                    </span>
+                </div>
+            )}
 
             {/* Dropdown */}
             {isOpen && (
@@ -211,14 +242,17 @@ export function DeviceSelector({ className, compact = false }: DeviceSelectorPro
                                     .filter(d => d.deviceId === currentDeviceId)
                                     .map(device => {
                                         const Icon = getDeviceIcon(device.deviceName);
-                                        const isThisDeviceActive = isActivePlayer;
+                                        // This device is SELECTED (in local mode = controlling itself)
+                                        const isSelected = controlMode === "local";
+                                        // This device is actually playing audio
+                                        const isThisDevicePlaying = device.isPlaying;
                                         return (
                                             <div
                                                 key={device.deviceId}
                                                 className={cn(
-                                                    "w-full px-4 py-3 flex items-center gap-3 text-left transition-colors",
-                                                    isThisDeviceActive
-                                                        ? "bg-gray-800/50"
+                                                    "w-full px-4 py-3 flex items-center gap-3 text-left transition-colors cursor-pointer",
+                                                    isSelected
+                                                        ? "bg-green-500/10 border-l-2 border-green-500"
                                                         : "bg-gray-800/30 hover:bg-gray-800/50"
                                                 )}
                                             >
@@ -226,14 +260,15 @@ export function DeviceSelector({ className, compact = false }: DeviceSelectorPro
                                                     onClick={() => handleDeviceClick(device)}
                                                     className={cn(
                                                         "w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0",
-                                                        isThisDeviceActive
+                                                        isSelected
                                                             ? "bg-green-500/20"
-                                                            : "bg-gray-700"
+                                                            : "bg-gray-700 hover:bg-gray-600"
                                                     )}
+                                                    title={isSelected ? "Selected" : "Switch to local mode"}
                                                 >
                                                     <Icon className={cn(
                                                         "w-4 h-4",
-                                                        isThisDeviceActive ? "text-green-500" : "text-gray-400"
+                                                        isSelected ? "text-green-500" : "text-gray-400"
                                                     )} />
                                                 </button>
                                                 <div className="flex-1 min-w-0" onClick={() => !isEditing && handleDeviceClick(device)}>
@@ -261,7 +296,7 @@ export function DeviceSelector({ className, compact = false }: DeviceSelectorPro
                                                             <>
                                                                 <p className={cn(
                                                                     "text-sm font-medium truncate",
-                                                                    isThisDeviceActive ? "text-green-500" : "text-white"
+                                                                    isSelected ? "text-green-500" : "text-white"
                                                                 )}>
                                                                     {device.deviceName}
                                                                 </p>
@@ -272,21 +307,18 @@ export function DeviceSelector({ className, compact = false }: DeviceSelectorPro
                                                                 >
                                                                     <Pencil className="w-3 h-3" />
                                                                 </button>
-                                                                {isThisDeviceActive && (
+                                                                {isSelected && (
                                                                     <Check className="w-4 h-4 text-green-500 flex-shrink-0" />
                                                                 )}
                                                             </>
                                                         )}
                                                     </div>
                                                     <p className="text-xs text-gray-500">
-                                                        {isThisDeviceActive
-                                                            ? "This device • Playing"
-                                                            : "This device • Click to play here"
-                                                        }
+                                                        This device {isThisDevicePlaying && "• Playing"}
                                                     </p>
                                                 </div>
-                                                {isThisDeviceActive && device.isPlaying && (
-                                                    <Volume2 className="w-4 h-4 text-green-500 animate-pulse" />
+                                                {isThisDevicePlaying && (
+                                                    <Volume2 className="w-4 h-4 text-white animate-pulse" />
                                                 )}
                                             </div>
                                         );
@@ -295,43 +327,49 @@ export function DeviceSelector({ className, compact = false }: DeviceSelectorPro
                                 {/* Other Devices */}
                                 {otherDevices.map(device => {
                                     const Icon = getDeviceIcon(device.deviceName);
+                                    // Is this device SELECTED (being controlled by us)?
+                                    const isSelected = controlMode === "remote" && controlTargetId === device.deviceId;
+                                    const isDevicePlaying = device.isPlaying;
                                     return (
                                         <button
                                             key={device.deviceId}
                                             onClick={() => handleDeviceClick(device)}
-                                            className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-800 transition-colors text-left"
+                                            className={cn(
+                                                "w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-800 transition-colors text-left cursor-pointer",
+                                                isSelected && "bg-green-500/10 border-l-2 border-green-500"
+                                            )}
                                         >
                                             <div className={cn(
                                                 "w-8 h-8 rounded-full flex items-center justify-center",
-                                                device.isPlaying
+                                                isSelected
                                                     ? "bg-green-500/20"
                                                     : "bg-gray-700"
                                             )}>
                                                 <Icon className={cn(
                                                     "w-4 h-4",
-                                                    device.isPlaying ? "text-green-500" : "text-gray-400"
+                                                    isSelected ? "text-green-500" : "text-gray-400"
                                                 )} />
                                             </div>
                                             <div className="flex-1 min-w-0">
-                                                <p className={cn(
-                                                    "text-sm font-medium truncate",
-                                                    device.isPlaying ? "text-green-500" : "text-white"
-                                                )}>
-                                                    {device.deviceName}
-                                                </p>
-                                                {device.currentTrack && (
+                                                <div className="flex items-center gap-2">
+                                                    <p className={cn(
+                                                        "text-sm font-medium truncate",
+                                                        isSelected ? "text-green-500" : "text-white"
+                                                    )}>
+                                                        {device.deviceName}
+                                                    </p>
+                                                    {isSelected && (
+                                                        <Check className="w-4 h-4 text-green-500 flex-shrink-0" />
+                                                    )}
+                                                </div>
+                                                {device.currentTrack ? (
                                                     <p className="text-xs text-gray-500 truncate">
                                                         {device.currentTrack.title} • {device.currentTrack.artist}
                                                     </p>
-                                                )}
+                                                ) : null}
                                             </div>
-                                            {device.isPlaying && (
-                                                <button
-                                                    onClick={(e) => handleRemotePlayPause(device, e)}
-                                                    className="w-8 h-8 rounded-full bg-white flex items-center justify-center hover:scale-105 transition-transform"
-                                                >
-                                                    <Pause className="w-4 h-4 text-black" />
-                                                </button>
+                                            {isDevicePlaying && (
+                                                <Volume2 className="w-4 h-4 text-white animate-pulse" />
                                             )}
                                         </button>
                                     );

@@ -37,6 +37,9 @@ export interface RemoteCommand {
     fromDeviceId?: string;
 }
 
+// Control mode: "local" = control this device, "remote" = control another device
+export type ControlMode = "local" | "remote";
+
 interface RemotePlaybackContextType {
     // Connection state
     isConnected: boolean;
@@ -49,6 +52,13 @@ interface RemotePlaybackContextType {
     // Active player - only one device plays at a time
     activePlayerId: string | null;
     isActivePlayer: boolean; // Is THIS device the active player?
+
+    // Control mode - "local" or "remote"
+    // This is per-device state that determines command routing
+    controlMode: ControlMode;
+    controlTargetId: string | null; // Which device we're controlling (when in remote mode)
+    getControlMode: () => ControlMode;
+    getControlTargetId: () => string | null;
 
     // Getter functions for synchronous access (avoid stale closures)
     getActivePlayerId: () => string | null;
@@ -65,7 +75,9 @@ interface RemotePlaybackContextType {
     // Actions
     sendCommand: (targetDeviceId: string, command: RemoteCommand["command"], payload?: any) => void;
     transferPlayback: (toDeviceId: string, withState?: boolean) => void;
-    becomeActivePlayer: () => void; // Take control back to this device
+    becomeActivePlayer: () => void; // Transfer playback TO this device (will stop remote)
+    goLocalMode: () => void; // Switch to local mode WITHOUT stopping remote playback
+    controlDevice: (deviceId: string) => void; // Start controlling a remote device
     refreshDevices: () => void;
     setDeviceName: (name: string) => void;
 
@@ -73,6 +85,7 @@ interface RemotePlaybackContextType {
     setOnRemoteCommand: (handler: (command: RemoteCommand) => void) => void;
     setOnBecomeActivePlayer: (handler: () => void) => void;
     setOnStopPlayback: (handler: () => void) => void;
+    setOnStateRequest: (handler: () => void) => void;
 
     // State broadcasting
     broadcastState: (state: {
@@ -145,6 +158,29 @@ function persistActivePlayerId(id: string | null) {
     }
 }
 
+// Get persisted control mode
+function getPersistedControlMode(): { mode: ControlMode; targetId: string | null } {
+    if (typeof window === "undefined") return { mode: "local", targetId: null };
+    const stored = localStorage.getItem("lidify_control_mode");
+    if (stored) {
+        try {
+            const parsed = JSON.parse(stored);
+            if (parsed.mode === "local" || parsed.mode === "remote") {
+                return { mode: parsed.mode, targetId: parsed.targetId || null };
+            }
+        } catch {
+            // Invalid JSON, use default
+        }
+    }
+    return { mode: "local", targetId: null };
+}
+
+// Persist control mode
+function persistControlMode(mode: ControlMode, targetId: string | null) {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("lidify_control_mode", JSON.stringify({ mode, targetId }));
+}
+
 export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
     const { isAuthenticated, user } = useAuth();
     const [isConnected, setIsConnected] = useState(false);
@@ -170,12 +206,23 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
         return persisted;
     });
 
+    // Control mode state - persisted to localStorage
+    const [controlMode, setControlModeState] = useState<ControlMode>(() => {
+        if (typeof window === "undefined") return "local";
+        return getPersistedControlMode().mode;
+    });
+    const [controlTargetId, setControlTargetIdState] = useState<string | null>(() => {
+        if (typeof window === "undefined") return null;
+        return getPersistedControlMode().targetId;
+    });
+
     // Refs - defined early so they can be used in callbacks below
     const socketRef = useRef<Socket | null>(null);
     const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
     const onRemoteCommandRef = useRef<((command: RemoteCommand) => void) | null>(null);
     const onBecomeActivePlayerRef = useRef<(() => void) | null>(null);
     const onStopPlaybackRef = useRef<(() => void) | null>(null);
+    const onStateRequestRef = useRef<(() => void) | null>(null);
 
     // Ref for activePlayerId to avoid stale closures in callbacks
     // This ref is always kept in sync with state and can be read synchronously
@@ -185,6 +232,23 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
     // Ref for currentDeviceId as well
     const currentDeviceIdRef = useRef<string | null>(currentDeviceId);
     currentDeviceIdRef.current = currentDeviceId;
+
+    // Refs for control mode
+    const controlModeRef = useRef<ControlMode>(controlMode);
+    controlModeRef.current = controlMode;
+    const controlTargetIdRef = useRef<string | null>(controlTargetId);
+    controlTargetIdRef.current = controlTargetId;
+
+    // Wrapper to persist controlMode/controlTargetId changes AND update refs immediately
+    // This prevents race conditions where a click switches modes and the next action
+    // still routes commands using stale controlModeRef/controlTargetIdRef.
+    const setControlMode = useCallback((mode: ControlMode, targetId: string | null) => {
+        controlModeRef.current = mode;
+        controlTargetIdRef.current = targetId;
+        setControlModeState(mode);
+        setControlTargetIdState(targetId);
+        persistControlMode(mode, targetId);
+    }, []);
 
     // Wrapper to persist activePlayerId changes
     // ENHANCED LOGGING: Track all changes with previous value and call source
@@ -215,17 +279,20 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
     // Getter functions that use refs - these can be called inside callbacks to get current values
     const getActivePlayerId = useCallback(() => activePlayerIdRef.current, []);
     const getIsActivePlayer = useCallback(() => isActivePlayerRef.current, []);
+    const getControlMode = useCallback(() => controlModeRef.current, []);
+    const getControlTargetId = useCallback(() => controlTargetIdRef.current, []);
 
-    // Get the active player's state (for UI display when controlling remotely)
-    const activePlayerState = activePlayerId && activePlayerId !== currentDeviceId
+    // Get the controlled device's state (for UI display when in remote control mode)
+    // This uses controlTargetId (who we're controlling) rather than activePlayerId
+    const activePlayerState = controlMode === "remote" && controlTargetId
         ? (() => {
-            const activeDevice = devices.find(d => d.deviceId === activePlayerId);
-            if (!activeDevice) return null;
+            const controlledDevice = devices.find(d => d.deviceId === controlTargetId);
+            if (!controlledDevice) return null;
             return {
-                isPlaying: activeDevice.isPlaying,
-                currentTrack: activeDevice.currentTrack,
-                currentTime: activeDevice.currentTime,
-                volume: activeDevice.volume,
+                isPlaying: controlledDevice.isPlaying,
+                currentTrack: controlledDevice.currentTrack,
+                currentTime: controlledDevice.currentTime,
+                volume: controlledDevice.volume,
             };
         })()
         : null;
@@ -318,7 +385,18 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
 
         // Handle remote commands
         socket.on("playback:remoteCommand", (command: RemoteCommand) => {
-            console.log("[RemotePlayback] Received remote command:", command);
+            const myControlMode = controlModeRef.current;
+            const myActivePlayerId = activePlayerIdRef.current;
+            const myDeviceId = currentDeviceIdRef.current;
+            console.log("[RemotePlayback] Received remote command:", command.command, {
+                fromDeviceId: command.fromDeviceId,
+                myDeviceId,
+                myControlMode,
+                myActivePlayerId,
+                isActivePlayer: myActivePlayerId === null || myActivePlayerId === myDeviceId,
+                payloadKeys: command.payload ? Object.keys(command.payload) : [],
+            });
+            console.log("[RemotePlayback] remoteCommand STACK:", new Error().stack?.split('\n').slice(1, 5).join('\n'));
             if (onRemoteCommandRef.current) {
                 onRemoteCommandRef.current(command);
             }
@@ -326,12 +404,19 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
 
         // Handle state update broadcasts from other devices
         socket.on("playback:stateUpdate", (state: any) => {
-            console.log("[RemotePlayback] State update received from device:", state.deviceId, {
-                currentTime: state.currentTime,
+            const myDeviceId = currentDeviceIdRef.current;
+            const myControlMode = controlModeRef.current;
+            console.log("[RemotePlayback] playback:stateUpdate received:", {
+                fromDeviceId: state.deviceId,
+                myDeviceId,
+                myControlMode,
                 isPlaying: state.isPlaying,
-                volume: state.volume,
+                trackTitle: state.currentTrack?.title,
+                currentTime: state.currentTime?.toFixed(1),
             });
             // Update the device in our list
+            // NOTE: This only updates the devices list for UI display
+            // It does NOT trigger any playback actions - that's intentional
             setDevices(prev => prev.map(d =>
                 d.deviceId === state.deviceId
                     ? { ...d, ...state, isCurrentDevice: d.deviceId === currentDeviceId }
@@ -341,8 +426,10 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
 
         // Handle state request (another device wants our current state)
         socket.on("playback:stateRequest", () => {
-            // This will be handled by the audio context which calls broadcastState
             console.log("[RemotePlayback] State requested by another device");
+            if (onStateRequestRef.current) {
+                onStateRequestRef.current();
+            }
         });
 
         // Handle active player changes
@@ -350,14 +437,16 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
             // Use refs to get current values (avoid stale closures)
             const myDeviceId = currentDeviceIdRef.current;
             const previousActivePlayer = activePlayerIdRef.current;
-            const wasActivePlayer = previousActivePlayer === null || previousActivePlayer === myDeviceId;
-            const willBeActivePlayer = data.deviceId === null || data.deviceId === myDeviceId;
+            // Only consider ourselves "was active" if we were EXPLICITLY the active player
+            // (not just because activePlayerId was null)
+            const iWasActivePlayer = previousActivePlayer === myDeviceId;
+            const iWillBeActivePlayer = data.deviceId === myDeviceId;
 
             console.log(`[RemotePlayback] Socket: playback:activePlayer received`);
             console.log(`[RemotePlayback]   Previous activePlayerId: ${previousActivePlayer}`);
             console.log(`[RemotePlayback]   New activePlayerId: ${data.deviceId}`);
             console.log(`[RemotePlayback]   This device: ${myDeviceId}`);
-            console.log(`[RemotePlayback]   Was active: ${wasActivePlayer}, Will be active: ${willBeActivePlayer}`);
+            console.log(`[RemotePlayback]   I was active: ${iWasActivePlayer}, I will be active: ${iWillBeActivePlayer}`);
 
             if (data.deviceId === null) {
                 console.warn(`[RemotePlayback] WARNING: Received null activePlayerId from server!`);
@@ -366,15 +455,25 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
             setActivePlayerId(data.deviceId);
 
             // If we just became the active player
-            if (data.deviceId === myDeviceId && onBecomeActivePlayerRef.current) {
-                console.log(`[RemotePlayback] This device is now active, calling onBecomeActivePlayer`);
-                onBecomeActivePlayerRef.current();
+            if (iWillBeActivePlayer && !iWasActivePlayer) {
+                // CRITICAL: When becoming active player, switch to local control mode
+                // This ensures our UI controls ourselves, not some stale remote target
+                console.log(`[RemotePlayback] This device is now active, switching to local control mode`);
+                setControlMode("local", null);
+                
+                if (onBecomeActivePlayerRef.current) {
+                    console.log(`[RemotePlayback] Calling onBecomeActivePlayer callback`);
+                    onBecomeActivePlayerRef.current();
+                }
             }
 
-            // If we're no longer the active player (and we were before)
-            if (data.deviceId !== myDeviceId && data.deviceId !== null) {
+            // CRITICAL FIX: Only stop playback if:
+            // 1. I WAS the active player (explicitly, not just null)
+            // 2. I am being replaced by a DIFFERENT device
+            // This prevents stopping when someone else switches to local mode
+            if (iWasActivePlayer && !iWillBeActivePlayer && data.deviceId !== null) {
                 if (onStopPlaybackRef.current) {
-                    console.log(`[RemotePlayback] This device is no longer active, calling onStopPlayback`);
+                    console.log(`[RemotePlayback] This device was active player and is being replaced, stopping playback`);
                     onStopPlaybackRef.current();
                 }
             }
@@ -407,6 +506,7 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
             return;
         }
 
+        console.log(`[RemotePlayback] sendCommand: ${command} -> ${targetDeviceId}`, payload ? { payloadKeys: Object.keys(payload) } : {});
         socketRef.current.emit("playback:command", {
             targetDeviceId,
             command,
@@ -414,7 +514,7 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
         });
     }, []);
 
-    // Transfer playback to another device
+    // Transfer playback to another device (and start controlling it)
     const transferPlayback = useCallback((toDeviceId: string, withState = true) => {
         if (!socketRef.current?.connected) {
             console.warn("[RemotePlayback] Cannot transfer - not connected");
@@ -422,6 +522,9 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
         }
 
         console.log("[RemotePlayback] Transferring playback to:", toDeviceId);
+
+        // Switch to remote control mode - we'll be controlling the target device
+        setControlMode("remote", toDeviceId);
 
         // CRITICAL: Set the active player FIRST so isActivePlayer becomes false immediately
         // This prevents any state updates from triggering local playback
@@ -446,17 +549,60 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
         }, 50);
     }, []);
 
-    // Become the active player (take control back to this device)
+    // Become the active player (transfer playback TO this device - will stop remote)
+    // Use this when you actually want to PLAY on this device
     const becomeActivePlayer = useCallback(() => {
         if (!socketRef.current?.connected || !currentDeviceId) {
             console.warn("[RemotePlayback] Cannot become active - not connected");
             return;
         }
 
-        console.log("[RemotePlayback] Becoming active player");
+        console.log("[RemotePlayback] Becoming active player (will transfer playback here)");
+        
+        // Switch to local mode since we're now playing locally
+        setControlMode("local", null);
+        
         setActivePlayerId(currentDeviceId);
         socketRef.current.emit("playback:setActivePlayer", { deviceId: currentDeviceId });
-    }, [currentDeviceId]);
+    }, [currentDeviceId, setControlMode]);
+
+    // Switch to local mode WITHOUT stopping remote playback
+    // Use this when you want to stop remote controlling and just view/control local state
+    const goLocalMode = useCallback(() => {
+        console.log("[RemotePlayback] Switching to local mode (remote playback continues)");
+        setControlMode("local", null);
+        // NOTE: We do NOT change activePlayerId or emit anything to the server
+        // The remote device continues playing undisturbed
+    }, [setControlMode]);
+
+    // Start controlling a remote device
+    // This sets up remote control mode AND makes the target the active player
+    // so that it broadcasts its state for us to display
+    const controlDevice = useCallback((deviceId: string) => {
+        console.log("[RemotePlayback] controlDevice() called:", deviceId);
+        console.log("[RemotePlayback]   Previous controlMode:", controlModeRef.current);
+        console.log("[RemotePlayback]   Previous controlTargetId:", controlTargetIdRef.current);
+        console.log("[RemotePlayback]   Previous activePlayerId:", activePlayerIdRef.current);
+        
+        setControlMode("remote", deviceId);
+        
+        // CRITICAL: When controlling a device, make it the active player
+        // This ensures the target device broadcasts its state continuously
+        setActivePlayerId(deviceId);
+        
+        console.log("[RemotePlayback]   New controlMode: remote");
+        console.log("[RemotePlayback]   New controlTargetId:", deviceId);
+        console.log("[RemotePlayback]   New activePlayerId:", deviceId);
+        
+        // Notify server and request current state
+        if (socketRef.current?.connected) {
+            // Tell server this device is now the active player
+            socketRef.current.emit("playback:setActivePlayer", { deviceId });
+            // Request current state from the target device
+            console.log("[RemotePlayback] Requesting state from target device:", deviceId);
+            socketRef.current.emit("playback:requestState", { deviceId });
+        }
+    }, [setControlMode, setActivePlayerId]);
 
     // Refresh device list
     const refreshDevices = useCallback(() => {
@@ -513,6 +659,11 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
         onStopPlaybackRef.current = handler;
     }, []);
 
+    // Callback when another device requests our current state
+    const setOnStateRequest = useCallback((handler: () => void) => {
+        onStateRequestRef.current = handler;
+    }, []);
+
     return (
         <RemotePlaybackContext.Provider
             value={{
@@ -522,17 +673,24 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
                 currentDeviceName,
                 activePlayerId,
                 isActivePlayer,
+                controlMode,
+                controlTargetId,
+                getControlMode,
+                getControlTargetId,
                 getActivePlayerId,
                 getIsActivePlayer,
                 activePlayerState,
                 sendCommand,
                 transferPlayback,
                 becomeActivePlayer,
+                goLocalMode,
+                controlDevice,
                 refreshDevices,
                 setDeviceName,
                 setOnRemoteCommand,
                 setOnBecomeActivePlayer,
                 setOnStopPlayback,
+                setOnStateRequest,
                 broadcastState,
             }}
         >
