@@ -414,7 +414,7 @@ router.get("/discover", async (req, res) => {
                     );
 
                     for (let i = 0; i < enrichedArtists.length; i += 1) {
-                        filteredArtists[i] = enrichedArtists[i];
+                        filteredArtists[i] = enrichedArtists[i] as typeof filteredArtists[number];
                     }
                 }
 

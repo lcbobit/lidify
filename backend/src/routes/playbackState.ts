@@ -1,4 +1,5 @@
 import express from "express";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../utils/db";
 import { requireAuth } from "../middleware/auth";
 
@@ -96,7 +97,7 @@ router.post("/", requireAuth, async (req, res) => {
                 trackId: trackId || null,
                 audiobookId: audiobookId || null,
                 podcastId: podcastId || null,
-                queue: safeQueue,
+                queue: safeQueue ?? Prisma.JsonNull,
                 currentIndex: safeCurrentIndex,
                 isShuffle: isShuffle || false,
             },
@@ -106,7 +107,7 @@ router.post("/", requireAuth, async (req, res) => {
                 trackId: trackId || null,
                 audiobookId: audiobookId || null,
                 podcastId: podcastId || null,
-                queue: safeQueue,
+                queue: safeQueue ?? Prisma.JsonNull,
                 currentIndex: safeCurrentIndex,
                 isShuffle: isShuffle || false,
             },

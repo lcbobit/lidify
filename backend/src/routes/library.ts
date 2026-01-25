@@ -887,7 +887,7 @@ router.get("/artists", async (req, res) => {
 
             const whereSql =
                 whereClauses.length > 0
-                    ? Prisma.sql`WHERE ${Prisma.join(whereClauses, Prisma.sql` AND `)}`
+                    ? Prisma.sql`WHERE ${Prisma.join(whereClauses, " AND ")}`
                     : Prisma.sql``;
 
             const orderedArtists = await prisma.$queryRaw<
@@ -1142,10 +1142,10 @@ router.get("/artists/:id", async (req, res) => {
 
         const artistInclude = {
             albums: {
-                orderBy: [{ year: "desc" }, { title: "asc" }],
+                orderBy: [{ year: "desc" as const }, { title: "asc" as const }],
                 include: {
                     tracks: {
-                        orderBy: [{ discNo: "asc" }, { trackNo: "asc" }],
+                        orderBy: [{ discNo: "asc" as const }, { trackNo: "asc" as const }],
                         take: 10, // Top tracks
                         include: {
                             album: {
@@ -1298,7 +1298,7 @@ router.get("/artists/:id", async (req, res) => {
             ? `discography:${effectiveMbid}`
             : null;
 
-        if (shouldFetchDiscography) {
+        if (shouldFetchDiscography && discoCacheKey) {
             try {
                 // Check Redis cache first (cache for 24 hours)
                 let releaseGroups: any[] = [];
@@ -1526,9 +1526,9 @@ router.get("/artists/:id", async (req, res) => {
         }
 
         // Extract top tracks from library first
-        const allTracks = artist.albums.flatMap((a) => a.tracks);
+        const allTracks = artist.albums.flatMap((a: any) => a.tracks);
         let topTracks = allTracks
-            .sort((a, b) => (b.playCount || 0) - (a.playCount || 0))
+            .sort((a: any, b: any) => ((b as any).playCount || 0) - ((a as any).playCount || 0))
             .slice(0, 10);
 
         // Get user play counts for all tracks
@@ -1889,7 +1889,7 @@ router.get("/artists/:id", async (req, res) => {
                         const validMbid =
                             effectiveMbid && !effectiveMbid.startsWith("temp-")
                                 ? effectiveMbid
-                                : undefined;
+                                : "";
                         const lastfmSimilar =
                             await lastFmService.getSimilarArtists(
                                 validMbid,
@@ -2256,7 +2256,8 @@ router.get("/cover-art/:id?", imageLimiter, async (req, res) => {
 
         // Check if a full URL was provided as a query parameter
         if (url) {
-            const decodedUrl = Array.isArray(url) ? url[0] : url;
+            const rawUrl = Array.isArray(url) ? url[0] : url;
+            const decodedUrl = typeof rawUrl === 'string' ? rawUrl : String(rawUrl);
 
             // Check if this is an audiobook cover (prefixed with "audiobook__")
             if (decodedUrl.startsWith("audiobook__")) {
@@ -2768,7 +2769,8 @@ router.get("/cover-art-colors", imageLimiter, async (req, res) => {
             return res.status(400).json({ error: "URL parameter required" });
         }
 
-        const imageUrl = Array.isArray(url) ? url[0] : url;
+        const rawImageUrl = Array.isArray(url) ? url[0] : url;
+        const imageUrl = typeof rawImageUrl === 'string' ? rawImageUrl : String(rawImageUrl);
         const normalizedImageUrl = normalizeExternalImageUrl(imageUrl);
         if (!normalizedImageUrl) {
             console.warn(`[COLORS] Blocked invalid image URL: ${imageUrl}`);
@@ -3866,10 +3868,9 @@ router.get("/genres", async (req, res) => {
         if (genreMap.size === 0) {
             const albums = await prisma.album.findMany({
                 where: {
-                    genres: { not: null },
+                    genres: { not: Prisma.DbNull },
                 },
-                select: {
-                    genres: true,
+                include: {
                     _count: { select: { tracks: true } },
                 },
             });

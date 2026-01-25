@@ -92,7 +92,7 @@ class DeezerService {
      */
     private async setCache(key: string, value: string): Promise<void> {
         try {
-            await redisClient.setex(`${this.cachePrefix}${key}`, this.cacheTTL, value);
+            await redisClient.setEx(`${this.cachePrefix}${key}`, this.cacheTTL, value);
         } catch {
             // Ignore cache errors
         }
@@ -226,15 +226,12 @@ class DeezerService {
         const normalizedArtist = normalizeQuotes(artistName);
         const normalizedTrack = normalizeQuotes(trackName);
 
-        const cacheKey = `preview-info:${normalizedArtist.toLowerCase()}:${normalizedTrack.toLowerCase()}`;
-        const cached = await this.getCached(cacheKey);
-        if (cached) {
-            if (cached === "null") return null;
-            try {
-                return JSON.parse(cached);
-            } catch {
-                // Invalid cache, refetch
-            }
+        // Cache key for "no preview available" - we cache this to avoid repeated lookups
+        // But we DON'T cache the preview URLs themselves because they contain short-lived tokens
+        const noCacheKey = `preview-none:${normalizedArtist.toLowerCase()}:${normalizedTrack.toLowerCase()}`;
+        const cachedNone = await this.getCached(noCacheKey);
+        if (cachedNone === "null") {
+            return null; // Known to have no preview
         }
 
         try {
@@ -245,18 +242,17 @@ class DeezerService {
 
             const track = response.data?.data?.[0];
             if (!track?.preview) {
-                await this.setCache(cacheKey, "null");
+                // Cache the "no preview" result to avoid repeated lookups
+                await this.setCache(noCacheKey, "null");
                 return null;
             }
 
-            const result = {
+            // Return fresh preview URL each time (tokens expire in ~2 hours)
+            return {
                 previewUrl: track.preview,
                 albumTitle: track.album?.title || "Unknown Album",
                 albumCover: track.album?.cover_medium || track.album?.cover || null,
             };
-
-            await this.setCache(cacheKey, JSON.stringify(result));
-            return result;
         } catch (error: any) {
             console.error(`Deezer track preview error for ${artistName} - ${trackName}:`, error.message);
             return null;

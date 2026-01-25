@@ -458,16 +458,13 @@ export function Sidebar() {
                                                     : "text-gray-500 group-hover:text-gray-400"
                                             )}
                                         >
-                                            {isShared
-                                                ? `by ${
-                                                      playlist.user?.username ||
-                                                      "Shared"
-                                                  }`
-                                                : "Playlist"}{" "}
-                                            • {playlist.trackCount} track
-                                            {playlist.trackCount !== 1
-                                                ? "s"
-                                                : ""}
+                                            {isShared && (
+                                                <>
+                                                    by {playlist.user?.username || "Shared"} •{" "}
+                                                </>
+                                            )}
+                                            {playlist.trackCount} track
+                                            {playlist.trackCount !== 1 ? "s" : ""}
                                         </div>
                                     </Link>
                                 );

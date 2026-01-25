@@ -52,7 +52,7 @@ class SimpleDownloadManager {
         albumMbid: string,
         userId: string,
         isDiscovery: boolean = false
-    ): Promise<{ success: boolean; correlationId?: string; error?: string }> {
+    ): Promise<{ success: boolean; correlationId?: string; error?: string; replacedWith?: string }> {
         console.log(`\n Starting download: ${artistName} - ${albumTitle}${isDiscovery ? " (discovery)" : ""}`);
         console.log(`   Job ID: ${jobId}`);
         console.log(`   Album MBID: ${albumMbid}`);
@@ -495,7 +495,7 @@ class SimpleDownloadManager {
         artistName?: string,
         albumTitle?: string,
         lidarrAlbumId?: number
-    ): Promise<{ jobId?: string; batchId?: string; downloadBatchId?: string }> {
+    ): Promise<{ jobId?: string; batchId?: string; downloadBatchId?: string; spotifyImportJobId?: string }> {
         console.log(`\n[COMPLETE] Download completed: ${downloadId}`);
         if (albumMbid) console.log(`   Album MBID: ${albumMbid}`);
         if (lidarrAlbumId) console.log(`   Lidarr Album ID: ${lidarrAlbumId}`);

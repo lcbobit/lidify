@@ -195,7 +195,7 @@ router.get("/recent", async (req, res) => {
         
         // Get library albums to mark what's already downloaded
         const libraryAlbums = await prisma.album.findMany({
-            where: { rgMbid: { not: null } },
+            where: { location: "LIBRARY" },
             select: { rgMbid: true }
         });
         const libraryMbids = new Set(libraryAlbums.map(a => a.rgMbid).filter(Boolean));
@@ -235,8 +235,29 @@ router.post("/download/:albumMbid", async (req, res) => {
 
         console.log(`[Releases] Download requested for album: ${albumMbid}`);
 
-        // Use Lidarr to download the album
-        const result = await lidarrService.downloadAlbum(albumMbid);
+        // Search for the album in Lidarr to get artist info
+        const albums = await lidarrService.searchAlbum("", "", albumMbid);
+        
+        if (!albums || albums.length === 0) {
+            return res.status(404).json({ 
+                error: "Album not found in Lidarr catalog" 
+            });
+        }
+
+        const album = albums[0];
+        const artistName = album.artist?.artistName || "Unknown Artist";
+        const artistMbid = album.artist?.foreignArtistId;
+        const albumTitle = album.title;
+
+        // Use addAlbum to trigger the download
+        const result = await lidarrService.addAlbum(
+            albumMbid,
+            artistName,
+            albumTitle,
+            "/music",
+            artistMbid,
+            false // Not a discovery download
+        );
 
         if (result) {
             res.json({ 
@@ -256,4 +277,3 @@ router.post("/download/:albumMbid", async (req, res) => {
 });
 
 export default router;
-

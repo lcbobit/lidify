@@ -1,7 +1,6 @@
 import { prisma } from "../utils/db";
 import fs from "fs/promises";
 import path from "path";
-import { prisma } from "../utils/db";
 
 export async function cleanupDiscoveryTracks() {
     console.log("\nCleaning up old discovery tracks...");

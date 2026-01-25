@@ -212,10 +212,10 @@ router.get("/recommendations", async (req, res) => {
                         mbid: artist.mbid,
                         playCount: albumCount,
                         weightedScore: albumCount,
-                        genres: [],
+                        genres: [] as string[],
                     };
                 })
-                .filter((a): a is ArtistWithStats => a !== null);
+                .filter((a): a is NonNullable<typeof a> => a !== null);
         }
 
         if (artistPool.length === 0) {
@@ -1749,7 +1749,7 @@ router.delete("/clear", async (req, res) => {
             // Find completed jobs that didn't make the playlist AND aren't from liked artists
             const extraJobs = completedJobs.filter(job => {
                 // If MBID matches a discovery album, not an "extra"
-                if (discoveryMbids.has(job.targetMbid)) return false;
+                if (job.targetMbid && discoveryMbids.has(job.targetMbid)) return false;
                 
                 // If this job's artist has any LIKED albums, don't clean it up
                 const metadata = job.metadata as any;

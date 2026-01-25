@@ -273,7 +273,7 @@ export default function OnboardingPage() {
                                                 Create Your Account
                                             </h2>
                                             <p className="text-white/60">
-                                                Let's get you set up with your
+                                                Let&apos;s get you set up with your
                                                 personal music library
                                             </p>
                                         </div>

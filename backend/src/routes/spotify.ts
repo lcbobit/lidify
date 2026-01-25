@@ -127,7 +127,7 @@ router.post("/import", async (req, res) => {
     try {
         const { spotifyPlaylistId, url, playlistName, preview } =
             importSchema.parse(req.body);
-        const userId = req.user.id;
+        const userId = req.user!.id;
 
         // Prefer client-provided preview (fast, avoids double-fetching and avoids long work in this request)
         let effectivePreview = preview as any;
@@ -194,7 +194,7 @@ router.post("/import", async (req, res) => {
 router.get("/import/:jobId/status", async (req, res) => {
     try {
         const { jobId } = req.params;
-        const userId = req.user.id;
+        const userId = req.user!.id;
 
         const job = await spotifyImportService.getJob(jobId);
         if (!job) {
@@ -223,7 +223,7 @@ router.get("/import/:jobId/status", async (req, res) => {
  */
 router.get("/imports", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
         const jobs = await spotifyImportService.getUserJobs(userId);
         res.json(jobs);
     } catch (error: any) {
@@ -241,7 +241,7 @@ router.get("/imports", async (req, res) => {
 router.post("/import/:jobId/refresh", async (req, res) => {
     try {
         const { jobId } = req.params;
-        const userId = req.user.id;
+        const userId = req.user!.id;
 
         const job = await spotifyImportService.getJob(jobId);
         if (!job) {
@@ -280,7 +280,7 @@ router.post("/import/:jobId/refresh", async (req, res) => {
 router.post("/import/:jobId/repair", async (req, res) => {
     try {
         const { jobId } = req.params;
-        const userId = req.user.id;
+        const userId = req.user!.id;
 
         const job = await spotifyImportService.getJob(jobId);
         if (!job) {
@@ -317,7 +317,7 @@ router.post("/import/:jobId/repair", async (req, res) => {
 router.post("/import/:jobId/cancel", async (req, res) => {
     try {
         const { jobId } = req.params;
-        const userId = req.user.id;
+        const userId = req.user!.id;
 
         const job = await spotifyImportService.getJob(jobId);
         if (!job) {

@@ -36,10 +36,11 @@ const router = Router();
 router.use((req: Request, res: Response, next) => {
     const endpoint = req.path;
     const client = req.query.c || 'unknown';
-    // Skip noisy endpoints
-    if (!endpoint.includes('ping') && !endpoint.includes('stream') && !endpoint.includes('getCoverArt')) {
-        console.log(`[Subsonic] ${req.method} ${endpoint} from client=${client}`);
-    }
+    const user = req.query.u || 'no-user';
+    const type = req.query.type || '';
+    const sort = req.query.sort || '';
+    // Log all requests for debugging
+    console.log(`[Subsonic] ${req.method} ${endpoint} user=${user} client=${client} type=${type} sort=${sort}`);
     next();
 });
 
@@ -222,36 +223,61 @@ router.get("/getArtists.view", async (req: Request, res: Response) => {
     const format = getResponseFormat(req.query);
 
     try {
+        const clientName = ((req.query.c as string) || "").toLowerCase();
+        const isYuzic = clientName.includes("yuzic");
+
+        // For Yuzic: fetch by createdAt DESC, then reverse before grouping
+        // This way when Yuzic does reverse(), they get newest first
+        // For standard clients: alphabetical order
         const artists = await prisma.artist.findMany({
             select: {
                 id: true,
                 name: true,
                 heroUrl: true,
+                createdAt: true,
                 _count: { select: { albums: true } },
             },
-            orderBy: { name: "asc" },
+            orderBy: isYuzic ? { createdAt: "desc" } : { name: "asc" },
         });
 
-        // Group by first letter
-        const indexMap = new Map<string, any[]>();
+        // For Yuzic, reverse the list so their client-side reverse() gives correct order
+        const orderedArtists = isYuzic ? [...artists].reverse() : artists;
 
-        for (const artist of artists) {
-            const firstChar = artist.name.charAt(0).toUpperCase();
-            const indexKey = /[A-Z]/.test(firstChar) ? firstChar : "#";
-
-            if (!indexMap.has(indexKey)) {
-                indexMap.set(indexKey, []);
-            }
-
-            indexMap.get(indexKey)!.push(formatArtistForSubsonic(artist));
+        if (isYuzic) {
+            console.log(`[Subsonic] Yuzic getArtists: reversed ${artists.length} artists for client-side reverse`);
         }
 
-        const indexes = Array.from(indexMap.entries())
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([name, artists]) => ({
-                name,
-                artist: artists,
-            }));
+        let indexes;
+
+        if (isYuzic) {
+            // For Yuzic: skip alphabetical grouping to preserve createdAt order
+            // Put all artists in a single group so reverse() works correctly
+            indexes = [{
+                name: "#",
+                artist: orderedArtists.map(a => formatArtistForSubsonic(a)),
+            }];
+        } else {
+            // Standard: Group by first letter
+            const indexMap = new Map<string, any[]>();
+
+            for (const artist of orderedArtists) {
+                const firstChar = artist.name.charAt(0).toUpperCase();
+                const indexKey = /[A-Z]/.test(firstChar) ? firstChar : "#";
+
+                if (!indexMap.has(indexKey)) {
+                    indexMap.set(indexKey, []);
+                }
+
+                indexMap.get(indexKey)!.push(formatArtistForSubsonic(artist));
+            }
+
+            indexes = Array.from(indexMap.entries())
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([name, artists]) => ({
+                    name,
+                    artist: artists,
+                }));
+        }
 
         sendSubsonicSuccess(
             res,
@@ -594,12 +620,13 @@ router.get("/getSong.view", async (req: Request, res: Response) => {
 });
 
 /**
- * getAlbumList2.view - Album list (ID3 mode) with sorting options
+ * getAlbumList.view / getAlbumList2.view - Album list with sorting options
+ * Both endpoints return the same ID3-based data (some clients use the non-ID3 endpoint name)
  */
-router.get("/getAlbumList2.view", async (req: Request, res: Response) => {
+const albumListHandler = async (req: Request, res: Response) => {
     const format = getResponseFormat(req.query);
     const {
-        type = "alphabeticalByName",
+        type: rawType = "alphabeticalByName",
         size = "10",
         offset = "0",
         fromYear,
@@ -611,7 +638,14 @@ router.get("/getAlbumList2.view", async (req: Request, res: Response) => {
         const limit = Math.min(parseInt(size as string, 10) || 10, 500);
         const skip = parseInt(offset as string, 10) || 0;
 
-        console.log(`[Subsonic] getAlbumList2: type=${type}, limit=${limit}, offset=${skip}`);
+        // Normalize type to handle case variations and alternative names
+        const type = ((rawType as string) || "alphabeticalByName").toLowerCase().trim();
+
+        // Determine response wrapper based on which endpoint was called
+        const useAlbumList2 = req.query._useAlbumList2Wrapper === "true";
+        const wrapperKey = useAlbumList2 ? "albumList2" : "albumList";
+
+        console.log(`[Subsonic] getAlbumList: type=${type} (raw=${rawType}), limit=${limit}, offset=${skip}, wrapper=${wrapperKey}`);
 
         // Handle special sort types that need aggregation
         if (type === "frequent" || type === "highest") {
@@ -671,7 +705,7 @@ router.get("/getAlbumList2.view", async (req: Request, res: Response) => {
 
             return sendSubsonicSuccess(
                 res,
-                { albumList2: { album: albumList } },
+                { [wrapperKey]: { album: albumList } },
                 format,
                 req.query.callback as string
             );
@@ -725,7 +759,7 @@ router.get("/getAlbumList2.view", async (req: Request, res: Response) => {
 
             return sendSubsonicSuccess(
                 res,
-                { albumList2: { album: albumList } },
+                { [wrapperKey]: { album: albumList } },
                 format,
                 req.query.callback as string
             );
@@ -734,29 +768,44 @@ router.get("/getAlbumList2.view", async (req: Request, res: Response) => {
         let orderBy: any = { title: "asc" };
         let where: any = {};
 
-        switch (type) {
+        // Map alternative type names to standard Subsonic types
+        // Some clients use different names for the same sort
+        const typeAliases: Record<string, string> = {
+            "dateadded": "newest",
+            "added": "newest",
+            "date": "newest",
+            "name": "alphabeticalbyname",
+            "artist": "alphabeticalbyartist",
+            "year": "byyear",
+            "genre": "bygenre",
+        };
+        const normalizedType = typeAliases[type] || type;
+
+        switch (normalizedType) {
             case "random":
                 // Prisma doesn't support random ordering natively
                 // We'll fetch more and shuffle
                 break;
             case "newest":
-                orderBy = { createdAt: "desc" };
+                // Standard Subsonic: newest first (DESC)
+                // Yuzic quirk: they reverse client-side, so we need special handling
+                orderBy = [{ createdAt: "desc" }, { title: "asc" }];
                 break;
-            case "alphabeticalByName":
+            case "alphabeticalbyname":
                 orderBy = { title: "asc" };
                 break;
-            case "alphabeticalByArtist":
+            case "alphabeticalbyartist":
                 orderBy = { artist: { name: "asc" } };
                 break;
             case "starred":
                 // Would need favorites data - return empty for now
                 return sendSubsonicSuccess(
                     res,
-                    { albumList2: { album: [] } },
+                    { [wrapperKey]: { album: [] } },
                     format,
                     req.query.callback as string
                 );
-            case "byYear":
+            case "byyear":
                 if (fromYear && toYear) {
                     where.year = {
                         gte: parseInt(fromYear as string, 10),
@@ -765,10 +814,12 @@ router.get("/getAlbumList2.view", async (req: Request, res: Response) => {
                 }
                 orderBy = { year: "desc" };
                 break;
-            case "byGenre":
+            case "bygenre":
                 // Would need genre data on albums - fall back to alphabetical
                 orderBy = { title: "asc" };
                 break;
+            default:
+                console.log(`[Subsonic] getAlbumList2: Unrecognized type '${type}', defaulting to alphabetical`);
         }
 
         let albums = await prisma.album.findMany({
@@ -779,12 +830,12 @@ router.get("/getAlbumList2.view", async (req: Request, res: Response) => {
                 tracks: { select: { duration: true } },
             },
             orderBy,
-            skip: type === "random" ? 0 : skip,
-            take: type === "random" ? limit * 3 : limit,
+            skip: normalizedType === "random" ? 0 : skip,
+            take: normalizedType === "random" ? limit * 3 : limit,
         });
 
         // Handle random sorting
-        if (type === "random") {
+        if (normalizedType === "random") {
             albums = albums.sort(() => Math.random() - 0.5).slice(0, limit);
         }
 
@@ -822,14 +873,31 @@ router.get("/getAlbumList2.view", async (req: Request, res: Response) => {
             };
         });
 
+        // Yuzic quirk: they call reverse() client-side for "Most Recent" sort
+        // So we reverse our DESC results to ASC, then they reverse back to DESC
+        const clientName = ((req.query.c as string) || "").toLowerCase();
+        const isYuzicClient = clientName.includes("yuzic");
+
+        let finalAlbumList = albumList;
+        if (isYuzicClient && normalizedType === "newest") {
+            finalAlbumList = [...albumList].reverse();
+            console.log(`[Subsonic] Yuzic detected: reversed ${albumList.length} albums for client-side reverse`);
+        }
+
+        // Log first 3 albums for debugging sort order
+        if (finalAlbumList.length > 0) {
+            const sample = finalAlbumList.slice(0, 3).map(a => `${a.title} (${a.created})`);
+            console.log(`[Subsonic] Album order sent (first 3): ${sample.join(", ")}`);
+        }
+
         sendSubsonicSuccess(
             res,
-            { albumList2: { album: albumList } },
+            { [wrapperKey]: { album: finalAlbumList } },
             format,
             req.query.callback as string
         );
     } catch (error) {
-        console.error("[Subsonic] getAlbumList2 error:", error);
+        console.error("[Subsonic] getAlbumList error:", error);
         sendSubsonicError(
             res,
             SubsonicErrorCode.GENERIC,
@@ -838,6 +906,16 @@ router.get("/getAlbumList2.view", async (req: Request, res: Response) => {
             req.query.callback as string
         );
     }
+};
+
+// Register both endpoint names - getAlbumList uses "albumList" wrapper, getAlbumList2 uses "albumList2"
+router.get("/getAlbumList.view", (req, res) => {
+    req.query._useAlbumList2Wrapper = "false";
+    albumListHandler(req, res);
+});
+router.get("/getAlbumList2.view", (req, res) => {
+    req.query._useAlbumList2Wrapper = "true";
+    albumListHandler(req, res);
 });
 
 /**
@@ -2313,7 +2391,8 @@ router.get("/getScanStatus.view", async (req: Request, res: Response) => {
     }
 });
 
-router.get("/startScan.view", async (req: Request, res: Response) => {
+// Support both GET and POST for startScan (some clients use POST)
+const startScanHandler = async (req: Request, res: Response) => {
     const format = getResponseFormat(req.query);
     if (!config.music.musicPath) {
         return sendSubsonicError(
@@ -2347,6 +2426,9 @@ router.get("/startScan.view", async (req: Request, res: Response) => {
             req.query.callback as string
         );
     }
-});
+};
+
+router.get("/startScan.view", startScanHandler);
+router.post("/startScan.view", startScanHandler);
 
 export default router;

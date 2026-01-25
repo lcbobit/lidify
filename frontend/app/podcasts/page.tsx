@@ -428,7 +428,7 @@ export default function PodcastsPage() {
                             searchQuery.length >= 2 && (
                                 <div className="absolute top-full left-0 mt-2 w-full bg-[#121212] border border-white/10 rounded-lg shadow-2xl p-4 z-50">
                                     <p className="text-gray-400 text-sm text-center">
-                                        No podcasts found for "{searchQuery}"
+                                        No podcasts found for &quot;{searchQuery}&quot;
                                     </p>
                                 </div>
                             )}

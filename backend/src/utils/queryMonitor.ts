@@ -27,6 +27,12 @@ export function enableSlowQueryMonitoring() {
  * Log query statistics for debugging
  */
 export async function logQueryStats() {
-    const stats = await prisma.$metrics.json();
-    console.log("Database Query Stats:", JSON.stringify(stats, null, 2));
+    // $metrics requires the metrics preview feature in Prisma schema
+    const prismaWithMetrics = prisma as any;
+    if (prismaWithMetrics.$metrics) {
+        const stats = await prismaWithMetrics.$metrics.json();
+        console.log("Database Query Stats:", JSON.stringify(stats, null, 2));
+    } else {
+        console.log("Database Query Stats: Metrics not available (requires 'metrics' preview feature)");
+    }
 }

@@ -515,6 +515,11 @@ router.get("/:id", requireAuthOrToken, apiLimiter, async (req, res) => {
             audiobook = await audiobookCacheService.getAudiobook(id);
         }
 
+        // Bail out if audiobook still not found
+        if (!audiobook) {
+            return res.status(404).json({ error: "Audiobook not found" });
+        }
+
         // Get chapters and audio files from API (these change less frequently)
         let absBook;
         try {

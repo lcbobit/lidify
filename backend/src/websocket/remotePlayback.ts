@@ -255,10 +255,11 @@ export function initializeWebSocket(httpServer: HTTPServer): SocketIOServer {
                 device.lastSeen = new Date();
 
                 // Broadcast state to all user's devices
+                const { deviceId, ...stateRest } = state;
                 socket.to(`user:${user.id}`).emit("playback:stateUpdate", {
-                    deviceId: state.deviceId,
+                    deviceId,
                     deviceName: device.deviceName,
-                    ...state,
+                    ...stateRest,
                 });
             }
         });

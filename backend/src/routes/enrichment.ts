@@ -432,7 +432,7 @@ router.get("/search/musicbrainz/release-groups", async (req, res) => {
             throw new Error(`MusicBrainz API returned ${response.status}`);
         }
 
-        const data = await response.json();
+        const data = await response.json() as { "release-groups"?: any[] };
         const releaseGroups = data["release-groups"] || [];
 
         // Transform results for the UI

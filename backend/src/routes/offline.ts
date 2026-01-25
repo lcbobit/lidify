@@ -55,7 +55,7 @@ router.post("/albums/:id/download", async (req, res) => {
         };
 
         const estimatedSizeMb =
-            album.tracks.length * avgSizeMb[selectedQuality];
+            album.tracks.length * (avgSizeMb[selectedQuality || "medium"] || 6);
 
         // Check user's cache limit
         const settings = await prisma.userSettings.findUnique({

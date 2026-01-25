@@ -79,7 +79,7 @@ class SpotifyService {
      */
     private async setCache(key: string, value: string): Promise<void> {
         try {
-            await redisClient.setex(`${this.cachePrefix}${key}`, this.cacheTTL, value);
+            await redisClient.setEx(`${this.cachePrefix}${key}`, this.cacheTTL, value);
         } catch {
             // Ignore cache errors
         }
@@ -481,48 +481,6 @@ class SpotifyService {
     }
 
     /**
-     * Get playlists by category
-     */
-    async getCategoryPlaylists(categoryId: string, limit: number = 20): Promise<SpotifyPlaylistPreview[]> {
-        const token = await this.getAnonymousToken();
-        if (!token) {
-            return [];
-        }
-
-        try {
-            console.log(`Spotify: Fetching playlists for category ${categoryId}...`);
-
-            const response = await axios.get(
-                `https://api.spotify.com/v1/browse/categories/${categoryId}/playlists`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    },
-                    params: {
-                        limit,
-                        country: "US",
-                    },
-                    timeout: 10000,
-                }
-            );
-
-            const playlists = response.data?.playlists?.items || [];
-            return playlists.map((playlist: any) => ({
-                id: playlist.id,
-                name: playlist.name,
-                description: playlist.description || null,
-                owner: playlist.owner?.display_name || "Spotify",
-                imageUrl: playlist.images?.[0]?.url || null,
-                trackCount: playlist.tracks?.total || 0,
-            }));
-        } catch (error: any) {
-            console.error(`Spotify category playlists error for ${categoryId}:`, error.message);
-            return [];
-        }
-    }
-
-    /**
      * Search for playlists on Spotify
      */
     async searchPlaylists(query: string, limit: number = 20): Promise<SpotifyPlaylistPreview[]> {
@@ -733,6 +691,37 @@ class SpotifyService {
         }
         
         return results;
+    }
+
+    /**
+     * Test Spotify API credentials by attempting to get a token
+     */
+    async testCredentials(
+        clientId: string,
+        clientSecret: string
+    ): Promise<{ success: boolean; error?: string }> {
+        try {
+            const auth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+            const response = await axios.post(
+                "https://accounts.spotify.com/api/token",
+                "grant_type=client_credentials",
+                {
+                    headers: {
+                        Authorization: `Basic ${auth}`,
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    timeout: 10000,
+                }
+            );
+
+            if (response.data?.access_token) {
+                return { success: true };
+            }
+            return { success: false, error: "No access token received" };
+        } catch (error: any) {
+            const message = error.response?.data?.error_description || error.message;
+            return { success: false, error: message };
+        }
     }
 }
 

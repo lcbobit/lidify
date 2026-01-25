@@ -47,20 +47,11 @@ export async function getSystemSettings(forceRefresh = false) {
     // Decrypt sensitive fields - use safeDecrypt to handle corrupted fields gracefully
     const decrypted = {
         ...settings,
-        mullvadPrivateKey: safeDecrypt(settings.mullvadPrivateKey, 'mullvadPrivateKey'),
-        nordvpnPassword: safeDecrypt(settings.nordvpnPassword, 'nordvpnPassword'),
-        protonvpnPassword: safeDecrypt(settings.protonvpnPassword, 'protonvpnPassword'),
-        openvpnConfig: safeDecrypt(settings.openvpnConfig, 'openvpnConfig'),
-        openvpnPassword: safeDecrypt(settings.openvpnPassword, 'openvpnPassword'),
         lidarrApiKey: safeDecrypt(settings.lidarrApiKey, 'lidarrApiKey'),
-        nzbgetPassword: safeDecrypt(settings.nzbgetPassword, 'nzbgetPassword'),
-        qbittorrentPassword: safeDecrypt(settings.qbittorrentPassword, 'qbittorrentPassword'),
-        // Note: openrouterApiKey is not stored in DB - it's from OPENROUTER_API_KEY env var
-        lastfmApiKey: safeDecrypt(settings.lastfmApiKey, 'lastfmApiKey'),
-        lastfmApiSecret: safeDecrypt(settings.lastfmApiSecret, 'lastfmApiSecret'),
         fanartApiKey: safeDecrypt(settings.fanartApiKey, 'fanartApiKey'),
         audiobookshelfApiKey: safeDecrypt(settings.audiobookshelfApiKey, 'audiobookshelfApiKey'),
         soulseekPassword: safeDecrypt(settings.soulseekPassword, 'soulseekPassword'),
+        spotifyClientSecret: safeDecrypt(settings.spotifyClientSecret, 'spotifyClientSecret'),
     };
 
     cachedSettings = decrypted;

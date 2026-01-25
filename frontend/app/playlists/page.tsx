@@ -357,7 +357,7 @@ export default function PlaylistsPage() {
                 {showHiddenTab && (
                     <div className="mx-2 mb-4 px-4 py-3 bg-white/5 rounded-lg">
                         <p className="text-sm text-gray-400">
-                            Hidden playlists won't appear in your library. Hover
+                            Hidden playlists won&apos;t appear in your library. Hover
                             and click the eye icon to restore.
                         </p>
                     </div>

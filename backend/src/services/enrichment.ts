@@ -375,8 +375,7 @@ export class EnrichmentService {
             try {
                 const lastfmInfo = await lastFmService.getAlbumInfo(
                     album.artist.name,
-                    album.title,
-                    enrichmentData.rgMbid
+                    album.title
                 );
 
                 if (lastfmInfo) {

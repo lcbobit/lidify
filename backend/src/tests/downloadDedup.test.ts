@@ -1119,12 +1119,12 @@ async function test17_StaleJobTimeout(): Promise<boolean> {
     // Run stale job cleanup
     console.log("   Running markStaleJobsAsFailed()...");
     const result = await simpleDownloadManager.markStaleJobsAsFailed();
-    console.log(`   Timed out: ${result.timedOut}`);
+    console.log(`   Timed out: ${result}`);
 
     const jobAfter = await prisma.downloadJob.findUnique({ where: { id: job1.id } });
     
     // Job should be marked as failed or exhausted
-    const passed = jobAfter?.status === "failed" || jobAfter?.status === "exhausted" || result.timedOut > 0;
+    const passed = jobAfter?.status === "failed" || jobAfter?.status === "exhausted" || result > 0;
     
     if (passed) {
         console.log("\n[PASS] TEST 17 PASSED: Stale job timeout handled");
@@ -1366,4 +1366,3 @@ async function runAllTests() {
 
 // Run tests
 runAllTests();
-

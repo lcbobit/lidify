@@ -85,11 +85,12 @@ export async function enrichSimilarArtist(artist: Artist): Promise<void> {
             );
             try {
                 const wikidataInfo = await wikidataService.getArtistInfo(
+                    artist.name,
                     artist.mbid
                 );
                 if (wikidataInfo) {
                     summary = wikidataInfo.summary;
-                    heroUrl = wikidataInfo.image;
+                    heroUrl = wikidataInfo.heroUrl;
                     if (summary) summarySource = "wikidata";
                     if (heroUrl) imageSource = "wikidata";
                     console.log(
@@ -241,8 +242,9 @@ export async function enrichSimilarArtist(artist: Artist): Promise<void> {
         // Get similar artists from Last.fm
         let similarArtists: Array<{
             name: string;
-            mbid: string | null;
-            similarity: number;
+            mbid?: string;
+            match: number;
+            url: string;
         }> = [];
         try {
             // Filter out temp MBIDs
@@ -277,9 +279,9 @@ export async function enrichSimilarArtist(artist: Artist): Promise<void> {
                 ? similarArtists.map((s) => ({
                       name: s.name,
                       mbid: s.mbid || null,
-                      match: s.similarity,
+                      match: s.match,
                   }))
-                : null;
+                : undefined;
 
         // Update artist with enriched data
         await prisma.artist.update({
@@ -335,10 +337,10 @@ export async function enrichSimilarArtist(artist: Artist): Promise<void> {
                         create: {
                             fromArtistId: artist.id,
                             toArtistId: similarArtistRecord.id,
-                            weight: similar.similarity,
+                            weight: similar.match,
                         },
                         update: {
-                            weight: similar.similarity,
+                            weight: similar.match,
                         },
                     });
                 }
@@ -503,7 +505,7 @@ export async function prefetchDiscographyCovers(
             return;
         }
 
-        const albumsToFetch = filteredReleaseGroups.map((rg: any) => ({
+        const albumsToFetch: Array<{ id: string; title: string }> = filteredReleaseGroups.map((rg: any) => ({
             id: rg.id,
             title: rg.title,
         }));

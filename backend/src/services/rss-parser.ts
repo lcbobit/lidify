@@ -40,7 +40,7 @@ class RSSParserService {
                     ["itunes:image", "itunesImage"],
                     ["itunes:explicit", "itunesExplicit"],
                     ["itunes:type", "itunesType"],
-                ],
+                ] as any,
                 item: [
                     ["itunes:author", "itunesAuthor"],
                     ["itunes:duration", "itunesDuration"],

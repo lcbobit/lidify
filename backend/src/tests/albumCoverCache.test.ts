@@ -35,15 +35,15 @@ async function run() {
     const libraryRouter = (await import("../routes/library")).default;
 
     const redisStore = new Map<string, RedisValue>();
-    redisClient.get = async (key: string) => redisStore.get(key) ?? null;
-    redisClient.setEx = async (key: string, _ttl: number, value: string) => {
+    (redisClient as any).get = async (key: string) => redisStore.get(key) ?? null;
+    (redisClient as any).setEx = async (key: string, _ttl: number, value: string) => {
         redisStore.set(key, value);
         return "OK";
     };
 
     const user = { id: "user-1", username: "test", role: "admin" };
     const token = generateToken(user);
-    prisma.user.findUnique = async () => user as any;
+    (prisma.user as any).findUnique = async () => user as any;
 
     const app = express();
     app.use("/library", libraryRouter);
@@ -73,14 +73,14 @@ async function run() {
         // Case 1: DB cover overrides negative cache.
         redisStore.set("caa:test-mbid-1", "NOT_FOUND");
         redisStore.set("album-cover-url:test-mbid-1", "NOT_FOUND");
-        prisma.album.findFirst = async () =>
+        (prisma.album as any).findFirst = async () =>
             ({ coverUrl: "https://example.com/db.jpg" } as any);
-        prisma.album.updateMany = async () => ({ count: 1 } as any);
+        (prisma.album as any).updateMany = async () => ({ count: 1 } as any);
 
         const res1 = await fetch(
             `${baseUrl}/library/album-cover/test-mbid-1?json=true&artist=Artist&album=Album&token=${token}`
         );
-        const data1 = await res1.json();
+        const data1 = (await res1.json()) as any;
         assert.equal(res1.status, 200);
         assert.ok(
             data1.coverUrl.includes("/api/library/cover-art?url="),
@@ -97,14 +97,14 @@ async function run() {
         // Case 2: Negative cache does not block when metadata is provided.
         redisStore.set("caa:test-mbid-2", "NOT_FOUND");
         redisStore.set("album-cover-url:test-mbid-2", "NOT_FOUND");
-        prisma.album.findFirst = async () => null as any;
+        (prisma.album as any).findFirst = async () => null as any;
         providerCalls = 0;
         coverArtCalls = 0;
 
         const res2 = await fetch(
             `${baseUrl}/library/album-cover/test-mbid-2?json=true&artist=Artist&album=Album&token=${token}`
         );
-        const data2 = await res2.json();
+        const data2 = (await res2.json()) as any;
         assert.equal(res2.status, 200);
         assert.ok(data2.coverUrl.includes("https%3A%2F%2Fexample.com%2Fprovider.jpg"));
         assert.equal(providerCalls, 1);

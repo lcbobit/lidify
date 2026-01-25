@@ -26,7 +26,7 @@ router.post("/sync-covers", requireAuth, async (req, res) => {
         await notificationService.notifySystem(
             req.user!.id,
             "Podcast Covers Synced",
-            `Synced ${podcastResult.cached || 0} podcast covers and ${episodeResult.cached || 0} episode covers`
+            `Synced ${podcastResult.synced || 0} podcast covers and ${episodeResult.synced || 0} episode covers`
         );
 
         res.json({
@@ -411,7 +411,7 @@ router.get("/preview/:itunesId", async (req, res) => {
                     podcastData.feedUrl
                 );
                 description =
-                    feedData.description || feedData.itunes?.summary || "";
+                    feedData.podcast?.description || "";
 
                 // Get first 3 episodes for preview
                 previewEpisodes = (feedData.episodes || [])
@@ -1568,8 +1568,8 @@ router.get("/:id/similar", async (req, res) => {
             const { itunesService } = await import("../services/itunes");
             const recommendations = await itunesService.getSimilarPodcasts(
                 podcast.title,
-                podcast.description || undefined,
-                podcast.author
+                podcast.description ?? undefined,
+                podcast.author ?? undefined
             );
 
             console.log(`   Found ${recommendations.length} similar podcasts`);

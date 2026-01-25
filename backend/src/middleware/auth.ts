@@ -3,12 +3,17 @@ import { prisma } from "../utils/db";
 import jwt from "jsonwebtoken";
 
 // JWT_SECRET is required - SESSION_SECRET is used as fallback since docker-entrypoint.sh generates it
-const JWT_SECRET = process.env.JWT_SECRET || process.env.SESSION_SECRET;
-
-if (!JWT_SECRET) {
+const JWT_SECRET: string = process.env.JWT_SECRET || process.env.SESSION_SECRET || (() => {
     throw new Error(
         "JWT_SECRET or SESSION_SECRET environment variable is required for authentication"
     );
+})();
+
+// Extend express-session types to include userId
+declare module "express-session" {
+    interface SessionData {
+        userId: string;
+    }
 }
 
 declare global {

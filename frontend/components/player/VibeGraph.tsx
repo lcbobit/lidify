@@ -49,6 +49,24 @@ export function VibeGraph({ className, currentTrackFeatures }: VibeGraphProps) {
         return { sourceValues: source, currentValues: current };
     }, [vibeSourceFeatures, currentTrackFeatures]);
 
+    // Calculate match percentage
+    const matchScore = useMemo(() => {
+        if (!vibeSourceFeatures || !currentTrackFeatures) return null;
+        
+        let totalDiff = 0;
+        let count = 0;
+        
+        FEATURES.forEach((feature, i) => {
+            if (sourceValues[i] > 0 || currentValues[i] > 0) {
+                totalDiff += Math.abs(sourceValues[i] - currentValues[i]);
+                count++;
+            }
+        });
+        
+        if (count === 0) return null;
+        return Math.round((1 - totalDiff / count) * 100);
+    }, [sourceValues, currentValues, vibeSourceFeatures, currentTrackFeatures]);
+
     // Don't render if not in vibe mode
     if (!vibeMode) return null;
 
@@ -81,24 +99,6 @@ export function VibeGraph({ className, currentTrackFeatures }: VibeGraphProps) {
             y: center + radius * Math.sin(angle),
         };
     };
-
-    // Calculate match percentage
-    const matchScore = useMemo(() => {
-        if (!vibeSourceFeatures || !currentTrackFeatures) return null;
-        
-        let totalDiff = 0;
-        let count = 0;
-        
-        FEATURES.forEach((feature, i) => {
-            if (sourceValues[i] > 0 || currentValues[i] > 0) {
-                totalDiff += Math.abs(sourceValues[i] - currentValues[i]);
-                count++;
-            }
-        });
-        
-        if (count === 0) return null;
-        return Math.round((1 - totalDiff / count) * 100);
-    }, [sourceValues, currentValues, vibeSourceFeatures, currentTrackFeatures]);
 
     return (
         <div className={cn("flex items-center gap-2", className)}>

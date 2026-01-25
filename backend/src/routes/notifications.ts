@@ -1,7 +1,8 @@
-import { Router, Response } from "express";
+import { Router, Request, Response } from "express";
 import path from "path";
+import { Prisma } from "@prisma/client";
 import { notificationService } from "../services/notificationService";
-import { AuthenticatedRequest, requireAuth } from "../middleware/auth";
+import { requireAuth } from "../middleware/auth";
 import { prisma } from "../utils/db";
 
 const router = Router();
@@ -13,7 +14,7 @@ const router = Router();
 router.get(
     "/",
     requireAuth,
-    async (req: AuthenticatedRequest, res: Response) => {
+    async (req: Request, res: Response) => {
         try {
             console.log(
                 `[Notifications] Fetching notifications for user ${
@@ -41,7 +42,7 @@ router.get(
 router.get(
     "/unread-count",
     requireAuth,
-    async (req: AuthenticatedRequest, res: Response) => {
+    async (req: Request, res: Response) => {
         try {
             const count = await notificationService.getUnreadCount(
                 req.user!.id
@@ -61,7 +62,7 @@ router.get(
 router.post(
     "/:id/read",
     requireAuth,
-    async (req: AuthenticatedRequest, res: Response) => {
+    async (req: Request, res: Response) => {
         try {
             await notificationService.markAsRead(req.params.id, req.user!.id);
             res.json({ success: true });
@@ -81,7 +82,7 @@ router.post(
 router.post(
     "/read-all",
     requireAuth,
-    async (req: AuthenticatedRequest, res: Response) => {
+    async (req: Request, res: Response) => {
         try {
             await notificationService.markAllAsRead(req.user!.id);
             res.json({ success: true });
@@ -101,7 +102,7 @@ router.post(
 router.post(
     "/:id/clear",
     requireAuth,
-    async (req: AuthenticatedRequest, res: Response) => {
+    async (req: Request, res: Response) => {
         try {
             await notificationService.clear(req.params.id, req.user!.id);
             res.json({ success: true });
@@ -119,7 +120,7 @@ router.post(
 router.post(
     "/clear-all",
     requireAuth,
-    async (req: AuthenticatedRequest, res: Response) => {
+    async (req: Request, res: Response) => {
         try {
             await notificationService.clearAll(req.user!.id);
             res.json({ success: true });
@@ -143,7 +144,7 @@ router.post(
 router.get(
     "/downloads/history",
     requireAuth,
-    async (req: AuthenticatedRequest, res: Response) => {
+    async (req: Request, res: Response) => {
         try {
             const downloads = await prisma.downloadJob.findMany({
                 where: {
@@ -169,7 +170,7 @@ router.get(
 router.get(
     "/downloads/active",
     requireAuth,
-    async (req: AuthenticatedRequest, res: Response) => {
+    async (req: Request, res: Response) => {
         try {
             const downloads = await prisma.downloadJob.findMany({
                 where: {
@@ -193,7 +194,7 @@ router.get(
 router.post(
     "/downloads/:id/clear",
     requireAuth,
-    async (req: AuthenticatedRequest, res: Response) => {
+    async (req: Request, res: Response) => {
         try {
             await prisma.downloadJob.updateMany({
                 where: {
@@ -217,7 +218,7 @@ router.post(
 router.post(
     "/downloads/clear-all",
     requireAuth,
-    async (req: AuthenticatedRequest, res: Response) => {
+    async (req: Request, res: Response) => {
         try {
             await prisma.downloadJob.updateMany({
                 where: {
@@ -242,7 +243,7 @@ router.post(
 router.post(
     "/downloads/:id/retry",
     requireAuth,
-    async (req: AuthenticatedRequest, res: Response) => {
+    async (req: Request, res: Response) => {
         try {
             // Get the failed download
             const failedJob = await prisma.downloadJob.findFirst({
@@ -697,7 +698,7 @@ router.post(
                     artistMbid: failedJob.artistMbid,
                     subject: failedJob.subject,
                     status: "pending",
-                    metadata: metadata || {},
+                    metadata: (metadata || {}) as Prisma.InputJsonValue,
                 },
             });
 

@@ -28,7 +28,7 @@ const addTrackSchema = z.object({
 // GET /playlists
 router.get("/", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
 
         // Get user's hidden playlists
         const hiddenPlaylists = await prisma.hiddenPlaylist.findMany({
@@ -117,7 +117,7 @@ router.get("/", async (req, res) => {
 // POST /playlists
 router.post("/", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
         const data = createPlaylistSchema.parse(req.body);
 
         const playlist = await prisma.playlist.create({
@@ -143,7 +143,7 @@ router.post("/", async (req, res) => {
 // GET /playlists/:id
 router.get("/:id", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
 
         const playlist = await prisma.playlist.findUnique({
             where: { id: req.params.id },
@@ -239,7 +239,7 @@ router.get("/:id", async (req, res) => {
 // PUT /playlists/:id
 router.put("/:id", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
         const data = createPlaylistSchema.parse(req.body);
 
         // Check ownership
@@ -278,7 +278,7 @@ router.put("/:id", async (req, res) => {
 // POST /playlists/:id/hide - Hide any playlist from your view
 router.post("/:id/hide", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
         const playlistId = req.params.id;
 
         // Check playlist exists
@@ -314,7 +314,7 @@ router.post("/:id/hide", async (req, res) => {
 // DELETE /playlists/:id/hide - Unhide a shared playlist
 router.delete("/:id/hide", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
         const playlistId = req.params.id;
 
         // Delete hidden record if exists
@@ -332,7 +332,7 @@ router.delete("/:id/hide", async (req, res) => {
 // DELETE /playlists/:id
 router.delete("/:id", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
 
         // Check ownership
         const existing = await prisma.playlist.findUnique({
@@ -361,7 +361,7 @@ router.delete("/:id", async (req, res) => {
 // POST /playlists/:id/items
 router.post("/:id/items", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
         const parsedBody = addTrackSchema.safeParse(req.body);
         if (!parsedBody.success) {
             return res.status(400).json({
@@ -454,7 +454,7 @@ router.post("/:id/items", async (req, res) => {
 // DELETE /playlists/:id/items/:trackId
 router.delete("/:id/items/:trackId", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
 
         // Check ownership
         const playlist = await prisma.playlist.findUnique({
@@ -488,7 +488,7 @@ router.delete("/:id/items/:trackId", async (req, res) => {
 // PUT /playlists/:id/items/reorder
 router.put("/:id/items/reorder", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
         const { trackIds } = req.body; // Array of track IDs in new order
 
         if (!Array.isArray(trackIds)) {
@@ -540,7 +540,7 @@ router.put("/:id/items/reorder", async (req, res) => {
  */
 router.get("/:id/pending", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
         const playlistId = req.params.id;
 
         // Check ownership or public access
@@ -585,7 +585,7 @@ router.get("/:id/pending", async (req, res) => {
  */
 router.delete("/:id/pending/:trackId", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
         const { id: playlistId, trackId: pendingTrackId } = req.params;
 
         // Check ownership
@@ -625,7 +625,7 @@ router.delete("/:id/pending/:trackId", async (req, res) => {
  */
 router.get("/:id/pending/:trackId/preview", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
         const { id: playlistId, trackId: pendingTrackId } = req.params;
 
         const playlist = await prisma.playlist.findUnique({
@@ -685,7 +685,7 @@ router.get("/:id/pending/:trackId/preview", async (req, res) => {
  */
 router.post("/:id/pending/:trackId/retry", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
         const { id: playlistId, trackId: pendingTrackId } = req.params;
 
         sessionLog(
@@ -1079,7 +1079,7 @@ router.post("/:id/pending/:trackId/retry", async (req, res) => {
  */
 router.post("/:id/pending/retry-all", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
         const playlistId = req.params.id;
 
         // Check ownership
@@ -1328,7 +1328,7 @@ router.post("/:id/pending/retry-all", async (req, res) => {
  */
 router.post("/:id/pending/reconcile", async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user!.id;
         const playlistId = req.params.id;
 
         // Check ownership

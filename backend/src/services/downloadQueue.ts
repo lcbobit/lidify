@@ -275,11 +275,11 @@ class DownloadQueueManager {
                 }
             }
 
-            // Mark as failed in Discovery database
+            // Mark as failed/deleted in Discovery database (no FAILED status, use DELETED)
             const { prisma } = await import("../utils/db");
             await prisma.discoveryAlbum.updateMany({
                 where: { albumTitle: info.albumTitle },
-                data: { status: "FAILED" },
+                data: { status: "DELETED" },
             });
             console.log(`   Marked as failed in database`);
 

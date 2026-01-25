@@ -375,7 +375,7 @@ class SoulseekService {
                 quality: m.quality,
                 score: m.score,
             }));
-            await redisClient.setex(
+            await redisClient.setEx(
                 key,
                 this.SEARCH_CACHE_TTL_SECONDS,
                 JSON.stringify(compact)

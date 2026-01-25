@@ -8,6 +8,20 @@ interface LidarrArtist {
     foreignArtistId: string; // MusicBrainz ID
     monitored: boolean;
     tags?: number[]; // Tag IDs
+    artistType?: string; // Person, Group, etc.
+    qualityProfileId?: number;
+    metadataProfileId?: number;
+    rootFolderPath?: string;
+    statistics?: {
+        albumCount?: number;
+        trackCount?: number;
+        trackFileCount?: number;
+        sizeOnDisk?: number;
+    };
+    ratings?: {
+        votes?: number;
+        value?: number;
+    };
 }
 
 interface LidarrTag {
@@ -169,7 +183,7 @@ class LidarrService {
                     
                     // Get artist info from MusicBrainz directly
                     const mbArtists = await musicBrainzService.searchArtist(artistName, 5);
-                    const mbArtist = mbArtists?.find(a => a.id === mbid) || mbArtists?.[0];
+                    const mbArtist = mbArtists?.find((a: any) => a.id === mbid) || mbArtists?.[0];
                     
                     if (mbArtist) {
                         // Create a minimal Lidarr-compatible artist object
@@ -208,7 +222,7 @@ class LidarrService {
                 try {
                     const { musicBrainzService } = await import("./musicbrainz");
                     const mbArtists = await musicBrainzService.searchArtist(artistName, 5);
-                    const mbArtist = mbArtists?.find(a => a.id === mbid) || mbArtists?.[0];
+                    const mbArtist = mbArtists?.find((a: any) => a.id === mbid) || mbArtists?.[0];
                     
                     if (mbArtist) {
                         // Get configured quality profile ID from settings
@@ -1866,6 +1880,8 @@ interface QueueItem {
     trackedDownloadStatus: string;
     trackedDownloadState: string;
     statusMessages: { title: string; messages: string[] }[];
+    size?: number;
+    sizeleft?: number;
 }
 
 interface QueueResponse {

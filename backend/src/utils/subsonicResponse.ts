@@ -111,7 +111,7 @@ function escapeXml(str: string): string {
 /**
  * Build the subsonic-response wrapper
  */
-function buildResponseWrapper(status: "ok" | "failed", content: object = {}): object {
+function buildResponseWrapper(status: "ok" | "failed", content: object = {}): { "subsonic-response": object } {
     return {
         "subsonic-response": {
             status,

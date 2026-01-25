@@ -33,22 +33,23 @@ export async function processDiscoverWeekly(
         );
         const result = await discoverWeeklyService.generatePlaylist(userId);
 
+        const resultWithError = result as DiscoverJobResult;
         console.log(`[DiscoverJob ${job.id}] Result:`, {
-            success: result.success,
-            playlistName: result.playlistName,
-            songCount: result.songCount,
-            error: result.error,
+            success: resultWithError.success,
+            playlistName: resultWithError.playlistName,
+            songCount: resultWithError.songCount,
+            error: resultWithError.error,
         });
 
         await job.progress(100); // Complete
 
         console.log(
             `[DiscoverJob ${job.id}] Generation complete: ${
-                result.success ? "SUCCESS" : "FAILED"
+                resultWithError.success ? "SUCCESS" : "FAILED"
             }`
         );
-        if (!result.success) {
-            console.log(`[DiscoverJob ${job.id}] Error: ${result.error}`);
+        if (!resultWithError.success && resultWithError.error) {
+            console.log(`[DiscoverJob ${job.id}] Error: ${resultWithError.error}`);
         }
 
         return result;

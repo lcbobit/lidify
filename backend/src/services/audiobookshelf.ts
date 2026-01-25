@@ -33,7 +33,7 @@ class AudiobookshelfService {
                 this.baseUrl = settings.audiobookshelfUrl.replace(/\/$/, ""); // Remove trailing slash
                 this.apiKey = settings.audiobookshelfApiKey;
                 this.client = axios.create({
-                    baseURL: this.baseUrl,
+                    baseURL: this.baseUrl ?? undefined,
                     headers: {
                         Authorization: `Bearer ${this.apiKey}`,
                     },

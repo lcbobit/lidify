@@ -1,6 +1,5 @@
 import * as fs from "fs";
 import * as path from "path";
-import fs from "fs";
 import { prisma } from "../utils/db";
 import { config } from "../config";
 import PQueue from "p-queue";

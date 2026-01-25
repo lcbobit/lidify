@@ -678,7 +678,10 @@ export class MusicScannerService {
             for (const candidate of similarArtists) {
                 if (areArtistNamesSimilar(artistName, candidate.name, 95)) {
                     console.log(`Fuzzy match found: "${artistName}" -> "${candidate.name}"`);
-                    artist = candidate;
+                    // Re-fetch full artist to get all fields
+                    artist = await prisma.artist.findUnique({
+                        where: { id: candidate.id },
+                    });
                     break;
                 }
             }
@@ -841,12 +844,14 @@ export class MusicScannerService {
 
                 // Only create album if not found by MBID lookup above
                 if (!album) {
+                    // rgMbid is guaranteed to be set at this point (either from metadata, MB lookup, or temp fallback)
+                    const albumMbidToUse = rgMbid!;
                     try {
                         album = await prisma.album.create({
                             data: {
                                 title: albumTitle,
                                 artistId: artist.id,
-                                rgMbid,
+                                rgMbid: albumMbidToUse,
                                 year,
                                 genres: genres.length > 0 ? genres : undefined,
                                 primaryType: "Album",
@@ -879,7 +884,7 @@ export class MusicScannerService {
                     if (!shouldBeHiddenFromLibrary) {
                         await prisma.ownedAlbum.create({
                             data: {
-                                rgMbid,
+                                rgMbid: albumMbidToUse,
                                 artistId: artist.id,
                                 source: "native_scan",
                             },

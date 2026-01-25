@@ -189,19 +189,45 @@ async function findTracksByGenrePatterns(
     let cursorId: string | null = null;
 
     while (true) {
-        const albumTracks = await prisma.track.findMany({
-            where: {
-                album: {
-                    genres: { not: { equals: null } },
-                },
-            },
-            include: { album: { select: { coverUrl: true, genres: true, artist: { select: { id: true } } } } },
-            orderBy: { id: "asc" },
-            take: batchSize,
-            ...(cursorId
-                ? { cursor: { id: cursorId }, skip: 1 }
-                : {}),
-        });
+        const albumTracks: TrackWithAlbumCover[] = cursorId
+            ? await prisma.track.findMany({
+                  where: {
+                      album: {
+                          genres: { not: { equals: null } },
+                      },
+                  },
+                  include: {
+                      album: {
+                          select: {
+                              coverUrl: true,
+                              genres: true,
+                              artist: { select: { id: true } },
+                          },
+                      },
+                  },
+                  orderBy: { id: "asc" },
+                  take: batchSize,
+                  cursor: { id: cursorId },
+                  skip: 1,
+              })
+            : await prisma.track.findMany({
+                  where: {
+                      album: {
+                          genres: { not: { equals: null } },
+                      },
+                  },
+                  include: {
+                      album: {
+                          select: {
+                              coverUrl: true,
+                              genres: true,
+                              artist: { select: { id: true } },
+                          },
+                      },
+                  },
+                  orderBy: { id: "asc" },
+                  take: batchSize,
+              });
 
         if (albumTracks.length === 0) break;
 

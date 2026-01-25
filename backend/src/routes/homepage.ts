@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { Prisma } from "@prisma/client";
 import { requireAuthOrToken } from "../middleware/auth";
 import { prisma } from "../utils/db";
 import { redisClient } from "../utils/redis";
@@ -36,18 +37,10 @@ router.get("/genres", async (req, res) => {
         // Get all albums with genres (excluding discovery albums)
         const albums = await prisma.album.findMany({
             where: {
-                genres: {
-                    isEmpty: false, // Only albums with genres
-                },
+                genres: { not: Prisma.DbNull },
                 location: "LIBRARY", // Exclude discovery albums
             },
-            select: {
-                id: true,
-                title: true,
-                year: true,
-                coverUrl: true,
-                genres: true,
-                artistId: true,
+            include: {
                 artist: {
                     select: {
                         id: true,
@@ -60,8 +53,11 @@ router.get("/genres", async (req, res) => {
         // Count genre occurrences
         const genreCounts = new Map<string, number>();
         for (const album of albums) {
-            for (const genre of album.genres) {
-                genreCounts.set(genre, (genreCounts.get(genre) || 0) + 1);
+            const genres = album.genres as string[] | null;
+            if (genres && Array.isArray(genres)) {
+                for (const genre of genres) {
+                    genreCounts.set(genre, (genreCounts.get(genre) || 0) + 1);
+                }
             }
         }
 
@@ -76,7 +72,10 @@ router.get("/genres", async (req, res) => {
         // For each top genre, get sample albums (up to 10)
         const genresWithAlbums = topGenres.map((genre) => {
             const genreAlbums = albums
-                .filter((a) => a.genres.includes(genre))
+                .filter((a) => {
+                    const genres = a.genres as string[] | null;
+                    return genres && Array.isArray(genres) && genres.includes(genre);
+                })
                 .slice(0, 10)
                 .map((a) => ({
                     id: a.id,
