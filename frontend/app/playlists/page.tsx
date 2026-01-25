@@ -263,6 +263,7 @@ export default function PlaylistsPage() {
                 const tracks = playlist.items.map((item: any) => ({
                     id: item.track.id,
                     title: item.track.title,
+                    filePath: item.track.filePath,
                     artist: {
                         name: item.track.album?.artist?.name || "Unknown",
                         id: item.track.album?.artist?.id,

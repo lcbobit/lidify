@@ -124,6 +124,12 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
     const minPlaySeconds = 30;
     const maxDeltaSeconds = 5;
 
+    const isLibraryTrackId = (trackId: string) => {
+        // Prisma uses cuid() IDs for Track. External sources (e.g. Deezer) use custom IDs.
+        // Only log plays for library tracks so we don't spam /plays with 404s.
+        return /^c[a-z0-9]{20,}$/i.test(trackId);
+    };
+
     // Cleanup timeout on unmount
     useEffect(() => {
         queueDebugLog("AudioControlsProvider mounted");
@@ -181,6 +187,11 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
 
         if (playAccumulatedSecondsRef.current >= minPlaySeconds) {
             playLoggedRef.current = true;
+
+            if (!isLibraryTrackId(trackId)) {
+                return;
+            }
+
             api.logPlay(trackId, playAccumulatedSecondsRef.current).catch((error: any) => {
                 // 404 means the track isn't in our DB (common for external playlist playback).
                 // Treat as a no-op so we don't retry every tick and spam logs.
