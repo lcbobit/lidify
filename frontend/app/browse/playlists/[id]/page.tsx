@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
     ArrowLeft,
     Play,
@@ -25,9 +25,9 @@ const DeezerIcon = ({ className }: { className?: string }) => (
     </svg>
 );
 
-// Types for Deezer playlist
-interface DeezerTrack {
-    deezerId: string;
+// Types for browse playlist (normalized format from backend)
+interface BrowseTrack {
+    id: string;              // deezerId or spotifyId (normalized by backend)
     title: string;
     artist: string;
     artistId: string;
@@ -36,58 +36,64 @@ interface DeezerTrack {
     durationMs: number;
     previewUrl: string | null;
     coverUrl: string | null;
+    isrc?: string | null;    // Spotify provides ISRC
 }
 
-interface DeezerPlaylistFull {
+interface BrowsePlaylistFull {
     id: string;
     title: string;
     description: string | null;
     creator: string;
     imageUrl: string | null;
     trackCount: number;
-    tracks: DeezerTrack[];
+    tracks: BrowseTrack[];
     isPublic: boolean;
-    source: string;
+    source: "deezer" | "spotify";
     url: string;
 }
 
-// Convert Deezer track to main player Track format
-const convertToTrack = (deezerTrack: DeezerTrack): Track => ({
-    id: `deezer-${deezerTrack.deezerId}`,
-    title: deezerTrack.title,
-    artist: { name: deezerTrack.artist },
+// Convert browse track to main player Track format
+const convertToTrack = (track: BrowseTrack, source: "deezer" | "spotify"): Track => ({
+    id: `${source}-${track.id}`,
+    title: track.title,
+    artist: { name: track.artist },
     album: {
-        title: deezerTrack.album,
-        coverArt: deezerTrack.coverUrl || undefined,
+        title: track.album,
+        coverArt: track.coverUrl || undefined,
     },
-    duration: Math.round(deezerTrack.durationMs / 1000),
+    duration: Math.round(track.durationMs / 1000),
     // No filePath = HowlerAudioElement will use YouTube fallback
 });
 
-export default function DeezerPlaylistDetailPage() {
+export default function BrowsePlaylistDetailPage() {
     const params = useParams();
     const router = useRouter();
+    const searchParams = useSearchParams();
     const { toast } = useToast();
     const playlistId = params.id as string;
+    const source = (searchParams.get("source") as "deezer" | "spotify") || "deezer";
 
     // Main player hooks
     const { playTracks, currentTrack, isPlaying, pause, resume } = useAudio();
 
     // State
-    const [playlist, setPlaylist] = useState<DeezerPlaylistFull | null>(null);
+    const [playlist, setPlaylist] = useState<BrowsePlaylistFull | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [isImporting, setIsImporting] = useState(false);
 
-    // Fetch playlist data
+    // Fetch playlist data - route based on source
     useEffect(() => {
         async function fetchPlaylist() {
             setIsLoading(true);
             setError(null);
             try {
-                const data = await api.get<DeezerPlaylistFull>(
-                    `/browse/playlists/${playlistId}`
-                );
+                // Use source-specific endpoint
+                const endpoint = source === "spotify"
+                    ? `/browse/spotify/playlists/${playlistId}`
+                    : `/browse/playlists/${playlistId}`;
+                
+                const data = await api.get<BrowsePlaylistFull>(endpoint);
                 setPlaylist(data);
 
                 // Pre-fetch YouTube matches for first 20 tracks to speed up playback
@@ -112,13 +118,13 @@ export default function DeezerPlaylistDetailPage() {
         }
 
         fetchPlaylist();
-    }, [playlistId]);
+    }, [playlistId, source]);
 
     // Handle track play - uses main player system
-    const handlePlay = (track: DeezerTrack, index: number) => {
+    const handlePlay = (track: BrowseTrack, index: number) => {
         if (!playlist) return;
 
-        const trackId = `deezer-${track.deezerId}`;
+        const trackId = `${playlist.source}-${track.id}`;
 
         // If clicking currently playing track, toggle play/pause
         if (currentTrack?.id === trackId) {
@@ -127,7 +133,7 @@ export default function DeezerPlaylistDetailPage() {
         }
 
         // Play all tracks starting from this index
-        const tracks = playlist.tracks.map(convertToTrack);
+        const tracks = playlist.tracks.map(t => convertToTrack(t, playlist.source));
         playTracks(tracks, index);
     };
 
@@ -161,8 +167,8 @@ export default function DeezerPlaylistDetailPage() {
     };
 
     // Check if a track is currently playing from this playlist
-    const isTrackPlaying = (track: DeezerTrack) => {
-        return currentTrack?.id === `deezer-${track.deezerId}`;
+    const isTrackPlaying = (track: BrowseTrack) => {
+        return currentTrack?.id === `${playlist?.source || source}-${track.id}`;
     };
 
     if (isLoading) {
@@ -334,7 +340,7 @@ export default function DeezerPlaylistDetailPage() {
 
                                 return (
                                     <div
-                                        key={track.deezerId}
+                                        key={track.id}
                                         onClick={() => handlePlay(track, index)}
                                         className={cn(
                                             "grid grid-cols-[40px_1fr_auto] md:grid-cols-[40px_minmax(200px,4fr)_minmax(100px,1fr)_80px] gap-4 px-4 py-2 rounded-md transition-colors group",

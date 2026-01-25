@@ -137,6 +137,50 @@ router.get("/playlists/:id", async (req, res) => {
     }
 });
 
+/**
+ * GET /api/browse/spotify/playlists/:id
+ * Get full details of a Spotify playlist
+ * Normalizes format to match Deezer for frontend compatibility
+ */
+router.get("/spotify/playlists/:id", async (req, res) => {
+    try {
+        const { id } = req.params;
+        const playlist = await spotifyService.getPlaylist(id);
+
+        if (!playlist) {
+            return res.status(404).json({ error: "Playlist not found" });
+        }
+
+        // Normalize to match Deezer format for frontend compatibility
+        res.json({
+            id: playlist.id,
+            title: playlist.name,           // Spotify uses "name", normalize to "title"
+            description: playlist.description,
+            creator: playlist.owner,        // Spotify uses "owner", normalize to "creator"
+            imageUrl: playlist.imageUrl,
+            trackCount: playlist.trackCount,
+            tracks: playlist.tracks.map(t => ({
+                id: t.spotifyId,            // Normalize ID field name
+                title: t.title,
+                artist: t.artist,
+                artistId: t.artistId,
+                album: t.album,
+                albumId: t.albumId,
+                durationMs: t.durationMs,
+                previewUrl: t.previewUrl,
+                coverUrl: t.coverUrl,
+                isrc: t.isrc,               // Keep ISRC for better matching
+            })),
+            isPublic: playlist.isPublic,
+            source: "spotify",
+            url: `https://open.spotify.com/playlist/${id}`,
+        });
+    } catch (error: any) {
+        console.error("Spotify playlist fetch error:", error);
+        res.status(500).json({ error: error.message || "Failed to fetch Spotify playlist" });
+    }
+});
+
 // ============================================
 // Radio Endpoints
 // ============================================
