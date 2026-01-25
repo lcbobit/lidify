@@ -290,6 +290,9 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
                 state.setVibeQueueIds([]);
             }
             
+            console.log(`[AudioControls] playTrack() called:`, track?.title);
+            console.log(`[AudioControls] playTrack STACK:`, new Error().stack?.split('\n').slice(1, 8).join('\n'));
+            
             state.setPlaybackType("track");
             state.setCurrentTrack(track);
             state.setCurrentAudiobook(null);
@@ -309,6 +312,15 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
             if (tracks.length === 0) {
                 return;
             }
+            // DEBUG: Always log playTracks calls with stack trace
+            console.log(`[AudioControls] playTracks() called:`, {
+                tracksLen: tracks.length,
+                startIndex,
+                firstTrack: tracks[0]?.title,
+                startTrack: tracks[startIndex]?.title,
+            });
+            console.log(`[AudioControls] playTracks STACK:`, new Error().stack?.split('\n').slice(1, 8).join('\n'));
+            
             queueDebugLog("playTracks()", {
                 tracksLen: tracks.length,
                 startIndex,
@@ -478,6 +490,8 @@ export function AudioControlsProvider({ children }: { children: ReactNode }) {
             nextTrackId: state.queue[nextIndex]?.id,
             queueLen: state.queue.length,
         });
+        console.log(`[AudioControls] next() advancing to:`, state.queue[nextIndex]?.title);
+        console.log(`[AudioControls] next() STACK:`, new Error().stack?.split('\n').slice(1, 8).join('\n'));
         state.setCurrentIndex(nextIndex);
         state.setCurrentTrack(state.queue[nextIndex]);
         playback.setCurrentTime(0);

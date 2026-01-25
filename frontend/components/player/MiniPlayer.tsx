@@ -78,12 +78,28 @@ export function MiniPlayer() {
     const [swipeOffset, setSwipeOffset] = useState(0);
     const [isVibePanelExpanded, setIsVibePanelExpanded] = useState(false);
     const [showVolumeSlider, setShowVolumeSlider] = useState(false);
+    const [optimisticRemoteVolume, setOptimisticRemoteVolume] = useState<number | null>(null);
     const touchStartX = useRef<number | null>(null);
     const lastMediaIdRef = useRef<string | null>(null);
 
+    const isControllingRemote = !isActivePlayer && !!activePlayerState;
+
+    // Clear optimistic volume when leaving remote control, or when remote catches up
+    useEffect(() => {
+        if (!isControllingRemote) {
+            if (optimisticRemoteVolume !== null) setOptimisticRemoteVolume(null);
+            return;
+        }
+        if (optimisticRemoteVolume === null) return;
+        const remoteVol = activePlayerState?.volume;
+        if (typeof remoteVol === "number" && Math.abs(remoteVol - optimisticRemoteVolume) < 0.02) {
+            setOptimisticRemoteVolume(null);
+        }
+    }, [isControllingRemote, activePlayerState?.volume, optimisticRemoteVolume]);
+
     // Get display volume - use remote volume when controlling remote device
-    const displayVolume = (!isActivePlayer && activePlayerState?.volume !== undefined)
-        ? activePlayerState.volume
+    const displayVolume = isControllingRemote
+        ? (optimisticRemoteVolume ?? activePlayerState?.volume ?? volume)
         : volume;
 
     // Get current track's audio features for vibe comparison
@@ -198,7 +214,12 @@ export function MiniPlayer() {
         const coverArt = (album && typeof album === 'object' && album.coverArt)
             ? album.coverArt
             : (displayTrack as any).coverArt;
-        coverUrl = coverArt ? api.getCoverArtUrl(coverArt, 100) : null;
+        const coverArtValue = typeof coverArt === "string" ? coverArt : null;
+        coverUrl = coverArtValue
+            ? (coverArtValue.startsWith("http") || coverArtValue.startsWith("/")
+                ? coverArtValue
+                : api.getCoverArtUrl(coverArtValue, 100))
+            : null;
         // Links only work for local tracks
         if (!isActivePlayer && activePlayerState?.currentTrack) {
             mediaLink = null;
@@ -403,7 +424,11 @@ export function MiniPlayer() {
                             min="0"
                             max="100"
                             value={Math.round(displayVolume * 100)}
-                            onChange={(e) => setVolume(parseInt(e.target.value) / 100)}
+                            onChange={(e) => {
+                                const nextVol = parseInt(e.target.value) / 100;
+                                if (isControllingRemote) setOptimisticRemoteVolume(nextVol);
+                                setVolume(nextVol);
+                            }}
                             className="flex-1 h-1 bg-white/20 rounded-full appearance-none cursor-pointer
                                 [&::-webkit-slider-thumb]:appearance-none
                                 [&::-webkit-slider-thumb]:w-4
@@ -876,13 +901,17 @@ export function MiniPlayer() {
 
                         {/* Volume Control */}
                         <div className="flex items-center gap-1 ml-1">
-                            <button
-                                onClick={() => setVolume(displayVolume === 0 ? 1 : 0)}
-                                disabled={!hasMedia}
-                                className={cn(
-                                    "rounded p-1.5 transition-colors",
-                                    hasMedia
-                                        ? "text-gray-400 hover:text-white"
+                        <button
+                            onClick={() => {
+                                const nextVol = displayVolume === 0 ? 1 : 0;
+                                if (isControllingRemote) setOptimisticRemoteVolume(nextVol);
+                                setVolume(nextVol);
+                            }}
+                            disabled={!hasMedia}
+                            className={cn(
+                                "rounded p-1.5 transition-colors",
+                                hasMedia
+                                    ? "text-gray-400 hover:text-white"
                                         : "text-gray-600 cursor-not-allowed"
                                 )}
                                 title={displayVolume === 0 ? "Unmute" : "Mute"}
@@ -898,7 +927,11 @@ export function MiniPlayer() {
                                 min="0"
                                 max="100"
                                 value={Math.round(displayVolume * 100)}
-                                onChange={(e) => setVolume(parseInt(e.target.value) / 100)}
+                                onChange={(e) => {
+                                    const nextVol = parseInt(e.target.value) / 100;
+                                    if (isControllingRemote) setOptimisticRemoteVolume(nextVol);
+                                    setVolume(nextVol);
+                                }}
                                 disabled={!hasMedia}
                                 className={cn(
                                     "w-16 h-1 rounded-full appearance-none cursor-pointer",

@@ -116,10 +116,11 @@ export function RemoteAwareAudioControlsProvider({ children }: { children: React
     const remote = useRemotePlayback();
 
     // Use getter functions to avoid stale closures - these always return current values
-    const { isActivePlayer, activePlayerId, activePlayerState, sendCommand, getIsActivePlayer, getActivePlayerId } = remote;
+    const { isActivePlayer, activePlayerId, activePlayerState, sendCommand, getIsActivePlayer, getActivePlayerId, getControlMode, getControlTargetId, controlMode, controlTargetId } = remote;
 
-    // Helper to either execute locally or send to active device
+    // Helper to either execute locally or send to controlled device
     // CRITICAL: Uses getter functions to get CURRENT values, not stale closure values
+    // NEW: Uses controlMode to determine routing, not isActivePlayer
     const executeOrForward = useCallback(
         (
             command: "play" | "pause" | "next" | "prev" | "seek" | "volume",
@@ -127,28 +128,28 @@ export function RemoteAwareAudioControlsProvider({ children }: { children: React
             payload?: any
         ) => {
             // Get current values from refs via getters (avoids stale closures)
-            const currentIsActivePlayer = getIsActivePlayer();
+            const currentControlMode = getControlMode();
+            const currentControlTargetId = getControlTargetId();
             const currentActivePlayerId = getActivePlayerId();
 
-            console.log(`[RemoteAware] ${command}: isActivePlayer=${currentIsActivePlayer}, activePlayerId=${currentActivePlayerId} (state: isActivePlayer=${isActivePlayer}, activePlayerId=${activePlayerId})`);
+            console.log(`[RemoteAware] ${command}: controlMode=${currentControlMode}, controlTargetId=${currentControlTargetId}, activePlayerId=${currentActivePlayerId}`);
 
-            if (currentIsActivePlayer) {
-                // This device is active, execute locally
-                console.log(`[RemoteAware] Executing ${command} locally (this device is active)`);
+            if (currentControlMode === "local") {
+                // Local mode - execute locally regardless of who's the active player
+                console.log(`[RemoteAware] Executing ${command} locally (local control mode)`);
                 localAction();
-            } else if (currentActivePlayerId) {
-                // Forward command to the active device
-                console.log(`[RemoteAware] Forwarding ${command} to ${currentActivePlayerId}`);
-                sendCommand(currentActivePlayerId, command, payload);
+            } else if (currentControlTargetId) {
+                // Remote mode - forward command to the controlled device
+                console.log(`[RemoteAware] Forwarding ${command} to controlled device ${currentControlTargetId}`);
+                sendCommand(currentControlTargetId, command, payload);
                 // DON'T execute locally - only forward
             } else {
-                // No active player set yet - this shouldn't happen often
-                // Execute locally as fallback but log warning
-                console.warn(`[RemoteAware] No activePlayerId set, executing ${command} locally as fallback`);
+                // Remote mode but no target - shouldn't happen, fallback to local
+                console.warn(`[RemoteAware] Remote mode but no controlTargetId, executing ${command} locally as fallback`);
                 localAction();
             }
         },
-        [getIsActivePlayer, getActivePlayerId, sendCommand, isActivePlayer, activePlayerId]
+        [getControlMode, getControlTargetId, getActivePlayerId, sendCommand]
     );
 
     // Wrapped playback controls
@@ -188,76 +189,82 @@ export function RemoteAwareAudioControlsProvider({ children }: { children: React
 
     const skipForward = useCallback(
         (seconds: number = 30) => {
-            const currentIsActivePlayer = getIsActivePlayer();
-            const currentActivePlayerId = getActivePlayerId();
-            console.log(`[RemoteAware] skipForward: isActivePlayer=${currentIsActivePlayer}, activePlayerId=${currentActivePlayerId}`);
+            const currentControlMode = getControlMode();
+            const currentControlTargetId = getControlTargetId();
+            console.log(`[RemoteAware] skipForward: controlMode=${currentControlMode}, controlTargetId=${currentControlTargetId}`);
 
-            if (currentIsActivePlayer) {
+            if (currentControlMode === "local") {
                 controls.skipForward(seconds);
-            } else if (currentActivePlayerId) {
-                // For skip, we need to calculate the new time
-                // Since we don't have the remote device's current time,
-                // we send a relative seek command
-                sendCommand(currentActivePlayerId, "seek", { relative: seconds });
+            } else if (currentControlTargetId) {
+                // For skip, we send a relative seek command
+                sendCommand(currentControlTargetId, "seek", { relative: seconds });
             } else {
                 controls.skipForward(seconds);
             }
         },
-        [getIsActivePlayer, getActivePlayerId, sendCommand, controls.skipForward]
+        [getControlMode, getControlTargetId, sendCommand, controls.skipForward]
     );
 
     const skipBackward = useCallback(
         (seconds: number = 30) => {
-            const currentIsActivePlayer = getIsActivePlayer();
-            const currentActivePlayerId = getActivePlayerId();
-            console.log(`[RemoteAware] skipBackward: isActivePlayer=${currentIsActivePlayer}, activePlayerId=${currentActivePlayerId}`);
+            const currentControlMode = getControlMode();
+            const currentControlTargetId = getControlTargetId();
+            console.log(`[RemoteAware] skipBackward: controlMode=${currentControlMode}, controlTargetId=${currentControlTargetId}`);
 
-            if (currentIsActivePlayer) {
+            if (currentControlMode === "local") {
                 controls.skipBackward(seconds);
-            } else if (currentActivePlayerId) {
-                sendCommand(currentActivePlayerId, "seek", { relative: -seconds });
+            } else if (currentControlTargetId) {
+                sendCommand(currentControlTargetId, "seek", { relative: -seconds });
             } else {
                 controls.skipBackward(seconds);
             }
         },
-        [getIsActivePlayer, getActivePlayerId, sendCommand, controls.skipBackward]
+        [getControlMode, getControlTargetId, sendCommand, controls.skipBackward]
     );
 
     // For playTrack - when controlling remotely, send the track to play
     const playTrack = useCallback(
         (track: Track) => {
-            const currentIsActivePlayer = getIsActivePlayer();
-            const currentActivePlayerId = getActivePlayerId();
-            console.log(`[RemoteAware] playTrack: isActivePlayer=${currentIsActivePlayer}, activePlayerId=${currentActivePlayerId}`);
+            const currentControlMode = getControlMode();
+            const currentControlTargetId = getControlTargetId();
+            console.log(`[RemoteAware] playTrack: controlMode=${currentControlMode}, controlTargetId=${currentControlTargetId}`);
 
-            if (currentIsActivePlayer) {
+            if (currentControlMode === "local") {
                 controls.playTrack(track);
-            } else if (currentActivePlayerId) {
+            } else if (currentControlTargetId) {
                 // Send playTrack command to remote device
-                sendCommand(currentActivePlayerId, "playTrack", { track });
+                sendCommand(currentControlTargetId, "playTrack", { track });
             } else {
                 controls.playTrack(track);
             }
         },
-        [getIsActivePlayer, getActivePlayerId, sendCommand, controls.playTrack]
+        [getControlMode, getControlTargetId, sendCommand, controls.playTrack]
     );
 
     // For playTracks - when controlling remotely, send the queue
     const playTracks = useCallback(
         (tracks: Track[], startIndex: number = 0, isVibeQueue: boolean = false) => {
-            const currentIsActivePlayer = getIsActivePlayer();
-            const currentActivePlayerId = getActivePlayerId();
-            console.log(`[RemoteAware] playTracks: isActivePlayer=${currentIsActivePlayer}, activePlayerId=${currentActivePlayerId}`);
+            const currentControlMode = getControlMode();
+            const currentControlTargetId = getControlTargetId();
+            console.log(`[RemoteAware] playTracks: controlMode=${currentControlMode}, controlTargetId=${currentControlTargetId}`);
+            
+            // DEBUG: Log track filePath on send
+            const firstTrack = tracks[startIndex];
+            if (firstTrack) {
+                console.log(`[RemoteAware] SENDING track: "${firstTrack.title}"`);
+                console.log(`[RemoteAware] SENDING filePath: ${firstTrack.filePath || 'MISSING'}`);
+                console.log(`[RemoteAware] SENDING keys: ${Object.keys(firstTrack).join(', ')}`);
+            }
 
-            if (currentIsActivePlayer) {
+            if (currentControlMode === "local") {
                 controls.playTracks(tracks, startIndex, isVibeQueue);
-            } else if (currentActivePlayerId) {
-                sendCommand(currentActivePlayerId, "setQueue", { tracks, startIndex });
+            } else if (currentControlTargetId) {
+                sendCommand(currentControlTargetId, "setQueue", { tracks, startIndex });
             } else {
                 controls.playTracks(tracks, startIndex, isVibeQueue);
             }
         },
-        [getIsActivePlayer, getActivePlayerId, sendCommand, controls.playTracks]
+        [getControlMode, getControlTargetId, sendCommand, controls.playTracks]
     );
 
     // These controls are always local (UI state, not playback)

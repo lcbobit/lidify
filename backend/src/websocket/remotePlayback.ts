@@ -232,7 +232,17 @@ export function initializeWebSocket(httpServer: HTTPServer): SocketIOServer {
 
             // Send current active player state to the newly registered device
             // This is critical for reconnection - ensures the client knows if it should be playing
-            const currentActivePlayer = getActivePlayer(user.id);
+            let currentActivePlayer = getActivePlayer(user.id);
+
+            // If no active player is set (common after server restart), pick the first registering device.
+            // This prevents multiple clients from treating themselves as active simultaneously.
+            if (!currentActivePlayer) {
+                setActivePlayer(user.id, data.deviceId);
+                currentActivePlayer = data.deviceId;
+                io.to(`user:${user.id}`).emit("playback:activePlayer", { deviceId: currentActivePlayer });
+                console.log(`[WebSocket] No active player set; defaulting to ${data.deviceName} (${data.deviceId})`);
+            }
+
             socket.emit("playback:activePlayer", { deviceId: currentActivePlayer });
             console.log(`[WebSocket] Sent active player state to ${data.deviceName}: ${currentActivePlayer}`);
         });
@@ -246,22 +256,34 @@ export function initializeWebSocket(httpServer: HTTPServer): SocketIOServer {
             }
             const state = parseResult.data;
 
-            const device = getDevice(state.deviceId);
-            if (device && device.userId === user.id) {
-                device.isPlaying = state.isPlaying;
-                device.currentTrack = state.currentTrack;
-                device.currentTime = state.currentTime;
-                device.volume = state.volume;
-                device.lastSeen = new Date();
-
-                // Broadcast state to all user's devices
-                const { deviceId, ...stateRest } = state;
-                socket.to(`user:${user.id}`).emit("playback:stateUpdate", {
-                    deviceId,
-                    deviceName: device.deviceName,
-                    ...stateRest,
-                });
+            // SECURITY/CONSISTENCY: Only accept state updates for the device that owns this socket.
+            // Without this, a client can accidentally (or maliciously) overwrite another device's state
+            // by sending a different deviceId.
+            const fromDevice = getDeviceBySocketId(socket.id);
+            if (!fromDevice || fromDevice.userId !== user.id) {
+                return;
             }
+
+            if (fromDevice.deviceId !== state.deviceId) {
+                console.warn(
+                    `[WebSocket] Ignoring playback:state with mismatched deviceId. socketDeviceId=${fromDevice.deviceId} payloadDeviceId=${state.deviceId}`
+                );
+                return;
+            }
+
+            fromDevice.isPlaying = state.isPlaying;
+            fromDevice.currentTrack = state.currentTrack;
+            fromDevice.currentTime = state.currentTime;
+            fromDevice.volume = state.volume;
+            fromDevice.lastSeen = new Date();
+
+            // Broadcast state to all user's devices
+            const { deviceId, ...stateRest } = state;
+            socket.to(`user:${user.id}`).emit("playback:stateUpdate", {
+                deviceId,
+                deviceName: fromDevice.deviceName,
+                ...stateRest,
+            });
         });
 
         // Handle remote control commands

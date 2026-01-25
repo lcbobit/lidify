@@ -78,11 +78,15 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
     const { pause, next } = useAudioControls();
 
     // Remote playback - check if this device should actually play audio
-    const { isActivePlayer, becomeActivePlayer } = useRemotePlayback();
+    const { isActivePlayer, becomeActivePlayer, controlMode, getControlMode } = useRemotePlayback();
 
     // Ref to track isActivePlayer for use in callbacks
     const isActivePlayerRef = useRef(isActivePlayer);
     isActivePlayerRef.current = isActivePlayer;
+    
+    // Ref for controlMode
+    const controlModeRef = useRef(controlMode);
+    controlModeRef.current = controlMode;
 
     // Refs
     const lastTrackIdRef = useRef<string | null>(null);
@@ -146,8 +150,8 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
             // Handle track advancement based on repeat mode
             if (playbackType === "track") {
                 if (repeatMode === "one") {
-                    // Only repeat if this device is the active player
-                    if (isActivePlayerRef.current) {
+                    // Only repeat if this device is in local mode
+                    if (controlModeRef.current === "local") {
                         howlerEngine.seek(0);
                         howlerEngine.play();
                     }
@@ -386,6 +390,16 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
     // Load and play audio when track changes
     useEffect(() => {
         const loadAudio = async () => {
+            // If we're in remote control mode, NEVER load audio on this device.
+            // This prevents the controller device from trying to resolve streams
+            // (and falling back to YouTube) based on incomplete track data.
+            if (controlModeRef.current === "remote") {
+                howlerEngine.stop();
+                lastTrackIdRef.current = null;
+                isLoadingRef.current = false;
+                return;
+            }
+
             const currentMediaId =
                 currentTrack?.id ||
                 currentAudiobook?.id ||
@@ -408,12 +422,13 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
                 const shouldPlay = lastPlayingStateRef.current || isPlaying;
                 const isCurrentlyPlaying = howlerEngine.isPlaying();
 
-                // Only play if this device is the active player
-                if (shouldPlay && !isCurrentlyPlaying && isActivePlayerRef.current) {
+                // Only play if this device is in local mode
+                const canPlayLocally = controlModeRef.current === "local";
+                if (shouldPlay && !isCurrentlyPlaying && canPlayLocally) {
                     howlerEngine.seek(0);
                     howlerEngine.play();
-                } else if (shouldPlay && !isActivePlayerRef.current) {
-                    console.log("[HowlerAudioElement] Blocking same-track play - not active player");
+                } else if (shouldPlay && !canPlayLocally) {
+                    console.log("[HowlerAudioElement] Blocking same-track play - in remote mode");
                 }
                 return;
             }
@@ -431,9 +446,17 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
         let source: "local" | "youtube" | null = null;
 
         if (playbackType === "track" && currentTrack) {
+            // DEBUG: Log track details to diagnose local vs YouTube decision
+            console.log(`[HowlerAudioElement] Loading track: "${currentTrack.title}" by ${currentTrack.artist?.name}`);
+            console.log(`[HowlerAudioElement] Track filePath: "${currentTrack.filePath}" (truthy: ${!!currentTrack.filePath})`);
+            console.log(`[HowlerAudioElement] Track keys: ${Object.keys(currentTrack).join(', ')}`);
+            console.log(`[HowlerAudioElement] controlMode: ${controlModeRef.current}, isActivePlayer: ${isActivePlayerRef.current}`);
+            console.log(`[HowlerAudioElement] STACK TRACE:`, new Error().stack);
+            
             // Check if track has a local file
             if (currentTrack.filePath) {
                 // Local file available - use native streaming
+                console.log(`[HowlerAudioElement] Using LOCAL stream for track`);
                 streamUrl = api.getStreamUrl(currentTrack.id);
                 source = "local";
                 
@@ -445,6 +468,7 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
                 else if (ext === "wav") audioFormat = "wav";
             } else {
                 // No local file - try YouTube Music fallback
+                console.log(`[HowlerAudioElement] No filePath - falling back to YOUTUBE`);
                 try {
                     const artistName = currentTrack.artist?.name || "Unknown Artist";
                     const result = await api.findYouTubeMatch(
@@ -551,15 +575,16 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
 
                 console.log(`[HowlerAudioElement] handleLoaded: shouldAutoPlay=${shouldAutoPlay}, lastPlayingState=${lastPlayingStateRef.current}, wasHowlerPlaying=${wasHowlerPlayingBeforeLoad}`);
 
-                // Only autoplay if this device is the active player AND play isn't already pending
-                if (shouldAutoPlay && isActivePlayerRef.current && !howlerEngine.isPendingPlay()) {
+                // Only autoplay if this device is in local mode AND play isn't already pending
+                const canPlayLocally = controlModeRef.current === "local";
+                if (shouldAutoPlay && canPlayLocally && !howlerEngine.isPendingPlay()) {
                     console.log("[HowlerAudioElement] Calling howlerEngine.play() from handleLoaded");
                     howlerEngine.play();
                     if (!lastPlayingStateRef.current) {
                         setIsPlaying(true);
                     }
-                } else if (shouldAutoPlay && !isActivePlayerRef.current) {
-                    console.log("[HowlerAudioElement] Blocking autoplay - not active player");
+                } else if (shouldAutoPlay && !canPlayLocally) {
+                    console.log("[HowlerAudioElement] Blocking autoplay - in remote mode");
                 }
 
                 // Clean up both listeners
@@ -669,6 +694,8 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
     // Handle play/pause changes from UI
     // CRITICAL: Only play if this device is the active player!
     useEffect(() => {
+        console.log(`[HowlerAudioElement] isPlaying effect triggered: isPlaying=${isPlaying}, controlMode=${controlMode}, isLoading=${isLoadingRef.current}`);
+        
         if (isLoadingRef.current) {
             console.log("[HowlerAudioElement] isPlaying effect: skipping, still loading");
             return;
@@ -677,9 +704,11 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
         isUserInitiatedRef.current = true;
 
         if (isPlaying) {
-            // Guard: Only play locally if this device is the active player
-            if (!isActivePlayer) {
-                console.log("[HowlerAudioElement] Blocking local play - not active player");
+            // Guard: Only play locally if we're in local control mode
+            // When in local mode, this device controls itself - play locally
+            // When in remote mode, this device is controlling another device - don't play locally
+            if (controlMode === "remote") {
+                console.log("[HowlerAudioElement] Blocking local play - in remote control mode");
                 return;
             }
             console.log("[HowlerAudioElement] isPlaying effect: calling howlerEngine.play()");
@@ -689,7 +718,7 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
             // Always allow pause (stopping local audio is always safe)
             howlerEngine.pause();
         }
-    }, [isPlaying, isActivePlayer]);
+    }, [isPlaying, controlMode]);
 
     // Handle volume changes
     useEffect(() => {
@@ -706,8 +735,8 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
     const PREFETCH_AHEAD_COUNT = 3;
     
     useEffect(() => {
-        // Only prefetch if this device is the active player
-        if (!isActivePlayerRef.current) return;
+        // Only prefetch if this device is in local mode AND is the active player
+        if (controlModeRef.current === "remote" || !isActivePlayerRef.current) return;
 
         // Only for track playback
         if (playbackType !== "track") return;
@@ -827,8 +856,8 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
 
                             howlerEngine.seek(targetTime);
                             setCurrentTime(targetTime);
-                            // Only play if this device is the active player
-                            if (isActivePlayerRef.current) {
+                            // Only play if this device is in local mode
+                            if (controlModeRef.current === "local") {
                                 howlerEngine.play();
                                 setIsPlaying(true);
                             }
@@ -838,7 +867,7 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
                                 targetTime,
                                 howlerTime: howlerEngine.getCurrentTime(),
                                 actualTime: howlerEngine.getActualCurrentTime(),
-                                isActivePlayer: isActivePlayerRef.current,
+                                controlMode: controlModeRef.current,
                             });
 
                             setIsBuffering(false);
@@ -1002,8 +1031,8 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
 
                                         howlerEngine.seek(seekTime);
 
-                                        // Only play if this device is the active player
-                                        if (wasPlayingAtSeekStart && isActivePlayerRef.current) {
+                                        // Only play if this device is in local mode
+                                        if (wasPlayingAtSeekStart && controlModeRef.current === "local") {
                                             howlerEngine.play();
                                             setIsPlaying(true);
                                         }
@@ -1013,8 +1042,8 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
                                     howlerEngine.on("load", onLoad);
                                 } else {
                                     // Seek succeeded - resume playback if needed
-                                    // Only play if this device is the active player
-                                    if (wasPlayingAtSeekStart && !howlerEngine.isPlaying() && isActivePlayerRef.current) {
+                                    // Only play if this device is in local mode
+                                    if (wasPlayingAtSeekStart && !howlerEngine.isPlaying() && controlModeRef.current === "local") {
                                         howlerEngine.play();
                                     }
                                 }

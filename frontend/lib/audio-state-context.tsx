@@ -5,6 +5,7 @@ import {
     useContext,
     useState,
     useEffect,
+    useCallback,
     ReactNode,
     useMemo,
 } from "react";
@@ -25,6 +26,63 @@ function queueDebugLog(message: string, data?: Record<string, unknown>) {
     if (!queueDebugEnabled()) return;
     // eslint-disable-next-line no-console
     console.log(`[QueueDebug] ${message}`, data || {});
+}
+
+type PlaybackSyncControlMode = "local" | "remote";
+
+function getRemotePlaybackStorageSnapshot(): {
+    deviceId: string | null;
+    activePlayerId: string | null;
+    controlMode: PlaybackSyncControlMode;
+} {
+    if (typeof window === "undefined") {
+        return { deviceId: null, activePlayerId: null, controlMode: "local" };
+    }
+
+    const deviceId = localStorage.getItem("lidify_device_id");
+    const activePlayerId = localStorage.getItem("lidify_active_player_id");
+
+    let controlMode: PlaybackSyncControlMode = "local";
+    const raw = localStorage.getItem("lidify_control_mode");
+    if (raw) {
+        try {
+            const parsed = JSON.parse(raw);
+            if (parsed?.mode === "local" || parsed?.mode === "remote") {
+                controlMode = parsed.mode;
+            }
+        } catch {
+            // ignore
+        }
+    }
+
+    return { deviceId, activePlayerId, controlMode };
+}
+
+function isThisDeviceActivePlayerFromStorage(): boolean {
+    const snap = getRemotePlaybackStorageSnapshot();
+    if (snap.controlMode !== "local") return false;
+    if (!snap.deviceId) return false;
+    if (!snap.activePlayerId) return false;
+    return snap.activePlayerId === snap.deviceId;
+}
+
+function canReadPlaybackStateFromStorage(): boolean {
+    const snap = getRemotePlaybackStorageSnapshot();
+    if (snap.controlMode !== "local") return false;
+    if (!snap.deviceId) return false;
+    // If activePlayerId isn't known yet (e.g., first load before WebSocket sync),
+    // allow reading so single-device resume works.
+    if (!snap.activePlayerId) return true;
+    return snap.activePlayerId === snap.deviceId;
+}
+
+function canWritePlaybackStateFromStorage(): boolean {
+    const snap = getRemotePlaybackStorageSnapshot();
+    if (snap.controlMode !== "local") return false;
+    if (!snap.deviceId) return false;
+    // Only the active player device should write the per-user playbackState.
+    if (!snap.activePlayerId) return false;
+    return snap.activePlayerId === snap.deviceId;
 }
 
 export type PlayerMode = "full" | "mini" | "overlay";
@@ -186,7 +244,17 @@ const STORAGE_KEYS = {
 };
 
 export function AudioStateProvider({ children }: { children: ReactNode }) {
-    const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
+    const [currentTrackInternal, setCurrentTrackInternal] = useState<Track | null>(null);
+    
+    // Wrapped setter with logging to track what's changing the current track
+    const setCurrentTrack = useCallback((track: Track | null) => {
+        console.log(`[AudioState] setCurrentTrack called:`, track ? `"${track.title}" by ${track.artist?.name}` : 'null');
+        console.log(`[AudioState] setCurrentTrack STACK:`, new Error().stack?.split('\n').slice(1, 6).join('\n'));
+        setCurrentTrackInternal(track);
+    }, []);
+    
+    // Alias for reading
+    const currentTrack = currentTrackInternal;
     const [currentAudiobook, setCurrentAudiobook] = useState<Audiobook | null>(
         null
     );
@@ -220,6 +288,8 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         if (typeof window === "undefined") return;
 
+        let hadLocalState = false;
+
         try {
             const savedTrack = localStorage.getItem(STORAGE_KEYS.CURRENT_TRACK);
             const savedAudiobook = localStorage.getItem(
@@ -242,6 +312,15 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
             );
             const savedVolume = localStorage.getItem(STORAGE_KEYS.VOLUME);
             const savedMuted = localStorage.getItem(STORAGE_KEYS.IS_MUTED);
+
+            // Track whether we actually had local state worth preserving.
+            // If we did, only the active player device should overwrite it using the per-user server state.
+            hadLocalState = Boolean(
+                savedTrack ||
+                    savedAudiobook ||
+                    savedPodcast ||
+                    (savedQueue && savedQueue !== "[]")
+            );
 
             if (savedTrack) setCurrentTrack(JSON.parse(savedTrack));
 
@@ -313,6 +392,13 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
         setIsHydrated(true);
 
         // Load playback state from server
+        // PlaybackState is stored per-user. Only the active player device should
+        // hydrate from it when local state exists; otherwise a secondary device
+        // can overwrite its local playback state based on another device.
+        if (!canReadPlaybackStateFromStorage()) {
+            return;
+        }
+
         api.getPlaybackState()
             .then((serverState) => {
                 if (!serverState) return;
@@ -453,6 +539,12 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
         if (!isHydrated) return;
         if (!playbackType) return;
 
+        // PlaybackState is stored per-user. Only the active player device should write it.
+        // This prevents a secondary device playing locally from overwriting the active player's state.
+        if (!canWritePlaybackStateFromStorage()) {
+            return;
+        }
+
         const saveToServer = async () => {
             try {
                 // Limit queue to first 100 items to reduce payload size
@@ -505,9 +597,18 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
     ]);
 
     // Poll server for changes from other devices (pauses when tab is hidden)
+    // IMPORTANT: This sync is DISABLED when there's active local playback to prevent
+    // one device's state from overwriting another's in multi-device scenarios.
+    // The WebSocket-based remote playback handles multi-device coordination separately.
     useEffect(() => {
         if (!isHydrated) return;
         if (typeof document === "undefined") return;
+
+        // Only the active player device should apply server playback state updates.
+        // Otherwise a secondary device playing locally can clobber the active player's state.
+        if (!canWritePlaybackStateFromStorage()) {
+            return;
+        }
 
         let isAuthenticated = true;
         let mounted = true;
@@ -522,6 +623,14 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
         const pollInterval = setInterval(async () => {
             // Skip polling when tab is hidden, unmounted, or not authenticated
             if (!isAuthenticated || !mounted || !isVisible) return;
+            
+            // CRITICAL FIX: Don't sync from server if we have active local playback
+            // This prevents one device's playback state from overwriting another's
+            // Multi-device sync is handled via WebSocket (remote playback), not server polling
+            const hasActiveLocalPlayback = currentTrack || currentAudiobook || currentPodcast;
+            if (hasActiveLocalPlayback) {
+                return;
+            }
 
             try {
                 const serverState = await api.getPlaybackState();

@@ -3461,6 +3461,7 @@ router.get("/tracks/:id", async (req, res) => {
                 id: track.album?.id,
             },
             duration: track.duration,
+            filePath: track.filePath,
         };
 
         res.json(formattedTrack);
