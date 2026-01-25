@@ -45,6 +45,8 @@ class HowlerEngine {
     };
     private isLoading: boolean = false; // Guard against duplicate loads
     private userInitiatedPlay: boolean = false; // Track if play was user-initiated
+    private pendingPlay: boolean = false; // Guard against multiple play() calls before audio starts
+    private isChangingTrack: boolean = false; // Suppress errors during track changes
     private retryCount: number = 0; // Track retry attempts
     private maxRetries: number = 3; // Max retry attempts for load errors
     private pendingAutoplay: boolean = false; // Track pending autoplay for retries
@@ -128,9 +130,10 @@ class HowlerEngine {
         const howlConfig: any = {
             src: [src],
             html5: isPodcastOrAudiobook || !isAndroidWebView, // HTML5 for podcasts/audiobooks OR non-Android
-            autoplay: false, // We'll handle autoplay with fade
+            autoplay: false, // We'll handle autoplay manually
             preload: true,
             volume: this.state.isMuted ? 0 : this.state.volume,
+            pool: 1, // Only allow one sound instance to prevent echo/double playback
             // On Android WebView, increase the xhr timeout
             ...(isAndroidWebView && { xhr: { timeout: 30000 } }),
         };
@@ -159,10 +162,14 @@ class HowlerEngine {
             howlConfig.format = ["mp3", "flac", "mp4", "webm", "wav"];
         }
 
+        console.log(`[HowlerEngine] Creating new Howl instance for: ${src.substring(0, 80)}...`);
+        
         this.howl = new Howl({
             ...howlConfig,
             onload: () => {
+                console.log(`[HowlerEngine] Loaded: ${this.state.currentSrc?.substring(0, 80)}...`);
                 this.isLoading = false;
+                this.isChangingTrack = false; // Clear flag only after successful load
                 this.state.duration = this.howl?.duration() || 0;
                 this.emit("load", { duration: this.state.duration });
 
@@ -213,13 +220,21 @@ class HowlerEngine {
 
                 // All retries failed - clean up and emit error
                 this.retryCount = 0;
+                this.isChangingTrack = false; // Clear flag on load error
                 this.cleanup(); // Clean up failed instance
                 this.emit("loaderror", { error });
             },
             onplayerror: (id, error) => {
+                // Ignore errors during track changes - they're stale from the old Howl
+                if (this.isChangingTrack) {
+                    console.log("[HowlerEngine] Ignoring play error during track change");
+                    return;
+                }
+                
                 console.error("[HowlerEngine] Play error:", error);
                 // Clear playing state so UI shows play button
                 this.state.isPlaying = false;
+                this.pendingPlay = false; // Clear pending flag - play failed
                 this.userInitiatedPlay = false;
                 this.stopTimeUpdates();
                 this.emit("playerror", { error });
@@ -227,19 +242,23 @@ class HowlerEngine {
                 // The 'unlock' mechanism requires a NEW user interaction which won't happen automatically
             },
             onplay: () => {
+                console.log(`[HowlerEngine] onplay event fired, sounds count: ${(this.howl as any)?._sounds?.length}`);
                 this.state.isPlaying = true;
+                this.pendingPlay = false; // Clear pending flag - play succeeded
                 this.userInitiatedPlay = false; // Clear flag after successful play
                 this.startTimeUpdates();
                 this.emit("play");
             },
             onpause: () => {
                 this.state.isPlaying = false;
+                this.pendingPlay = false; // Clear pending flag
                 this.userInitiatedPlay = false;
                 this.stopTimeUpdates();
                 this.emit("pause");
             },
             onstop: () => {
                 this.state.isPlaying = false;
+                this.pendingPlay = false; // Clear pending flag
                 this.state.currentTime = 0;
                 this.stopTimeUpdates();
                 this.emit("stop");
@@ -267,18 +286,43 @@ class HowlerEngine {
             return;
         }
 
-        // Don't reset volume if already playing
-        if (this.state.isPlaying) {
+        // Don't play if still loading - wait for onload
+        if (this.isLoading) {
+            console.log("[HowlerEngine] play() called but still loading, skipping");
             return;
         }
 
+        // Don't play if already playing or if a play is already pending
+        // This prevents double-play when multiple callers trigger play() simultaneously
+        // (especially during loading when onplay hasn't fired yet)
+        if (this.state.isPlaying || this.pendingPlay || this.howl.playing()) {
+            console.log(`[HowlerEngine] play() called but already playing/pending, skipping (isPlaying=${this.state.isPlaying}, pendingPlay=${this.pendingPlay})`);
+            return;
+        }
+
+        // Set pendingPlay BEFORE calling howl.play() to guard against rapid re-calls
+        this.pendingPlay = true;
+        
+        const sounds = (this.howl as any)._sounds;
+        console.log(`[HowlerEngine] play() - starting playback (sounds: ${sounds?.length || 0})`);
+        
         // Mark as user-initiated for autoplay recovery
         this.userInitiatedPlay = true;
 
         // Ensure volume is set correctly before playing
         const targetVolume = this.state.isMuted ? 0 : this.state.volume;
         this.howl.volume(targetVolume);
+        
+        // Always call play() without sound ID - let Howler manage it
+        // Using specific sound IDs was causing issues with newly created Howl instances
         this.howl.play();
+    }
+
+    /**
+     * Check if a play request is pending (audio loading, play called but not yet started)
+     */
+    isPendingPlay(): boolean {
+        return this.pendingPlay;
     }
 
     /**
@@ -529,6 +573,11 @@ class HowlerEngine {
      * Cleanup current Howl instance
      */
     private cleanup(): void {
+        console.log(`[HowlerEngine] cleanup() called, currentSrc: ${this.state.currentSrc?.substring(0, 50)}...`);
+        
+        // Mark that we're changing tracks - this suppresses stale errors from the old Howl
+        this.isChangingTrack = true;
+        
         this.stopTimeUpdates();
 
         // Cancel any pending cleanup timeout to prevent race conditions
@@ -539,30 +588,19 @@ class HowlerEngine {
 
         if (this.howl) {
             const oldHowl = this.howl;
-            const wasPlaying = this.state.isPlaying;
-            const targetVolume = this.state.isMuted ? 0 : this.state.volume;
+            
+            // Debug: check how many sounds exist
+            const sounds = (oldHowl as any)._sounds;
+            console.log(`[HowlerEngine] cleanup: ${sounds?.length || 0} sound(s) in Howl instance`);
 
             // Detach immediately so new loads don't race with cleanup.
             this.howl = null;
 
             try {
-                if (wasPlaying) {
-                    // Micro-fade before stop/unload to reduce click/pop artifacts.
-                    oldHowl.fade(targetVolume, 0, this.popFadeMs);
-                    this.cleanupTimeoutId = setTimeout(() => {
-                        this.cleanupTimeoutId = null;
-                        try {
-                            oldHowl.stop();
-                            oldHowl.unload();
-                        } catch {
-                            // ignore
-                        }
-                    }, this.popFadeMs + 2);
-                } else {
-                    // Synchronous cleanup when not playing - no race condition risk
-                    oldHowl.stop();
-                    oldHowl.unload();
-                }
+                // Always stop synchronously to prevent echo/double playback
+                // The micro-fade caused race conditions where both old and new audio played
+                oldHowl.stop();
+                oldHowl.unload();
             } catch {
                 // Ignore errors during cleanup
             }
@@ -573,6 +611,7 @@ class HowlerEngine {
 
         this.state.currentSrc = null;
         this.state.isPlaying = false;
+        this.pendingPlay = false; // Clear pending flag on cleanup
         this.state.currentTime = 0;
         this.state.duration = 0;
     }
