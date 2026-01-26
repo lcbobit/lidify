@@ -25,6 +25,13 @@ const DeezerIcon = ({ className }: { className?: string }) => (
     </svg>
 );
 
+// Spotify icon component
+const SpotifyIcon = ({ className }: { className?: string }) => (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor">
+        <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+    </svg>
+);
+
 // Types for browse playlist (normalized format from backend)
 interface BrowseTrack {
     id: string;              // deezerId or spotifyId (normalized by backend)
@@ -184,7 +191,7 @@ export default function BrowsePlaylistDetailPage() {
             <div className="min-h-screen relative">
                 <div className="absolute inset-0 pointer-events-none">
                     <div
-                        className="absolute inset-0 bg-gradient-to-b from-[#AD47FF]/15 via-purple-900/10 to-transparent"
+                        className="absolute inset-0 bg-gradient-to-b from-[#EF4444]/15 via-red-900/10 to-transparent"
                         style={{ height: "35vh" }}
                     />
                 </div>
@@ -222,7 +229,7 @@ export default function BrowsePlaylistDetailPage() {
     return (
         <div className="min-h-screen">
             {/* Hero Section */}
-            <div className="relative bg-gradient-to-b from-[#AD47FF]/20 via-[#1a1a1a] to-transparent pt-16 pb-10 px-4 md:px-8">
+            <div className="relative bg-gradient-to-b from-[#EF4444]/20 via-[#1a1a1a] to-transparent pt-16 pb-10 px-4 md:px-8">
                 <div className="flex items-end gap-6">
                     {/* Cover Art */}
                     <div className="w-[140px] h-[140px] md:w-[192px] md:h-[192px] bg-[#282828] rounded shadow-2xl shrink-0 overflow-hidden">
@@ -233,7 +240,7 @@ export default function BrowsePlaylistDetailPage() {
                                 className="w-full h-full object-cover"
                             />
                         ) : (
-                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-[#AD47FF]/30 to-[#AD47FF]/10">
+                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-[#EF4444]/30 to-[#EF4444]/10">
                                 <Music2 className="w-16 h-16 text-gray-600" />
                             </div>
                         )}
@@ -242,9 +249,13 @@ export default function BrowsePlaylistDetailPage() {
                     {/* Playlist Info */}
                     <div className="flex-1 min-w-0 pb-1">
                         <div className="flex items-center gap-2 mb-1">
-                            <DeezerIcon className="w-4 h-4 text-[#AD47FF]" />
+                            {playlist.source === "spotify" ? (
+                                <SpotifyIcon className="w-4 h-4 text-[#1DB954]" />
+                            ) : (
+                                <DeezerIcon className="w-4 h-4 text-[#EF4444]" />
+                            )}
                             <p className="text-xs font-medium text-white/90">
-                                Deezer Playlist
+                                {playlist.source === "spotify" ? "Spotify" : "Deezer"} Playlist
                             </p>
                         </div>
                         <h1 className="text-2xl md:text-4xl lg:text-5xl font-bold text-white leading-tight line-clamp-2 mb-2">
@@ -283,7 +294,7 @@ export default function BrowsePlaylistDetailPage() {
                             handlePlay(playlist.tracks[0], 0)
                         }
                         disabled={playlist.tracks.length === 0}
-                        className="w-12 h-12 rounded-full bg-[#AD47FF] hover:bg-[#9d3fef] hover:scale-105 flex items-center justify-center shadow-lg transition-all disabled:opacity-50 disabled:hover:scale-100"
+                        className="w-12 h-12 rounded-full bg-[#EF4444] hover:bg-[#DC2626] hover:scale-105 flex items-center justify-center shadow-lg transition-all disabled:opacity-50 disabled:hover:scale-100"
                     >
                         <Play className="w-5 h-5 text-white ml-0.5" fill="white" />
                     </button>
@@ -307,7 +318,7 @@ export default function BrowsePlaylistDetailPage() {
                     {/* Spacer */}
                     <div className="flex-1" />
 
-                    {/* Open in Deezer */}
+                    {/* Open in source */}
                     <a
                         href={playlist.url}
                         target="_blank"
@@ -315,7 +326,9 @@ export default function BrowsePlaylistDetailPage() {
                         className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white text-sm font-medium transition-colors"
                     >
                         <ExternalLink className="w-4 h-4" />
-                        <span className="hidden sm:inline">Open in Deezer</span>
+                        <span className="hidden sm:inline">
+                            Open in {playlist.source === "spotify" ? "Spotify" : "Deezer"}
+                        </span>
                     </a>
                 </div>
             </div>
@@ -354,12 +367,12 @@ export default function BrowsePlaylistDetailPage() {
                                                 className={cn(
                                                     "text-sm group-hover:hidden",
                                                     isCurrentlyPlaying
-                                                        ? "text-[#AD47FF]"
+                                                        ? "text-[#EF4444]"
                                                         : "text-gray-400"
                                                 )}
                                             >
                                                 {isThisTrackPlaying ? (
-                                                    <Pause className="w-4 h-4 text-[#AD47FF]" />
+                                                    <Pause className="w-4 h-4 text-[#EF4444]" />
                                                 ) : (
                                                     index + 1
                                                 )}
@@ -387,7 +400,7 @@ export default function BrowsePlaylistDetailPage() {
                                                     className={cn(
                                                         "text-sm font-medium truncate",
                                                         isCurrentlyPlaying
-                                                            ? "text-[#AD47FF]"
+                                                            ? "text-[#EF4444]"
                                                             : "text-white"
                                                     )}
                                                 >
