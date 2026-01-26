@@ -1,6 +1,6 @@
 "use client";
 
-import { useAudio } from "@/lib/audio-context";
+import { useAudio, Track } from "@/lib/audio-context";
 import { api } from "@/lib/api";
 import { useIsMobile, useIsTablet } from "@/hooks/useMediaQuery";
 import Image from "next/image";
@@ -32,6 +32,44 @@ import { useState, useRef, useEffect } from "react";
 import { KeyboardShortcutsTooltip } from "./KeyboardShortcutsTooltip";
 import { EnhancedVibeOverlay } from "./VibeOverlayEnhanced";
 import { DeviceSelector } from "./DeviceSelector";
+
+type SourceFeaturesPayload = {
+    bpm?: number;
+    energy?: number;
+    valence?: number;
+    arousal?: number;
+    danceability?: number;
+    keyScale?: string;
+    instrumentalness?: number;
+    analysisMode?: string;
+    moodHappy?: number;
+    moodSad?: number;
+    moodRelaxed?: number;
+    moodAggressive?: number;
+    moodParty?: number;
+    moodAcoustic?: number;
+    moodElectronic?: number;
+};
+
+// Vibe radio returns full Track objects from the library
+type VibeRadioResponse = {
+    tracks: Track[];
+    sourceFeatures?: SourceFeaturesPayload;
+};
+
+type RemotePlayerTrack = {
+    id: string;
+    title: string;
+    artist: string;
+    album: string;
+    coverArt?: string;
+    duration: number;
+};
+
+const isRemotePlayerTrack = (track: Track | RemotePlayerTrack): track is RemotePlayerTrack =>
+    typeof track === "object" &&
+    track !== null &&
+    typeof track.artist === "string";
 
 export function MiniPlayer() {
     const {
@@ -131,15 +169,15 @@ export function MiniPlayer() {
         // Otherwise, start vibe mode
         setIsVibeLoading(true);
         try {
-            const response = await api.getRadioTracks(
-                "vibe",
-                currentTrack.id,
-                50
-            );
+        const response = (await api.getRadioTracks(
+            "vibe",
+            currentTrack.id,
+            50
+        )) as VibeRadioResponse;
 
             if (response.tracks && response.tracks.length > 0) {
                 // Get the source track's features from the API response
-                const sf = (response as any).sourceFeatures;
+                const sf = response.sourceFeatures;
                 const sourceFeatures = {
                     bpm: sf?.bpm,
                     energy: sf?.energy,
@@ -162,7 +200,7 @@ export function MiniPlayer() {
                 // Start vibe mode with the queue IDs (include current track)
                 const queueIds = [
                     currentTrack.id,
-                    ...response.tracks.map((t: any) => t.id),
+                    ...response.tracks.map((t) => t.id),
                 ];
                 startVibeMode(sourceFeatures, queueIds);
 
@@ -204,16 +242,13 @@ export function MiniPlayer() {
     const isTrackPlayback = playbackType === "track" || (!isActivePlayer && activePlayerState?.currentTrack);
     if (isTrackPlayback && displayTrack) {
         title = displayTrack.title;
-        // Handle both local Track type (has artist object) and remote track (has artist string)
-        subtitle = typeof displayTrack.artist === 'string'
+        const isRemoteTrackDisplay = isRemotePlayerTrack(displayTrack);
+        subtitle = isRemoteTrackDisplay
             ? displayTrack.artist
             : displayTrack.artist?.name || "Unknown Artist";
-        // Handle coverArt - remote sends coverArt directly, local has album.coverArt
-        // Local Track has album: { coverArt: string }, remote has coverArt: string directly
-        const album = (displayTrack as any).album;
-        const coverArt = (album && typeof album === 'object' && album.coverArt)
-            ? album.coverArt
-            : (displayTrack as any).coverArt;
+        const coverArt = isRemoteTrackDisplay
+            ? displayTrack.coverArt
+            : displayTrack.album?.coverArt;
         const coverArtValue = typeof coverArt === "string" ? coverArt : null;
         coverUrl = coverArtValue
             ? (coverArtValue.startsWith("http") || coverArtValue.startsWith("/")
@@ -223,7 +258,7 @@ export function MiniPlayer() {
         // Links only work for local tracks
         if (!isActivePlayer && activePlayerState?.currentTrack) {
             mediaLink = null;
-        } else if (currentTrack) {
+        } else if (currentTrack && !isRemoteTrackDisplay) {
             mediaLink = currentTrack.album?.id ? `/album/${currentTrack.album.id}` : null;
         }
     } else if (playbackType === "audiobook" && currentAudiobook) {

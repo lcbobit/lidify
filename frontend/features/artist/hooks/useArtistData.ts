@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/preserve-manual-memoization -- Complex album sorting requires manual memoization */
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";

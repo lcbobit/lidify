@@ -35,33 +35,7 @@ export function usePodcastData() {
   const rawCoverUrl = podcast?.coverUrl || previewData?.coverUrl;
   const heroImage = rawCoverUrl ? api.getCoverArtUrl(rawCoverUrl, 1200) : null;
 
-  // Load similar podcasts when podcast data is available
-  useEffect(() => {
-    if (podcast && isAuthenticated) {
-      loadSimilarPodcasts();
-    }
-  }, [podcast?.id, isAuthenticated]);
-
-  // Handle preview mode if podcast is not subscribed
-  useEffect(() => {
-    if (isPodcastLoading) return;
-
-    // If query returned no data, try preview mode
-    if (!podcast && isAuthenticated && previewLoadState === 'idle') {
-      loadPreviewData();
-    }
-  }, [isPodcastLoading, podcast, isAuthenticated, podcastId, previewLoadState]);
-
-  // Save sort order to localStorage when it changes
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem(
-        `lidify_podcast_sort_order_${podcastId}`,
-        sortOrder
-      );
-    }
-  }, [sortOrder, podcastId]);
-
+  // Define functions before useEffect calls (React Compiler requirement)
   async function loadSimilarPodcasts() {
     try {
       const similar = await api.getSimilarPodcasts(podcastId);
@@ -87,6 +61,35 @@ export function usePodcastData() {
       setPreviewLoadState('error');
     }
   }
+
+  // Load similar podcasts when podcast data is available
+  useEffect(() => {
+    if (podcast && isAuthenticated) {
+      loadSimilarPodcasts();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [podcast?.id, isAuthenticated]);
+
+  // Handle preview mode if podcast is not subscribed
+  useEffect(() => {
+    if (isPodcastLoading) return;
+
+    // If query returned no data, try preview mode
+    if (!podcast && isAuthenticated && previewLoadState === 'idle') {
+      loadPreviewData();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPodcastLoading, podcast, isAuthenticated, podcastId, previewLoadState]);
+
+  // Save sort order to localStorage when it changes
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem(
+        `lidify_podcast_sort_order_${podcastId}`,
+        sortOrder
+      );
+    }
+  }, [sortOrder, podcastId]);
 
   // Computed values
   const displayData = podcast || (previewData ? {

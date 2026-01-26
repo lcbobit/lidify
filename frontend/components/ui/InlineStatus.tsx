@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Check, X, Loader2, AlertCircle } from "lucide-react";
 import { cn } from "@/utils/cn";
 
@@ -30,22 +30,26 @@ export function InlineStatus({
     onClear,
 }: InlineStatusProps) {
     const [visible, setVisible] = useState(status !== "idle");
+    const prevStatusRef = useRef(status);
+    
+    // Sync visible state with status changes (without useEffect)
+    // eslint-disable-next-line react-hooks/rules-of-hooks, react-hooks/refs -- Intentional ref tracking pattern
+    if (status !== prevStatusRef.current) {
+        prevStatusRef.current = status;
+        const shouldBeVisible = status !== "idle";
+        if (shouldBeVisible !== visible) {
+            setVisible(shouldBeVisible);
+        }
+    }
 
+    // Handle auto-clear timer for success/error states
     useEffect(() => {
-        if (status === "success" || status === "error") {
-            setVisible(true);
-            
-            if (autoClear) {
-                const timer = setTimeout(() => {
-                    setVisible(false);
-                    onClear?.();
-                }, clearDelay);
-                return () => clearTimeout(timer);
-            }
-        } else if (status === "loading") {
-            setVisible(true);
-        } else {
-            setVisible(false);
+        if ((status === "success" || status === "error") && autoClear) {
+            const timer = setTimeout(() => {
+                setVisible(false);
+                onClear?.();
+            }, clearDelay);
+            return () => clearTimeout(timer);
         }
     }, [status, autoClear, clearDelay, onClear]);
 

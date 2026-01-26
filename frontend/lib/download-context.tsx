@@ -7,7 +7,7 @@ import {
     ReactNode,
     useEffect,
 } from "react";
-import { useDownloadStatus } from "@/hooks/useDownloadStatus";
+import { useDownloadStatus, DownloadJob, DownloadStatus } from "@/hooks/useDownloadStatus";
 import { useAuth } from "@/lib/auth-context";
 
 interface PendingDownload {
@@ -20,12 +20,7 @@ interface PendingDownload {
 
 interface DownloadContextType {
     pendingDownloads: PendingDownload[];
-    downloadStatus: {
-        activeDownloads: any[];
-        recentDownloads: any[];
-        hasActiveDownloads: boolean;
-        failedDownloads: any[];
-    };
+    downloadStatus: DownloadStatus;
     addPendingDownload: (
         type: "artist" | "album",
         subject: string,
@@ -52,6 +47,7 @@ export function DownloadProvider({ children }: { children: ReactNode }) {
     // Sync pending downloads with actual download status
     useEffect(() => {
         // Remove pending downloads that have completed or failed
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- Functional update based on external status
         setPendingDownloads((prev) => {
             return prev.filter((pending) => {
                 // Check if this MBID has a job that's completed or failed

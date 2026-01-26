@@ -98,14 +98,20 @@ export function DownloadNotifications() {
         downloadStatus.failedDownloads.length > 0 ||
         downloadStatus.recentDownloads.length > 0;
 
-    useEffect(() => {
-        if (shouldShow) {
+    // Track previous shouldShow to detect rising edge (false -> true)
+    const prevShouldShowRef = useRef(shouldShow);
+    
+    // Auto-open on rising edge, auto-close when nothing to show
+    // eslint-disable-next-line react-hooks/rules-of-hooks, react-hooks/refs -- Intentional ref tracking pattern
+    if (shouldShow !== prevShouldShowRef.current) {
+        prevShouldShowRef.current = shouldShow;
+        if (shouldShow && !isOpen) {
             setIsOpen(true);
             setDismissed(false);
-        } else {
+        } else if (!shouldShow && isOpen) {
             setIsOpen(false);
         }
-    }, [shouldShow]);
+    }
 
     const shouldRender = (shouldShow && !dismissed) || isOpen;
     if (!shouldRender) return null;

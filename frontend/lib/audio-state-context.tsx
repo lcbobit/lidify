@@ -164,6 +164,90 @@ export interface Podcast {
     } | null;
 }
 
+type ProgressPayload = {
+    currentTime: number;
+    progress: number;
+    isFinished: boolean;
+    lastPlayedAt: string | number | Date;
+};
+
+type PodcastEpisodePayload = {
+    id: string;
+    title: string;
+    duration: number;
+    progress?: ProgressPayload | null;
+};
+
+type PodcastApiResponse = {
+    episodes?: PodcastEpisodePayload[];
+    title?: string;
+    coverUrl?: string | null;
+};
+
+function isProgressPayload(value: unknown): value is ProgressPayload {
+    if (typeof value !== "object" || value === null) return false;
+    const candidate = value as Record<string, unknown>;
+    return (
+        typeof candidate.currentTime === "number" &&
+        typeof candidate.progress === "number" &&
+        typeof candidate.isFinished === "boolean" &&
+        (typeof candidate.lastPlayedAt === "string" ||
+            typeof candidate.lastPlayedAt === "number" ||
+            candidate.lastPlayedAt instanceof Date)
+    );
+}
+
+function normalizeProgress(
+    payload: ProgressPayload | null | undefined
+): Audiobook["progress"] | Podcast["progress"] | null {
+    if (!payload) return null;
+    return {
+        currentTime: payload.currentTime,
+        progress: payload.progress,
+        isFinished: payload.isFinished,
+        lastPlayedAt: new Date(payload.lastPlayedAt),
+    };
+}
+
+function isPodcastEpisodePayload(value: unknown): value is PodcastEpisodePayload {
+    if (typeof value !== "object" || value === null) return false;
+    const candidate = value as Record<string, unknown>;
+    if (typeof candidate.id !== "string") return false;
+    if (typeof candidate.title !== "string") return false;
+    if (typeof candidate.duration !== "number") return false;
+    if (
+        candidate.progress !== undefined &&
+        candidate.progress !== null &&
+        !isProgressPayload(candidate.progress)
+    ) {
+        return false;
+    }
+    return true;
+}
+
+function isPodcastApiResponse(value: unknown): value is PodcastApiResponse {
+    if (typeof value !== "object" || value === null) return false;
+    const candidate = value as Record<string, unknown>;
+    const episodes = candidate.episodes;
+    if (episodes === undefined) return true;
+    if (!Array.isArray(episodes)) return false;
+    return episodes.every(isPodcastEpisodePayload);
+}
+
+function getErrorMessage(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    if (typeof error === "string") return error;
+    if (
+        typeof error === "object" &&
+        error !== null &&
+        "message" in error &&
+        typeof (error as Record<string, unknown>).message === "string"
+    ) {
+        return (error as { message: string }).message;
+    }
+    return "Unknown error";
+}
+
 type SetStateAction<T> = T | ((prev: T) => T);
 
 interface AudioStateContextType {
@@ -285,6 +369,7 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
     const [currentSource, setCurrentSource] = useState<"local" | "youtube" | null>(null);
 
     // Restore state from localStorage on mount
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Intentional hydration from localStorage
     useEffect(() => {
         if (typeof window === "undefined") return;
 
@@ -322,6 +407,7 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
                     (savedQueue && savedQueue !== "[]")
             );
 
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- Intentional hydration from localStorage
             if (savedTrack) setCurrentTrack(JSON.parse(savedTrack));
 
             // For audiobooks, restore then fetch fresh progress
@@ -330,18 +416,23 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
                 setCurrentAudiobook(audiobookData);
 
                 api.getAudiobook(audiobookData.id)
-                    .then((audiobook: any) => {
-                        if (audiobook && audiobook.progress) {
+                    .then((response: unknown) => {
+                        if (typeof response !== "object" || response === null) {
+                            return;
+                        }
+                        const candidate = response as Record<string, unknown>;
+                        const progressCandidate = candidate.progress;
+                        if (isProgressPayload(progressCandidate)) {
                             setCurrentAudiobook({
                                 ...audiobookData,
-                                progress: audiobook.progress,
+                                progress: normalizeProgress(progressCandidate),
                             });
                         }
                     })
-                    .catch((err: any) => {
+                    .catch((error: unknown) => {
                         console.error(
                             "[AudioState] Failed to refresh audiobook progress:",
-                            err
+                            error
                         );
                     });
             }
@@ -354,21 +445,27 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
                 const [podcastId, episodeId] = podcastData.id.split(":");
                 if (podcastId && episodeId) {
                     api.getPodcast(podcastId)
-                        .then((podcast: any) => {
-                            const episode = podcast.episodes?.find(
-                                (ep: any) => ep.id === episodeId
+                        .then((response: unknown) => {
+                            if (!isPodcastApiResponse(response)) return;
+                            const episode = (response.episodes ?? []).find(
+                                (candidate) => candidate.id === episodeId
                             );
-                            if (episode && episode.progress) {
-                                setCurrentPodcast({
-                                    ...podcastData,
-                                    progress: episode.progress,
-                                });
+                            if (episode) {
+                                const normalizedProgress = normalizeProgress(
+                                    episode.progress
+                                );
+                                if (normalizedProgress) {
+                                    setCurrentPodcast({
+                                        ...podcastData,
+                                        progress: normalizedProgress,
+                                    });
+                                }
                             }
                         })
-                        .catch((err: any) => {
+                        .catch((error: unknown) => {
                             console.error(
                                 "[AudioState] Failed to refresh podcast progress:",
-                                err
+                                error
                             );
                         });
                 }
@@ -441,18 +538,19 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
                 ) {
                     const [podcastId, episodeId] =
                         serverState.podcastId.split(":");
-                    api.getPodcast(podcastId).then((podcast) => {
-                        const episode = podcast.episodes?.find(
-                            (ep: any) => ep.id === episodeId
+                    api.getPodcast(podcastId).then((response: unknown) => {
+                        if (!isPodcastApiResponse(response)) return;
+                        const episode = (response.episodes ?? []).find(
+                            (candidate) => candidate.id === episodeId
                         );
                         if (episode) {
                             setCurrentPodcast({
                                 id: serverState.podcastId,
                                 title: episode.title,
-                                podcastTitle: podcast.title,
-                                coverUrl: podcast.coverUrl,
+                                podcastTitle: response.title ?? "",
+                                coverUrl: response.coverUrl ?? null,
                                 duration: episode.duration,
-                                progress: episode.progress,
+                                progress: normalizeProgress(episode.progress),
                             });
                             setPlaybackType("podcast");
                             setCurrentTrack(null);
@@ -573,11 +671,12 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
                     isShuffle,
                     updatedAt: result.updatedAt,
                 });
-            } catch (err: any) {
-                if (err.message !== "Not authenticated") {
+            } catch (error: unknown) {
+                const message = getErrorMessage(error);
+                if (message !== "Not authenticated") {
                     console.error(
                         "[AudioState] Failed to save to server:",
-                        err
+                        error
                     );
                 }
             }
@@ -705,19 +804,20 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
                     ) {
                         const [podcastId, episodeId] =
                             serverState.podcastId.split(":");
-                        const podcast = await api.getPodcast(podcastId);
+                        const podcastResponse = await api.getPodcast(podcastId);
+                        if (!isPodcastApiResponse(podcastResponse)) return;
                         if (!mounted) return;
-                        const episode = podcast.episodes?.find(
-                            (ep: any) => ep.id === episodeId
+                        const episode = (podcastResponse.episodes ?? []).find(
+                            (candidate) => candidate.id === episodeId
                         );
                         if (episode) {
                             setCurrentPodcast({
                                 id: serverState.podcastId,
                                 title: episode.title,
-                                podcastTitle: podcast.title,
-                                coverUrl: podcast.coverUrl,
+                                podcastTitle: podcastResponse.title ?? "",
+                                coverUrl: podcastResponse.coverUrl ?? null,
                                 duration: episode.duration,
-                                progress: episode.progress,
+                                progress: normalizeProgress(episode.progress),
                             });
                             setPlaybackType("podcast");
                             setCurrentTrack(null);
@@ -746,8 +846,9 @@ export function AudioStateProvider({ children }: { children: ReactNode }) {
 
                     setLastServerSync(serverUpdatedAt);
                 }
-            } catch (err: any) {
-                if (err.message === "Not authenticated") {
+            } catch (error: unknown) {
+                const message = getErrorMessage(error);
+                if (message === "Not authenticated") {
                     isAuthenticated = false;
                     clearInterval(pollInterval);
                 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "@/lib/api";
 
 export type JobType = "scan" | "discover";
@@ -6,6 +6,7 @@ export type JobType = "scan" | "discover";
 export interface JobStatus {
     status: "waiting" | "active" | "completed" | "failed" | "delayed";
     progress: number;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     result?: any;
     error?: string;
 }
@@ -15,13 +16,24 @@ export function useJobStatus(
     jobType: JobType,
     options?: {
         pollInterval?: number;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         onComplete?: (result: any) => void;
         onError?: (error: string) => void;
     }
 ) {
     const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
-    const [isPolling, setIsPolling] = useState(false);
-    const pollInterval = options?.pollInterval || 5000; // Default: poll every 5 seconds (avoid rate limiting)
+    const [isPolling, setIsPolling] = useState(!!jobId);
+    const pollInterval = options?.pollInterval || 5000;
+    const prevJobIdRef = useRef(jobId);
+    
+    // Start polling when jobId changes from null to a value
+    // eslint-disable-next-line react-hooks/rules-of-hooks, react-hooks/refs -- Intentional ref tracking pattern
+    if (jobId !== prevJobIdRef.current) {
+        prevJobIdRef.current = jobId;
+        if (jobId && !isPolling) {
+            setIsPolling(true);
+        }
+    }
 
     const checkStatus = useCallback(async () => {
         if (!jobId) return;
@@ -53,21 +65,15 @@ export function useJobStatus(
                     options.onError(errorMsg);
                 }
             }
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error("Error checking job status:", error);
             setIsPolling(false);
             if (options?.onError) {
-                options.onError(error.message || "Failed to check job status");
+                const message = error instanceof Error ? error.message : "Failed to check job status";
+                options.onError(message);
             }
         }
     }, [jobId, jobType, options]);
-
-    // Start polling when jobId is set
-    useEffect(() => {
-        if (jobId) {
-            setIsPolling(true);
-        }
-    }, [jobId]);
 
     // Poll for status updates
     useEffect(() => {

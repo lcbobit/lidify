@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
@@ -58,6 +58,24 @@ export default function AudiobooksPage() {
     const [groupBySeries, setGroupBySeries] = useState(false);
     const [itemsPerPage, setItemsPerPage] = useState<number>(50);
     const [currentPage, setCurrentPage] = useState(1);
+    
+    // Create wrapped setters that reset page when filters change
+    const setFilterWithReset = useCallback((newFilter: FilterType) => {
+        setFilter(newFilter);
+        setCurrentPage(1);
+    }, []);
+    const setSortByWithReset = useCallback((newSortBy: SortType) => {
+        setSortBy(newSortBy);
+        setCurrentPage(1);
+    }, []);
+    const setSelectedGenreWithReset = useCallback((newGenre: string | null) => {
+        setSelectedGenre(newGenre);
+        setCurrentPage(1);
+    }, []);
+    const setGroupBySeriesWithReset = useCallback((newGroupBy: boolean) => {
+        setGroupBySeries(newGroupBy);
+        setCurrentPage(1);
+    }, []);
 
     // Check if Audiobookshelf is configured
     const isConfigured =
@@ -179,10 +197,7 @@ export default function AudiobooksPage() {
         return filteredBooks.slice(start, start + itemsPerPage);
     }, [filteredBooks, currentPage, itemsPerPage]);
     
-    // Reset to page 1 when filters change
-    useEffect(() => {
-        setCurrentPage(1);
-    }, [filter, sortBy, selectedGenre, groupBySeries]);
+
 
     // Get series and standalone books for artist-style view
     const getSeriesAndStandalone = () => {
@@ -391,7 +406,7 @@ export default function AudiobooksPage() {
                     {/* First Row: Filter Pills and Shuffle */}
                     <div className="flex flex-wrap items-center gap-2">
                         <button
-                            onClick={() => setFilter("all")}
+                            onClick={() => setFilterWithReset("all")}
                             className={`px-4 py-2 rounded-full text-sm font-semibold transition-all ${
                                 filter === "all"
                                     ? "bg-white text-black"
@@ -401,7 +416,7 @@ export default function AudiobooksPage() {
                             All Books
                         </button>
                         <button
-                            onClick={() => setFilter("finished")}
+                            onClick={() => setFilterWithReset("finished")}
                             className={`px-4 py-2 rounded-full text-sm font-semibold transition-all ${
                                 filter === "finished"
                                     ? "bg-white text-black"
@@ -432,7 +447,7 @@ export default function AudiobooksPage() {
                         <select
                             value={sortBy}
                             onChange={(e) =>
-                                setSortBy(e.target.value as SortType)
+                                setSortByWithReset(e.target.value as SortType)
                             }
                             className="px-4 py-2 bg-[#1a1a1a] border border-white/10 rounded-full text-white text-sm focus:outline-none focus:border-purple-500 focus:bg-[#252525] transition-all [&>option]:bg-[#1a1a1a] [&>option]:text-white"
                         >
@@ -443,7 +458,7 @@ export default function AudiobooksPage() {
                         </select>
 
                         <button
-                            onClick={() => setGroupBySeries(!groupBySeries)}
+                            onClick={() => setGroupBySeriesWithReset(!groupBySeries)}
                             className={`px-4 py-2 rounded-full text-sm font-semibold transition-all flex items-center gap-2 ${
                                 groupBySeries
                                     ? "bg-white text-black"
@@ -461,7 +476,7 @@ export default function AudiobooksPage() {
                             <select
                                 value={selectedGenre || ""}
                                 onChange={(e) =>
-                                    setSelectedGenre(e.target.value || null)
+                                    setSelectedGenreWithReset(e.target.value || null)
                                 }
                                 className="flex-1 min-w-0 md:flex-initial md:min-w-[140px] px-4 py-2 bg-[#1a1a1a] border border-white/10 rounded-full text-white text-sm focus:outline-none focus:border-purple-500 focus:bg-[#252525] transition-all truncate [&>option]:bg-[#1a1a1a] [&>option]:text-white"
                             >

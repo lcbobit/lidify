@@ -40,14 +40,18 @@ export function useRemotePlaybackIntegration() {
     // Keep refs for current state to avoid dependency array issues
     const currentTrackRef = useRef(state.currentTrack);
     const volumeRef = useRef(state.volume);
-    currentTrackRef.current = state.currentTrack;
-    volumeRef.current = state.volume;
 
     // Keep refs for full state/playback objects for callbacks that need current values
     const playbackRef = useRef(playback);
     const stateRef = useRef(state);
-    playbackRef.current = playback;
-    stateRef.current = state;
+    
+    // Sync refs with state in useEffect (required by React Compiler)
+    useEffect(() => {
+        currentTrackRef.current = state.currentTrack;
+        volumeRef.current = state.volume;
+        playbackRef.current = playback;
+        stateRef.current = state;
+    });
 
     // Execute a command immediately (internal helper)
     const executeCommand = useCallback((command: RemoteCommand) => {

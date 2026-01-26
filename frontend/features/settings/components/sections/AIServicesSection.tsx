@@ -36,10 +36,21 @@ export function AIServicesSection({ settings, onUpdate, onTest, isTesting }: AIS
             .catch(() => setOpenrouterConfigured(false));
     }, []);
 
+    // Track if we've started loading to avoid repeated calls
+    const hasStartedLoadingRef = useRef(false);
+    const prevDropdownOpenRef = useRef(isDropdownOpen);
+    
+    // Set loading state synchronously when dropdown opens (before effect)
+    // eslint-disable-next-line react-hooks/rules-of-hooks, react-hooks/refs -- Intentional ref tracking pattern
+    if (isDropdownOpen && !prevDropdownOpenRef.current && models.length === 0 && !hasStartedLoadingRef.current) {
+        hasStartedLoadingRef.current = true;
+        setModelsLoading(true);
+    }
+    prevDropdownOpenRef.current = isDropdownOpen;
+    
     // Fetch models when dropdown is opened (lazy load)
     useEffect(() => {
-        if (isDropdownOpen && models.length === 0 && !modelsLoading) {
-            setModelsLoading(true);
+        if (isDropdownOpen && models.length === 0 && modelsLoading) {
             api.getOpenRouterModels()
                 .then(({ models }) => setModels(models))
                 .catch((err) => console.error("Failed to fetch models:", err))

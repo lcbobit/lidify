@@ -1,6 +1,6 @@
 "use client";
 
-import { useAudio } from "@/lib/audio-context";
+import { useAudio, Track } from "@/lib/audio-context";
 import { api } from "@/lib/api";
 import Image from "next/image";
 import Link from "next/link";
@@ -27,6 +27,44 @@ import { useIsMobile, useIsTablet } from "@/hooks/useMediaQuery";
 import { toast } from "sonner";
 import { VibeComparisonArt } from "./VibeOverlay";
 import { useAudioState } from "@/lib/audio-state-context";
+
+type SourceFeaturesPayload = {
+    bpm?: number;
+    energy?: number;
+    valence?: number;
+    arousal?: number;
+    danceability?: number;
+    keyScale?: string;
+    instrumentalness?: number;
+    analysisMode?: string;
+    moodHappy?: number;
+    moodSad?: number;
+    moodRelaxed?: number;
+    moodAggressive?: number;
+    moodParty?: number;
+    moodAcoustic?: number;
+    moodElectronic?: number;
+};
+
+// Vibe radio returns full Track objects from the library
+type VibeRadioResponse = {
+    tracks: Track[];
+    sourceFeatures?: SourceFeaturesPayload;
+};
+
+type RemotePlayerTrack = {
+    id: string;
+    title: string;
+    artist: string;
+    album: string;
+    coverArt?: string;
+    duration: number;
+};
+
+const isRemotePlayerTrack = (track: Track | RemotePlayerTrack): track is RemotePlayerTrack =>
+    typeof track === "object" &&
+    track !== null &&
+    typeof track.artist === "string";
 
 export function OverlayPlayer() {
     const {
@@ -197,10 +235,10 @@ export function OverlayPlayer() {
         
         setIsVibeLoading(true);
         try {
-            const response = await api.getRadioTracks("vibe", currentTrack.id, 50);
+        const response = (await api.getRadioTracks("vibe", currentTrack.id, 50)) as VibeRadioResponse;
             
             if (response.tracks && response.tracks.length > 0) {
-                const sf = (response as any).sourceFeatures;
+                const sf = response.sourceFeatures;
                 const sourceFeatures = {
                     bpm: sf?.bpm,
                     energy: sf?.energy,
@@ -220,7 +258,7 @@ export function OverlayPlayer() {
                     moodElectronic: sf?.moodElectronic,
                 };
 
-                const queueIds = [currentTrack.id, ...response.tracks.map((t: any) => t.id)];
+                const queueIds = [currentTrack.id, ...response.tracks.map((t) => t.id)];
                 startVibeMode(sourceFeatures, queueIds);
                 setUpcoming(response.tracks, true); // preserveOrder=true for vibe mode
                 
@@ -257,23 +295,20 @@ export function OverlayPlayer() {
     const isTrackPlayback = playbackType === "track" || (!isActivePlayer && activePlayerState?.currentTrack);
     if (isTrackPlayback && displayTrack) {
         title = displayTrack.title;
-        // Handle both local Track type (has artist object) and remote track (has artist string)
-        subtitle = typeof displayTrack.artist === 'string'
+        const isRemoteTrackDisplay = isRemotePlayerTrack(displayTrack);
+        subtitle = isRemoteTrackDisplay
             ? displayTrack.artist
             : displayTrack.artist?.name || "Unknown Artist";
-        // Handle coverArt - remote sends coverArt directly, local has album.coverArt
-        // Local Track has album: { coverArt: string }, remote has coverArt: string directly
-        const album = (displayTrack as any).album;
-        const coverArt = (album && typeof album === 'object' && album.coverArt)
-            ? album.coverArt
-            : (displayTrack as any).coverArt;
+        const coverArt = isRemoteTrackDisplay
+            ? displayTrack.coverArt
+            : displayTrack.album?.coverArt;
         coverUrl = coverArt ? api.getCoverArtUrl(coverArt, 500) : null;
         // Links only work for local tracks
         if (!isActivePlayer && activePlayerState?.currentTrack) {
             albumLink = null;
             artistLink = null;
             mediaLink = null;
-        } else if (currentTrack) {
+        } else if (currentTrack && !isRemoteTrackDisplay) {
             albumLink = currentTrack.album?.id ? `/album/${currentTrack.album.id}` : null;
             artistLink = currentTrack.artist?.id ? `/artist/${currentTrack.artist.id}` : null;
             mediaLink = albumLink;

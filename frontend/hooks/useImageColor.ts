@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 
 export interface ColorPalette {
     vibrant: string;
@@ -261,50 +261,76 @@ function rgbToHex(r: number, g: number, b: number): string {
     );
 }
 
+// Default placeholder colors
+const PLACEHOLDER_COLORS: ColorPalette = {
+    vibrant: "#1db954",
+    darkVibrant: "#121212",
+    lightVibrant: "#181818",
+    muted: "#535353",
+    darkMuted: "#121212",
+    lightMuted: "#b3b3b3",
+};
+
+// Helper to get initial colors from cache or placeholder
+function getInitialColors(imageUrl: string | null | undefined): ColorPalette | null {
+    if (!imageUrl) return null;
+    
+    if (imageUrl.includes("placeholder") || imageUrl.startsWith("/placeholder")) {
+        return PLACEHOLDER_COLORS;
+    }
+    
+    if (typeof window === "undefined") return null;
+    
+    try {
+        const cacheKey = `color_cache_${imageUrl}`;
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+            return JSON.parse(cached) as ColorPalette;
+        }
+    } catch {
+        // Ignore cache read errors
+    }
+    
+    return null;
+}
+
 export function useImageColor(imageUrl: string | null | undefined) {
-    const [colors, setColors] = useState<ColorPalette | null>(null);
+    const [colors, setColors] = useState<ColorPalette | null>(() => getInitialColors(imageUrl));
     const [isLoading, setIsLoading] = useState(false);
+    const prevImageUrlRef = useRef(imageUrl);
+    
+    // Handle URL changes synchronously
+    // eslint-disable-next-line react-hooks/rules-of-hooks, react-hooks/refs -- Intentional ref tracking pattern
+    if (imageUrl !== prevImageUrlRef.current) {
+        prevImageUrlRef.current = imageUrl;
+        const initialColors = getInitialColors(imageUrl);
+        if (initialColors !== colors) {
+            setColors(initialColors);
+        }
+    }
 
     useEffect(() => {
         if (!imageUrl) {
-            setColors(null);
             return;
         }
 
-        // Handle placeholder images immediately
+        // Handle placeholder images - already set via getInitialColors
         if (
             imageUrl.includes("placeholder") ||
             imageUrl.startsWith("/placeholder")
         ) {
-            setColors({
-                vibrant: "#1db954",
-                darkVibrant: "#121212",
-                lightVibrant: "#181818",
-                muted: "#535353",
-                darkMuted: "#121212",
-                lightMuted: "#b3b3b3",
-            });
-            setIsLoading(false);
             return;
         }
 
-        // Check cache first
-        const cacheKey = `color_cache_${imageUrl}`;
-        try {
-            const cached = localStorage.getItem(cacheKey);
-            if (cached) {
-                const cachedPalette = JSON.parse(cached) as ColorPalette;
-                setColors(cachedPalette);
-                setIsLoading(false);
-                return;
-            }
-        } catch (error) {
-            // Ignore cache read errors
+        // Check if we already have cached colors
+        if (colors && getInitialColors(imageUrl)) {
+            return;
         }
 
         setIsLoading(true);
 
         // Extract colors client-side using canvas
+        const cacheKey = `color_cache_${imageUrl}`;
         extractColorsFromImage(imageUrl)
             .then((palette: ColorPalette) => {
                 setColors(palette);

@@ -1,7 +1,24 @@
 import { useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useAudio } from '@/lib/audio-context';
+import { Track as AudioTrack } from '@/lib/audio-state-context';
 import { Artist, Album, Track } from '../types';
+
+type LibraryAlbumTrack = {
+  id: string;
+  title: string;
+  duration: number;
+  trackNumber?: number;
+  filePath?: string;
+};
+
+type AlbumWithTracks = {
+  tracks?: LibraryAlbumTrack[];
+};
+
+type QueueTrack = AudioTrack & {
+  trackNumber: number;
+};
 
 export function useArtistActions() {
   const { playTrack: playTrackFromContext, playTracks } = useAudio();
@@ -18,36 +35,43 @@ export function useArtistActions() {
     }
 
     // Load tracks from all owned albums in parallel
-    const albumDataPromises = ownedAlbums.map((album) =>
-      api.getAlbum(album.id).catch(() => null)
-    );
+    const albumDataPromises = ownedAlbums.map(async (album) => {
+      try {
+        const response = await api.getAlbum(album.id);
+        return response as AlbumWithTracks;
+      } catch {
+        return null;
+      }
+    });
 
     const albumsData = await Promise.all(albumDataPromises);
 
     // Combine all tracks, maintaining album order (newest first)
-    const allTracks: any[] = [];
+    const allTracks: AudioTrack[] = [];
 
     albumsData.forEach((albumData, index) => {
       if (!albumData || !albumData.tracks) return;
 
       const album = ownedAlbums[index];
-      const formattedTracks = albumData.tracks.map((track: any) => ({
-        id: track.id,
-        title: track.title,
-        trackNumber: track.trackNumber || 0,
-        artist: { name: artist.name, id: artist.id },
-        album: {
-          title: album.title,
-          coverArt: album.coverArt,
-          id: album.id,
-          year: album.year,
-        },
-        duration: track.duration,
-        filePath: track.filePath, // Include filePath to use local streaming
-      }));
+      const formattedTracks: QueueTrack[] = albumData.tracks.map((track) => {
+        const trackNumber = track.trackNumber ?? 0;
+        return {
+          id: track.id,
+          title: track.title,
+          trackNumber,
+          artist: { name: artist.name, id: artist.id },
+          album: {
+            title: album.title,
+            coverArt: album.coverArt,
+            id: album.id,
+          },
+          duration: track.duration,
+          filePath: track.filePath, // Include filePath to use local streaming
+        };
+      });
 
       // Sort tracks within album by track number
-      formattedTracks.sort((a: any, b: any) => a.trackNumber - b.trackNumber);
+      formattedTracks.sort((a, b) => a.trackNumber - b.trackNumber);
       allTracks.push(...formattedTracks);
     });
 
@@ -69,7 +93,7 @@ export function useArtistActions() {
 
         // Play tracks in order (newest album first, track 1 to end, then next album)
         playTracks(allTracks);
-      } catch (error) {
+      } catch (error: unknown) {
         console.error('Failed to play artist:', error);
       }
     },
@@ -93,7 +117,7 @@ export function useArtistActions() {
         const shuffledTracks = [...allTracks].sort(() => Math.random() - 0.5);
 
         playTracks(shuffledTracks);
-      } catch (error) {
+      } catch (error: unknown) {
         console.error('Failed to shuffle play artist:', error);
       }
     },
@@ -118,9 +142,9 @@ export function useArtistActions() {
         };
 
         playTrackFromContext(formattedTrack);
-      } catch (error) {
-        console.error('Failed to play track:', error);
-      }
+        } catch (error: unknown) {
+          console.error('Failed to play track:', error);
+        }
     },
     [playTrackFromContext]
   );

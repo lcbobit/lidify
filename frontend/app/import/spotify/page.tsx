@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
+import Link from "next/link";
 import {
     ArrowLeft,
     Check,
@@ -333,12 +334,12 @@ function SpotifyImportPageContent() {
                 <div className="mb-6 p-4 bg-white/5 rounded-lg border border-white/10">
                     <p className="text-sm text-gray-300">
                         Looking for playlists to import?{" "}
-                        <a
+                        <Link
                             href="/browse/playlists"
                             className="text-[#ecb200] hover:underline font-medium"
                         >
                             Browse Deezer playlists & radio stations →
-                        </a>
+                        </Link>
                     </p>
                 </div>
 

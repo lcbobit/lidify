@@ -48,11 +48,11 @@ export function useTwoFactor() {
     const setup2FA = async () => {
         try {
             setLoadingTwoFactor(true);
-            const response = await api.post("/auth/2fa/setup", {});
+            const response = await api.post<{ secret: string; qrCode: string }>("/auth/2fa/setup", {});
             setTwoFactorSecret(response.secret);
             setTwoFactorQR(response.qrCode);
             setSettingUpTwoFactor(true);
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error("Failed to setup 2FA:", error);
             throw error; // Let caller handle display
         } finally {
@@ -63,7 +63,7 @@ export function useTwoFactor() {
     const enable2FA = async (token: string) => {
         try {
             setLoadingTwoFactor(true);
-            const response = await api.post("/auth/2fa/enable", {
+            const response = await api.post<{ recoveryCodes: string[] }>("/auth/2fa/enable", {
                 secret: twoFactorSecret,
                 token,
             });
@@ -73,7 +73,7 @@ export function useTwoFactor() {
             setTwoFactorEnabled(true);
             setSettingUpTwoFactor(false);
             setTwoFactorToken("");
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error("Failed to enable 2FA:", error);
             throw error; // Let caller handle display
         } finally {

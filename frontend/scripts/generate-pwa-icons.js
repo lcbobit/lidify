@@ -5,6 +5,7 @@
  * instead of the old sharp-edged version with white borders
  */
 
+/* eslint-disable @typescript-eslint/no-require-imports */
 const sharp = require("sharp");
 const path = require("path");
 const fs = require("fs");

@@ -13,7 +13,6 @@ import { ArtistsGrid } from "@/features/home/components/ArtistsGrid";
 import { MixesGrid } from "@/features/home/components/MixesGrid";
 import { PopularArtistsGrid } from "@/features/home/components/PopularArtistsGrid";
 import { PodcastsGrid } from "@/features/home/components/PodcastsGrid";
-import { AudiobooksGrid } from "@/features/home/components/AudiobooksGrid";
 import { FeaturedPlaylistsGrid } from "@/features/home/components/FeaturedPlaylistsGrid";
 import { LibraryRadioStations } from "@/features/home/components/LibraryRadioStations";
 import { MoodMixer } from "@/components/MoodMixer";
@@ -99,14 +98,10 @@ function PlaylistSkeleton() {
 
 export default function HomePage() {
     const [showMoodMixer, setShowMoodMixer] = useState(false);
-    const [aiRecommendations, setAiRecommendations] = useState<AiArtist[]>([]);
+    const [aiRecommendations, setAiRecommendations] = useState<AiArtist[]>(getAiRecommendationsFromCache);
 
-    // Load AI recommendations from discover cache on mount
+    // Listen for discover page updates to refresh AI recommendations
     useEffect(() => {
-        const cached = getAiRecommendationsFromCache();
-        setAiRecommendations(cached);
-
-        // Listen for discover page updates
         const handleUpdate = () => {
             const updated = getAiRecommendationsFromCache();
             setAiRecommendations(updated);
@@ -122,7 +117,6 @@ export default function HomePage() {
         mixes,
         popularArtists,
         recentPodcasts,
-        recentAudiobooks,
         featuredPlaylists,
         isLoading,
         isRefreshingMixes,
@@ -266,13 +260,6 @@ export default function HomePage() {
                         </section>
                     )}
 
-                    {/* Audiobooks - #7 Priority */}
-                    {recentAudiobooks.length > 0 && (
-                        <section>
-                            <SectionHeader title="Audiobooks" showAllHref="/audiobooks" />
-                            <AudiobooksGrid audiobooks={recentAudiobooks} />
-                        </section>
-                    )}
                 </div>
             </div>
 

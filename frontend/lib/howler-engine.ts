@@ -5,7 +5,7 @@
  * Handles: play, pause, seek, volume, track changes, events
  */
 
-import { Howl } from "howler";
+import { Howl, type HowlOptions } from "howler";
 
 export type HowlerEventType =
     | "play"
@@ -19,7 +19,7 @@ export type HowlerEventType =
     | "playerror"
     | "timeupdate";
 
-export type HowlerEventCallback = (data?: any) => void;
+export type HowlerEventCallback = (data?: unknown) => void;
 
 interface HowlerEngineState {
     currentSrc: string | null;
@@ -28,6 +28,11 @@ interface HowlerEngineState {
     duration: number;
     volume: number;
     isMuted: boolean;
+}
+
+interface HowlInternal extends Howl {
+    _sounds?: Array<{ _node?: HTMLMediaElement }>;
+    _format?: string[];
 }
 
 class HowlerEngine {
@@ -127,7 +132,7 @@ class HowlerEngine {
         // Use Web Audio API on Android for smoother playback (trades streaming for quality)
         // EXCEPTION: Podcasts always use HTML5 Audio because they need Range request support
         // for seeking in large files. Web Audio would try to download the entire ~100MB file.
-        const howlConfig: any = {
+        const howlConfig = {
             src: [src],
             html5: isPodcastOrAudiobook || !isAndroidWebView, // HTML5 for podcasts/audiobooks OR non-Android
             autoplay: false, // We'll handle autoplay manually
@@ -136,7 +141,7 @@ class HowlerEngine {
             pool: 1, // Only allow one sound instance to prevent echo/double playback
             // On Android WebView, increase the xhr timeout
             ...(isAndroidWebView && { xhr: { timeout: 30000 } }),
-        };
+        } as HowlOptions;
 
         // Store for potential retry
         this.pendingAutoplay = autoplay;
@@ -242,7 +247,10 @@ class HowlerEngine {
                 // The 'unlock' mechanism requires a NEW user interaction which won't happen automatically
             },
             onplay: () => {
-                console.log(`[HowlerEngine] onplay event fired, sounds count: ${(this.howl as any)?._sounds?.length}`);
+                const sounds = this.getInternalHowl()?._sounds;
+                console.log(
+                    `[HowlerEngine] onplay event fired, sounds count: ${sounds?.length || 0}`
+                );
                 this.state.isPlaying = true;
                 this.pendingPlay = false; // Clear pending flag - play succeeded
                 this.userInitiatedPlay = false; // Clear flag after successful play
@@ -303,8 +311,10 @@ class HowlerEngine {
         // Set pendingPlay BEFORE calling howl.play() to guard against rapid re-calls
         this.pendingPlay = true;
         
-        const sounds = (this.howl as any)._sounds;
-        console.log(`[HowlerEngine] play() - starting playback (sounds: ${sounds?.length || 0})`);
+        const sounds = this.getInternalHowl()?._sounds;
+        console.log(
+            `[HowlerEngine] play() - starting playback (sounds: ${sounds?.length || 0})`
+        );
         
         // Mark as user-initiated for autoplay recovery
         this.userInitiatedPlay = true;
@@ -392,7 +402,7 @@ class HowlerEngine {
         if (!this.state.currentSrc) return;
 
         const src = this.state.currentSrc;
-        const format = this.howl ? (this.howl as any)._format : undefined;
+        const format = this.getInternalHowl()?._format;
 
         this.cleanup();
         this.load(src, false, format?.[0]);
@@ -449,7 +459,7 @@ class HowlerEngine {
 
         try {
             // Access the underlying HTML5 audio element
-            const sounds = (this.howl as any)._sounds;
+            const sounds = this.getInternalHowl()?._sounds;
             if (sounds && sounds.length > 0 && sounds[0]._node) {
                 return sounds[0]._node.currentTime || 0;
             }
@@ -512,7 +522,11 @@ class HowlerEngine {
     /**
      * Emit event to all listeners
      */
-    private emit(event: HowlerEventType, data?: any): void {
+    private getInternalHowl(): HowlInternal | null {
+        return this.howl as HowlInternal | null;
+    }
+
+    private emit(event: HowlerEventType, data?: unknown): void {
         this.eventListeners.get(event)?.forEach((callback) => {
             try {
                 callback(data);
@@ -588,9 +602,10 @@ class HowlerEngine {
 
         if (this.howl) {
             const oldHowl = this.howl;
+            const internalOldHowl = oldHowl as HowlInternal;
             
             // Debug: check how many sounds exist
-            const sounds = (oldHowl as any)._sounds;
+            const sounds = internalOldHowl._sounds;
             console.log(`[HowlerEngine] cleanup: ${sounds?.length || 0} sound(s) in Howl instance`);
 
             // Detach immediately so new loads don't race with cleanup.

@@ -1,24 +1,21 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 
 const ACTIVITY_PANEL_KEY = "lidify_activity_panel_open";
 
-export function useActivityPanel() {
-    const [isOpen, setIsOpen] = useState(false);
-    const [activeTab, setActiveTab] = useState<"notifications" | "active" | "history">("notifications");
-    const [isInitialized, setIsInitialized] = useState(false);
+// Helper to get initial state from localStorage (SSR-safe)
+function getInitialOpenState(): boolean {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem(ACTIVITY_PANEL_KEY) === "true";
+}
 
-    // Load state from localStorage on mount
-    useEffect(() => {
-        if (typeof window !== "undefined") {
-            const stored = localStorage.getItem(ACTIVITY_PANEL_KEY);
-            if (stored === "true") {
-                setIsOpen(true);
-            }
-            setIsInitialized(true);
-        }
-    }, []);
+export function useActivityPanel() {
+    const [isOpen, setIsOpen] = useState(getInitialOpenState);
+    const [activeTab, setActiveTab] = useState<"notifications" | "active" | "history">("notifications");
+    // On client, we're immediately initialized. On server (SSR), start as false.
+    // After hydration, the state will be correct since we use lazy initializers.
+    const [isInitialized] = useState(() => typeof window !== "undefined");
 
     // Persist state to localStorage
     useEffect(() => {

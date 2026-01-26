@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable react-hooks/preserve-manual-memoization -- Complex control forwarding requires manual memoization */
+
 import {
     createContext,
     useContext,

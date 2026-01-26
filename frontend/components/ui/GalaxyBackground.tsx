@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useMemo } from "react";
 
 /**
  * GalaxyBackground Component
@@ -35,50 +35,41 @@ export function GalaxyBackground({ primaryColor, secondaryColor }: GalaxyBackgro
     const baseColor = primaryColor ? hexToRgb(primaryColor) : null;
     const accentColor = secondaryColor ? hexToRgb(secondaryColor) : null;
 
-    // Use ref to store particle positions - generated once on first render
-    const particlesRef = useRef<{
-        bottom: { left: number; bottom: number; duration: number; delay: number }[];
-        mid: { left: number; bottom: number; duration: number; delay: number }[];
-        top: { left: number; bottom: number; duration: number; delay: number }[];
-        white: { left: number; bottom: number; duration: number; delay: number }[];
-        accent: { left: number; bottom: number; duration: number; delay: number }[];
-    } | null>(null);
-    
-    if (!particlesRef.current) {
-        particlesRef.current = {
-            bottom: Array(30).fill(0).map(() => ({
-                left: Math.random() * 100,
-                bottom: Math.random() * 30,
-                duration: 3 + Math.random() * 4,
-                delay: Math.random() * 3,
-            })),
-            mid: Array(20).fill(0).map(() => ({
-                left: Math.random() * 100,
-                bottom: 30 + Math.random() * 30,
-                duration: 4 + Math.random() * 3,
-                delay: Math.random() * 2,
-            })),
-            top: Array(12).fill(0).map(() => ({
-                left: Math.random() * 100,
-                bottom: 60 + Math.random() * 40,
-                duration: 5 + Math.random() * 3,
-                delay: Math.random() * 2,
-            })),
-            white: Array(18).fill(0).map(() => ({
-                left: Math.random() * 100,
-                bottom: Math.random() * 50,
-                duration: 2 + Math.random() * 3,
-                delay: Math.random() * 2,
-            })),
-            accent: Array(10).fill(0).map(() => ({
-                left: Math.random() * 100,
-                bottom: Math.random() * 40,
-                duration: 4 + Math.random() * 4,
-                delay: Math.random() * 3,
-            })),
-        };
-    }
-    const particles = particlesRef.current;
+    // Generate particle positions once on mount using useMemo with empty deps
+    // This ensures stable positions across re-renders while satisfying React Compiler
+    const particles = useMemo(() => ({
+        bottom: Array(30).fill(0).map(() => ({
+            left: Math.random() * 100,
+            bottom: Math.random() * 30,
+            duration: 3 + Math.random() * 4,
+            delay: Math.random() * 3,
+        })),
+        mid: Array(20).fill(0).map(() => ({
+            left: Math.random() * 100,
+            bottom: 30 + Math.random() * 30,
+            duration: 4 + Math.random() * 3,
+            delay: Math.random() * 2,
+        })),
+        top: Array(12).fill(0).map(() => ({
+            left: Math.random() * 100,
+            bottom: 60 + Math.random() * 40,
+            duration: 5 + Math.random() * 3,
+            delay: Math.random() * 2,
+        })),
+        white: Array(18).fill(0).map(() => ({
+            left: Math.random() * 100,
+            bottom: Math.random() * 50,
+            duration: 2 + Math.random() * 3,
+            delay: Math.random() * 2,
+        })),
+        accent: Array(10).fill(0).map(() => ({
+            left: Math.random() * 100,
+            bottom: Math.random() * 40,
+            duration: 4 + Math.random() * 4,
+            delay: Math.random() * 3,
+        })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }), []);
 
     return (
         <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">

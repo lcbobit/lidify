@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- API client with dynamic response types; proper typing would require defining 100+ API response interfaces */
+
 const AUTH_TOKEN_KEY = "auth_token";
 
 // Mood Mix Types (Legacy - for old presets endpoint)
@@ -266,25 +268,25 @@ class ApiClient {
                 }
 
                 if (response.status === 401) {
-                    const err = new Error("Not authenticated");
-                    (err as any).status = response.status;
-                    (err as any).data = error;
+                    const err = new Error("Not authenticated") as Error & { status: number; data: unknown };
+                    err.status = response.status;
+                    err.data = error;
                     throw err;
                 }
 
-                const err = new Error(error.error || "An error occurred");
-                (err as any).status = response.status;
-                (err as any).data = error;
+                const err = new Error(error.error || "An error occurred") as Error & { status: number; data: unknown };
+                err.status = response.status;
+                err.data = error;
                 throw err;
             }
 
             const data = await response.json();
             return data;
-        } catch (err: any) {
+        } catch (err: unknown) {
             if (timeoutId) clearTimeout(timeoutId);
-            if (err.name === 'AbortError') {
-                const timeoutErr = new Error('Request timed out');
-                (timeoutErr as any).status = 408;
+            if (err instanceof Error && err.name === 'AbortError') {
+                const timeoutErr = new Error('Request timed out') as Error & { status: number };
+                timeoutErr.status = 408;
                 throw timeoutErr;
             }
             throw err;
@@ -292,9 +294,9 @@ class ApiClient {
     }
 
     // Generic POST method for convenience
-    async post<T = any>(
+    async post<T = unknown>(
         endpoint: string,
-        data?: any,
+        data?: unknown,
         options?: { timeout?: number }
     ): Promise<T> {
         return this.request<T>(endpoint, {
@@ -889,20 +891,6 @@ class ApiClient {
         return this.request<void>(`/playlists/${playlistId}/items/${trackId}`, {
             method: "DELETE",
         });
-    }
-
-    async hidePlaylist(playlistId: string) {
-        return this.request<{ message: string; isHidden: boolean }>(
-            `/playlists/${playlistId}/hide`,
-            { method: "POST" }
-        );
-    }
-
-    async unhidePlaylist(playlistId: string) {
-        return this.request<{ message: string; isHidden: boolean }>(
-            `/playlists/${playlistId}/hide`,
-            { method: "DELETE" }
-        );
     }
 
     async retryPendingTrack(playlistId: string, pendingTrackId: string) {

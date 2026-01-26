@@ -1,6 +1,6 @@
 "use client";
 
-import { useAudioState } from "@/lib/audio-state-context";
+import { useAudioState, Track } from "@/lib/audio-state-context";
 import { useAudioPlayback } from "@/lib/audio-playback-context";
 import { useRemoteAwareAudioControls } from "@/lib/remote-aware-audio-controls-context";
 
@@ -33,6 +33,44 @@ import { DeviceSelector } from "./DeviceSelector";
 import { EnhancedVibeOverlay } from "./VibeOverlayEnhanced";
 import { cn, isLocalUrl } from "@/utils/cn";
 import { formatTime } from "@/utils/formatTime";
+
+type SourceFeaturesPayload = {
+    bpm?: number;
+    energy?: number;
+    valence?: number;
+    arousal?: number;
+    danceability?: number;
+    keyScale?: string;
+    instrumentalness?: number;
+    analysisMode?: string;
+    moodHappy?: number;
+    moodSad?: number;
+    moodRelaxed?: number;
+    moodAggressive?: number;
+    moodParty?: number;
+    moodAcoustic?: number;
+    moodElectronic?: number;
+};
+
+// Vibe radio returns full Track objects from the library
+type VibeRadioResponse = {
+    tracks: Track[];
+    sourceFeatures?: SourceFeaturesPayload;
+};
+
+type RemotePlayerTrack = {
+    id: string;
+    title: string;
+    artist: string;
+    album: string;
+    coverArt?: string;
+    duration: number;
+};
+
+const isRemotePlayerTrack = (track: Track | RemotePlayerTrack): track is RemotePlayerTrack =>
+    typeof track === "object" &&
+    track !== null &&
+    typeof track.artist === "string";
 
 /**
  * FullPlayer - UI-only component for desktop bottom player
@@ -127,11 +165,11 @@ export function FullPlayer() {
         // Otherwise, start vibe mode
         setIsVibeLoading(true);
         try {
-            const response = await api.getRadioTracks("vibe", currentTrack.id, 50);
+            const response = (await api.getRadioTracks("vibe", currentTrack.id, 50)) as VibeRadioResponse;
             
             if (response.tracks && response.tracks.length > 0) {
                 // Get the source track's features from the API response
-                const sf = (response as any).sourceFeatures;
+                const sf = response.sourceFeatures;
                 const sourceFeatures = {
                     bpm: sf?.bpm,
                     energy: sf?.energy,
@@ -152,7 +190,7 @@ export function FullPlayer() {
                 };
 
                 // Start vibe mode with the queue IDs (include current track)
-                const queueIds = [currentTrack.id, ...response.tracks.map((t: any) => t.id)];
+                const queueIds = [currentTrack.id, ...response.tracks.map((t) => t.id)];
                 startVibeMode(sourceFeatures, queueIds);
 
                 // Add vibe tracks as upcoming (after current song finishes)
@@ -269,24 +307,19 @@ export function FullPlayer() {
     const isTrackPlayback = playbackType === "track" || (!isActivePlayer && activePlayerState?.currentTrack);
     if (isTrackPlayback && displayTrack) {
         title = displayTrack.title;
-        // Handle both local Track type (has artist object) and remote track (has artist string)
-        subtitle = typeof displayTrack.artist === 'string'
+        const isRemoteTrackDisplay = isRemotePlayerTrack(displayTrack);
+        subtitle = isRemoteTrackDisplay
             ? displayTrack.artist
             : displayTrack.artist?.name || "Unknown Artist";
-        // Handle coverArt - remote sends coverArt directly, local has album.coverArt
-        // Local Track has album: { coverArt: string }, remote has coverArt: string directly
-        const album = (displayTrack as any).album;
-        const coverArt = (album && typeof album === 'object' && album.coverArt)
-            ? album.coverArt
-            : (displayTrack as any).coverArt;
+        const coverArt = isRemoteTrackDisplay
+            ? displayTrack.coverArt
+            : displayTrack.album?.coverArt;
         coverUrl = coverArt ? api.getCoverArtUrl(coverArt, 100) : null;
-        // Links only work for local tracks (remote doesn't send IDs for navigation)
         if (!isActivePlayer && activePlayerState?.currentTrack) {
-            // Remote track - no navigation links
             albumLink = null;
             artistLink = null;
             mediaLink = null;
-        } else if (currentTrack) {
+        } else if (currentTrack && !isRemoteTrackDisplay) {
             albumLink = currentTrack.album?.id ? `/album/${currentTrack.album.id}` : null;
             artistLink = currentTrack.artist?.id ? `/artist/${currentTrack.artist.id}` : null;
             mediaLink = albumLink;

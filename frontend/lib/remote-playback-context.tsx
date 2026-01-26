@@ -12,6 +12,7 @@ import {
 import { io, Socket } from "socket.io-client";
 import { useAuth } from "./auth-context";
 import { api } from "./api";
+import { Track } from "./audio-state-context";
 
 // Types
 export interface RemoteDevice {
@@ -31,9 +32,24 @@ export interface RemoteDevice {
     isCurrentDevice: boolean;
 }
 
+export type RemoteQueueItem = NonNullable<RemoteDevice["currentTrack"]>;
+
+export interface RemoteCommandPayload {
+    time?: number;
+    relative?: number;
+    volume?: number;
+    track?: Track;
+    tracks?: Track[];
+    startIndex?: number;
+    isVibeQueue?: boolean;
+    currentTrack?: Track;
+    currentTime?: number;
+    isPlaying?: boolean;
+}
+
 export interface RemoteCommand {
     command: "play" | "pause" | "next" | "prev" | "seek" | "volume" | "setQueue" | "playTrack" | "transferPlayback";
-    payload?: any;
+    payload?: RemoteCommandPayload;
     fromDeviceId?: string;
 }
 
@@ -73,7 +89,7 @@ interface RemotePlaybackContextType {
     } | null;
 
     // Actions
-    sendCommand: (targetDeviceId: string, command: RemoteCommand["command"], payload?: any) => void;
+    sendCommand: (targetDeviceId: string, command: RemoteCommand["command"], payload?: unknown) => void;
     transferPlayback: (toDeviceId: string, withState?: boolean) => void;
     becomeActivePlayer: () => void; // Transfer playback TO this device (will stop remote)
     goLocalMode: () => void; // Switch to local mode WITHOUT stopping remote playback
@@ -93,7 +109,7 @@ interface RemotePlaybackContextType {
         currentTrack: RemoteDevice["currentTrack"];
         currentTime: number;
         volume: number;
-        queue?: any[];
+        queue?: RemoteQueueItem[];
         queueIndex?: number;
     }) => void;
 }
@@ -227,17 +243,20 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
     // Ref for activePlayerId to avoid stale closures in callbacks
     // This ref is always kept in sync with state and can be read synchronously
     const activePlayerIdRef = useRef<string | null>(activePlayerId);
-    activePlayerIdRef.current = activePlayerId;
-
     // Ref for currentDeviceId as well
     const currentDeviceIdRef = useRef<string | null>(currentDeviceId);
-    currentDeviceIdRef.current = currentDeviceId;
-
     // Refs for control mode
     const controlModeRef = useRef<ControlMode>(controlMode);
-    controlModeRef.current = controlMode;
     const controlTargetIdRef = useRef<string | null>(controlTargetId);
-    controlTargetIdRef.current = controlTargetId;
+    
+    // Sync refs with state (required by React Compiler)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Intentional ref sync
+    useEffect(() => {
+        activePlayerIdRef.current = activePlayerId;
+        currentDeviceIdRef.current = currentDeviceId;
+        controlModeRef.current = controlMode;
+        controlTargetIdRef.current = controlTargetId;
+    });
 
     // Wrapper to persist controlMode/controlTargetId changes AND update refs immediately
     // This prevents race conditions where a click switches modes and the next action
@@ -274,7 +293,11 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
 
     // Ref for isActivePlayer - computed from refs for synchronous access in callbacks
     const isActivePlayerRef = useRef<boolean>(isActivePlayer);
-    isActivePlayerRef.current = isActivePlayer;
+    
+    // Sync isActivePlayerRef (must be in effect to satisfy React Compiler)
+    useEffect(() => {
+        isActivePlayerRef.current = isActivePlayer;
+    }, [isActivePlayer]);
 
     // Getter functions that use refs - these can be called inside callbacks to get current values
     const getActivePlayerId = useCallback(() => activePlayerIdRef.current, []);
@@ -403,7 +426,7 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
         });
 
         // Handle state update broadcasts from other devices
-        socket.on("playback:stateUpdate", (state: any) => {
+        socket.on("playback:stateUpdate", (state: RemoteDevice) => {
             const myDeviceId = currentDeviceIdRef.current;
             const myControlMode = controlModeRef.current;
             console.log("[RemotePlayback] playback:stateUpdate received:", {
@@ -496,11 +519,12 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
     }, [isAuthenticated, user, currentDeviceId, currentDeviceName]);
 
     // Send a command to another device
-    const sendCommand = useCallback((
-        targetDeviceId: string,
-        command: RemoteCommand["command"],
-        payload?: any
-    ) => {
+    const sendCommand = useCallback(
+        (
+            targetDeviceId: string,
+            command: RemoteCommand["command"],
+            payload?: unknown
+        ) => {
         if (!socketRef.current?.connected) {
             console.warn("[RemotePlayback] Cannot send command - not connected");
             return;
@@ -552,8 +576,8 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
     // Become the active player (transfer playback TO this device - will stop remote)
     // Use this when you actually want to PLAY on this device
     const becomeActivePlayer = useCallback(() => {
-        if (!socketRef.current?.connected || !currentDeviceId) {
-            console.warn("[RemotePlayback] Cannot become active - not connected");
+        if (!currentDeviceId) {
+            console.warn("[RemotePlayback] Cannot become active - no device ID");
             return;
         }
 
@@ -562,8 +586,15 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
         // Switch to local mode since we're now playing locally
         setControlMode("local", null);
         
+        // Always set local state so playback works even without WebSocket
         setActivePlayerId(currentDeviceId);
-        socketRef.current.emit("playback:setActivePlayer", { deviceId: currentDeviceId });
+        
+        // Notify server if connected (non-blocking)
+        if (socketRef.current?.connected) {
+            socketRef.current.emit("playback:setActivePlayer", { deviceId: currentDeviceId });
+        } else {
+            console.warn("[RemotePlayback] WebSocket not connected - local state set, server not notified");
+        }
     }, [currentDeviceId, setControlMode]);
 
     // Switch to local mode WITHOUT stopping remote playback
@@ -633,7 +664,7 @@ export function RemotePlaybackProvider({ children }: { children: ReactNode }) {
         currentTrack: RemoteDevice["currentTrack"];
         currentTime: number;
         volume: number;
-        queue?: any[];
+        queue?: RemoteQueueItem[];
         queueIndex?: number;
     }) => {
         if (!socketRef.current?.connected || !currentDeviceId) return;

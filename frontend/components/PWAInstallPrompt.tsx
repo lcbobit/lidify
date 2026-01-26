@@ -8,10 +8,17 @@ interface BeforeInstallPromptEvent extends Event {
     userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 }
 
+// Helper to detect iOS - safe for SSR
+function getIsIOS(): boolean {
+    if (typeof window === "undefined") return false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+}
+
 export function PWAInstallPrompt() {
     const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
     const [showPrompt, setShowPrompt] = useState(false);
-    const [isIOS, setIsIOS] = useState(false);
+    const [isIOS] = useState(getIsIOS);
 
     useEffect(() => {
         // Check if already installed as PWA
@@ -29,10 +36,6 @@ export function PWAInstallPrompt() {
             }
         }
 
-        // Check for iOS
-        const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
-        setIsIOS(isIOSDevice);
-
         // Listen for beforeinstallprompt (Chrome, Edge, etc.)
         const handleBeforeInstallPrompt = (e: Event) => {
             e.preventDefault();
@@ -44,14 +47,14 @@ export function PWAInstallPrompt() {
         window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
 
         // For iOS, show instructions after delay if on mobile
-        if (isIOSDevice) {
+        if (isIOS) {
             setTimeout(() => setShowPrompt(true), 5000);
         }
 
         return () => {
             window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
         };
-    }, []);
+    }, [isIOS]);
 
     const handleInstall = async () => {
         if (!deferredPrompt) return;

@@ -35,7 +35,7 @@ export const queryKeys = {
     album: (id: string) => ["album", id] as const,
     albumLibrary: (id: string) => ["album", "library", id] as const,
     albumDiscovery: (id: string) => ["album", "discovery", id] as const,
-    albums: (filters?: Record<string, any>) => ["albums", filters] as const,
+    albums: (filters?: Record<string, unknown>) => ["albums", filters] as const,
 
     // Library queries
     library: () => ["library"] as const,
@@ -322,10 +322,10 @@ interface DiscoverCacheData {
         year?: number;
         reason?: string;
     }>;
-    sections?: {
-        safe: Array<any>;
-        adjacent: Array<any>;
-        wildcard: Array<any>;
+        sections?: {
+        safe: Array<Record<string, unknown>>;
+        adjacent: Array<Record<string, unknown>>;
+        wildcard: Array<Record<string, unknown>>;
     };
     seedArtists: string[];
     mode: DiscoveryMode;
@@ -706,9 +706,11 @@ export function usePodcastQuery(id: string | undefined) {
 
             try {
                 return await api.getPodcast(id);
-            } catch (error: any) {
+            } catch (error: unknown) {
                 // If podcast not found (404), return null to allow preview mode
-                if (error?.status === 404 || error?.message?.includes('not found') || error?.message?.includes('not subscribed')) {
+                const apiError = error as { status?: number; message?: string };
+                const message = typeof apiError.message === "string" ? apiError.message : "";
+                if (apiError?.status === 404 || message.includes('not found') || message.includes('not subscribed')) {
                     return null;
                 }
                 // For other errors, throw to trigger error state

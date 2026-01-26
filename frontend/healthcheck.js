@@ -1,4 +1,5 @@
 // Minimal health check script - no external dependencies
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const http = require('http');
 
 const options = {

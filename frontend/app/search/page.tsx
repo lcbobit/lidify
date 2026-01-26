@@ -21,7 +21,7 @@ export default function SearchPage() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const [filterTab, setFilterTab] = useState<FilterTab>("all");
-    const [query, setQuery] = useState("");
+    const [query, setQuery] = useState(() => searchParams.get("q") || "");
 
     // Custom hooks
     const {
@@ -40,12 +40,13 @@ export default function SearchPage() {
         handleDownload,
     } = useSoulseekSearch({ query });
 
-    // Read query from URL params on mount
+    // Sync query from URL params when they change externally
     useEffect(() => {
         const q = searchParams.get("q");
-        if (q) {
+        if (q && q !== query) {
             setQuery(q);
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Only react to searchParams changes, not query
     }, [searchParams]);
 
     // Derived state

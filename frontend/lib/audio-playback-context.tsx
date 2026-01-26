@@ -121,11 +121,13 @@ export function AudioPlaybackProvider({ children }: { children: ReactNode }) {
 
         try {
             const savedTime = localStorage.getItem(STORAGE_KEYS.CURRENT_TIME);
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- Intentional hydration from localStorage
             if (savedTime) setCurrentTime(parseFloat(savedTime));
             // Don't force pause - this was causing immediate pause after play!
         } catch (error) {
             console.error("[AudioPlayback] Failed to restore state:", error);
         }
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- Intentional hydration from localStorage
         setIsHydrated(true);
     }, []);
 
