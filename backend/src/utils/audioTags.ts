@@ -28,12 +28,12 @@ export async function rewriteAudioTags(
             "0",
             "-c",
             "copy",
-            // Ensure ID3 tags are written for mp3.
-            "-write_id3v2",
-            "1",
-            "-id3v2_version",
-            "3",
         ];
+
+        // Only use ID3 tags for MP3 files
+        if (ext === ".mp3") {
+            args.push("-write_id3v2", "1", "-id3v2_version", "3");
+        }
 
         if (tags.title) {
             args.push("-metadata", `title=${tags.title}`);
@@ -52,8 +52,14 @@ export async function rewriteAudioTags(
         ffmpeg.stderr.on("data", (d) => {
             stderr += d.toString();
         });
-        ffmpeg.on("close", (code) => {
+        ffmpeg.on("close", async (code) => {
             if (code === 0) return resolve();
+            // Clean up temp file on failure
+            try {
+                if (fs.existsSync(tmpPath)) {
+                    await fs.promises.unlink(tmpPath);
+                }
+            } catch {}
             reject(new Error(`ffmpeg tag rewrite failed (code ${code}): ${stderr}`));
         });
         ffmpeg.on("error", reject);

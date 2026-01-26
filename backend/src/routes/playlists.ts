@@ -727,7 +727,8 @@ router.post("/:id/pending/:trackId/retry", async (req, res) => {
         }
 
         const soulseekUsable = Boolean(
-            settings?.soulseekUsername &&
+            settings?.soulseekEnabled !== false &&
+                settings?.soulseekUsername &&
                 settings?.soulseekPassword &&
                 (await soulseekService.isAvailable())
         );

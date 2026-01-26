@@ -48,7 +48,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     essentia-tensorflow \
     redis \
     psycopg2-binary \
-    yt-dlp
+    yt-dlp \
+    mutagen
 
 # Download Essentia ML models (~200MB total) - these enable Enhanced vibe matching
 RUN echo "Downloading Essentia ML models for Enhanced vibe matching..." && \

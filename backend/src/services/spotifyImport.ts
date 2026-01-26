@@ -965,12 +965,14 @@ class SpotifyImportService {
 
     /**
      * Start an import job
+     * @param skipDownload - If true, just save playlist without downloading missing tracks
      */
     async startImport(
         userId: string,
         spotifyPlaylistId: string,
         playlistName: string,
-        preview: ImportPreview
+        preview: ImportPreview,
+        skipDownload: boolean = false
     ): Promise<ImportJob> {
         const jobId = `import_${Date.now()}_${Math.random()
             .toString(36)
@@ -1027,7 +1029,7 @@ class SpotifyImportService {
         await saveImportJob(job);
 
         // Start processing in background
-        this.processImport(job, preview).catch(
+        this.processImport(job, preview, skipDownload).catch(
             async (error) => {
                 job.status = "failed";
                 job.error = error.message;
@@ -1043,10 +1045,12 @@ class SpotifyImportService {
     /**
      * Process the import (download albums, create playlist)
      * Uses simpleDownloadManager for proper webhook tracking and Lidarr release iteration
+     * @param skipDownload - If true, just save playlist without downloading missing tracks
      */
     private async processImport(
         job: ImportJob,
-        preview: ImportPreview
+        preview: ImportPreview,
+        skipDownload: boolean = false
     ): Promise<void> {
         const logger = jobLoggers.get(job.id);
 
@@ -1112,81 +1116,85 @@ class SpotifyImportService {
             });
         }
 
-        // Download missing tracks (Soulseek -> YouTube fallback)
-        const tracksToDownload = job.pendingTracks
-            .filter((t) => !t.preMatchedTrackId)
-            .map((t) => ({
-                artist: t.artist,
-                title: t.title,
-                album: t.album,
-                durationMs: t.durationMs,
-            }));
+        // Download missing tracks (Soulseek -> YouTube fallback) unless skipDownload
+        if (!skipDownload) {
+            const tracksToDownload = job.pendingTracks
+                .filter((t) => !t.preMatchedTrackId)
+                .map((t) => ({
+                    artist: t.artist,
+                    title: t.title,
+                    album: t.album,
+                    durationMs: t.durationMs,
+                }));
 
-        if (tracksToDownload.length > 0) {
-            const soulseekUsable = Boolean(
-                settings?.soulseekEnabled !== false &&
-                    settings?.soulseekUsername &&
-                    settings?.soulseekPassword &&
-                    (await soulseekService.isAvailable())
-            );
-            const youtubeUsable = settings?.youtubeEnabled !== false;
+            if (tracksToDownload.length > 0) {
+                const soulseekUsable = Boolean(
+                    settings?.soulseekEnabled !== false &&
+                        settings?.soulseekUsername &&
+                        settings?.soulseekPassword &&
+                        (await soulseekService.isAvailable())
+                );
+                const youtubeUsable = settings?.youtubeEnabled !== false;
 
-            logger?.info(
-                `Playlist download: tracks=${tracksToDownload.length} soulseek=${
-                    soulseekUsable ? "yes" : "no"
-                } youtube=${youtubeUsable ? "yes" : "no"}`
-            );
+                logger?.info(
+                    `Playlist download: tracks=${tracksToDownload.length} soulseek=${
+                        soulseekUsable ? "yes" : "no"
+                    } youtube=${youtubeUsable ? "yes" : "no"}`
+                );
 
-            const queue = new PQueue({ concurrency: 3 });
-            let successful = 0;
-            let failed = 0;
+                const queue = new PQueue({ concurrency: 3 });
+                let successful = 0;
+                let failed = 0;
 
-            await Promise.all(
-                tracksToDownload.map((t) =>
-                    queue.add(async () => {
-                        const result = await this.acquirePlaylistTrack(t, settings, {
-                            soulseekUsable,
-                            youtubeUsable,
-                        });
-                        if (result.success) {
-                            successful++;
-                        } else {
-                            failed++;
-                            logger?.warn(
-                                `Track download failed: ${t.artist} - ${t.title} (${result.source}): ${
-                                    result.error || "unknown error"
-                                }`
-                            );
-                        }
-                    })
-                )
-            );
+                await Promise.all(
+                    tracksToDownload.map((t) =>
+                        queue.add(async () => {
+                            const result = await this.acquirePlaylistTrack(t, settings, {
+                                soulseekUsable,
+                                youtubeUsable,
+                            });
+                            if (result.success) {
+                                successful++;
+                            } else {
+                                failed++;
+                                logger?.warn(
+                                    `Track download failed: ${t.artist} - ${t.title} (${result.source}): ${
+                                        result.error || "unknown error"
+                                    }`
+                                );
+                            }
+                        })
+                    )
+                );
 
-            job.albumsCompleted = successful;
+                job.albumsCompleted = successful;
+                job.updatedAt = new Date();
+                await saveImportJob(job);
+
+                logger?.info(
+                    `Playlist download complete: ${successful} succeeded, ${failed} failed`
+                );
+            }
+
+            job.status = "scanning";
+            job.progress = 80;
             job.updatedAt = new Date();
             await saveImportJob(job);
 
-            logger?.info(
-                `Playlist download complete: ${successful} succeeded, ${failed} failed`
-            );
-        }
-
-        job.status = "scanning";
-        job.progress = 80;
-        job.updatedAt = new Date();
-        await saveImportJob(job);
-
-        try {
-            const { scanQueue } = await import("../workers/queues");
-            await scanQueue.add("scan", {
-                userId: job.userId,
-                musicPath: playlistScanPath,
-                basePath: downloadBase,
-                source: "spotify-import",
-                spotifyImportJobId: job.id,
-            });
-        } catch (err: any) {
-            logger?.error(`Failed to queue scan: ${err.message}`);
+            try {
+                const { scanQueue } = await import("../workers/queues");
+                await scanQueue.add("scan", {
+                    userId: job.userId,
+                    musicPath: playlistScanPath,
+                    basePath: downloadBase,
+                    source: "spotify-import",
+                    spotifyImportJobId: job.id,
+                });
+            } catch (err: any) {
+                logger?.error(`Failed to queue scan: ${err.message}`);
+            }
+        } else {
+            logger?.info(`Skipping downloads (save only mode)`);
         }
 
         // We don't wait for scan completion; scanProcessor will reconcile and notify.

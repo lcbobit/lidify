@@ -22,6 +22,8 @@ const importSchema = z.object({
     playlistName: z.string().min(1).max(200),
     // Track-only playlist imports (Soulseek). Keep flexible for backwards compatibility.
     preview: z.any().optional(),
+    // If true, just save playlist without downloading missing tracks
+    skipDownload: z.boolean().optional(),
 });
 
 /**
@@ -125,7 +127,7 @@ router.post("/preview", async (req, res) => {
  */
 router.post("/import", async (req, res) => {
     try {
-        const { spotifyPlaylistId, url, playlistName, preview } =
+        const { spotifyPlaylistId, url, playlistName, preview, skipDownload } =
             importSchema.parse(req.body);
         const userId = req.user!.id;
 
@@ -161,14 +163,15 @@ router.post("/import", async (req, res) => {
         }
 
         console.log(
-            `[Spotify Import] Starting import for user ${userId}: ${playlistName}`
+            `[Spotify Import] Starting import for user ${userId}: ${playlistName}${skipDownload ? " (save only, no download)" : ""}`
         );
 
         const job = await spotifyImportService.startImport(
             userId,
             spotifyPlaylistId,
             playlistName,
-            effectivePreview
+            effectivePreview,
+            skipDownload
         );
 
         res.json({

@@ -580,8 +580,24 @@ export class MusicScannerService {
         relativePath: string,
         musicPath: string
     ): Promise<void> {
-        // Extract metadata
-        const metadata = await parseFile(absolutePath);
+        // Extract metadata - if parsing fails due to malformed picture data, retry without covers
+        let metadata;
+        let skipCoverExtraction = false;
+        try {
+            metadata = await parseFile(absolutePath);
+        } catch (err: any) {
+            // Some files have malformed embedded images that cause base64 decoding errors
+            // Retry without loading pictures - we'll extract cover via ffmpeg later
+            if (err.name === "InvalidCharacterError" || 
+                err.message?.includes("InvalidCharacterError") ||
+                err.message?.includes("not correctly encoded")) {
+                console.warn(`[Scanner] Malformed picture data in ${path.basename(absolutePath)}, retrying without covers`);
+                metadata = await parseFile(absolutePath, { skipCovers: true });
+                skipCoverExtraction = false; // Still try to extract cover via ffmpeg fallback
+            } else {
+                throw err;
+            }
+        }
         const stats = await fs.promises.stat(absolutePath);
 
         // Parse basic info - sanitize all strings to remove null bytes that break PostgreSQL
@@ -589,8 +605,25 @@ export class MusicScannerService {
             path.basename(relativePath, path.extname(relativePath));
         const trackNo = metadata.common.track.no || 0;
         const discNo = metadata.common.disk?.no || 1;
-        const duration = Math.floor(metadata.format.duration || 0);
+        let duration = Math.floor(metadata.format.duration || 0);
         const mime = metadata.format.codec || "audio/mpeg";
+
+        // Fallback to ffprobe for duration if music-metadata didn't get it
+        if (duration === 0) {
+            try {
+                const { execSync } = await import("child_process");
+                const ffprobeOutput = execSync(
+                    `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${absolutePath}"`,
+                    { timeout: 10000, encoding: "utf8" }
+                );
+                const parsedDuration = parseFloat(ffprobeOutput.trim());
+                if (!isNaN(parsedDuration) && parsedDuration > 0) {
+                    duration = Math.floor(parsedDuration);
+                }
+            } catch {
+                // ffprobe fallback failed, keep duration as 0
+            }
+        }
 
         // Artist and album info
         // IMPORTANT: Prefer albumartist over artist to keep albums grouped under the primary artist
@@ -927,17 +960,25 @@ export class MusicScannerService {
                 }
 
                 if (needsExtraction) {
-                    const coverPath = await this.coverArtExtractor.extractCoverArt(
-                        absolutePath,
-                        album.id
-                    );
+                    // Skip embedded cover extraction for YouTube downloads (often corrupted thumbnails)
+                    // YouTube-downloaded files have video ID pattern in filename: - XXXXXXXXXXX.opus
+                    const isYouTubeDownload = /- [A-Za-z0-9_-]{11}\.(opus|webm|m4a)$/.test(absolutePath);
+                    
+                    let coverPath: string | null = null;
+                    if (!isYouTubeDownload) {
+                        coverPath = await this.coverArtExtractor.extractCoverArt(
+                            absolutePath,
+                            album.id
+                        );
+                    }
+                    
                     if (coverPath) {
                         await prisma.album.update({
                             where: { id: album.id },
                             data: { coverUrl: `native:${coverPath}` },
                         });
                     } else {
-                        // No embedded art, try fetching from Deezer
+                        // No embedded art or YouTube download, try fetching from Deezer
                         try {
                             const deezerCover = await deezerService.getAlbumCover(
                                 artistName,

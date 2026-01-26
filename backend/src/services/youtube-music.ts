@@ -582,17 +582,38 @@ class YouTubeMusicService {
             ? path.join(outputDir, `${filename}.%(ext)s`)
             : path.join(outputDir, "%(title)s.%(ext)s");
 
+        // Check if file already exists (with expected extension)
+        if (filename) {
+            const expectedPath = path.join(outputDir, `${filename}.${format}`);
+            if (fs.existsSync(expectedPath)) {
+                console.log(`[YouTube Music] File already exists: ${expectedPath}`);
+                // Get duration from existing file
+                let duration = 0;
+                try {
+                    const { stdout: durationOutput } = await execPromise(
+                        `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${expectedPath}"`,
+                        { timeout: 10000 }
+                    );
+                    duration = Math.round(parseFloat(durationOutput.trim()));
+                } catch {
+                    // Duration extraction failed, not critical
+                }
+                return { filePath: expectedPath, format, duration };
+            }
+        }
+
         console.log(`[YouTube Music] Downloading ${videoId} to ${outputDir}...`);
 
         try {
             // Build yt-dlp command
             // Use best audio quality available, no transcoding if using native format (opus)
+            // Note: We skip --embed-thumbnail because YouTube thumbnails often have encoding issues
+            // that cause music-metadata parsing to fail. We fetch covers from Deezer instead.
             const command = [
                 "yt-dlp",
                 "-x", // Extract audio
                 "--audio-format", format,
                 "--audio-quality", "0", // 0 = best available (no upsampling)
-                "--embed-thumbnail",
                 "--add-metadata",
                 "--no-warnings",
                 "-o", `"${outputTemplate}"`,

@@ -20,11 +20,12 @@ import {
     ListMusic,
     Music,
     Clock,
-    Volume2,
     RefreshCw,
     AlertCircle,
+    Volume2,
     X,
     Loader2,
+    Download,
 } from "lucide-react";
 
 interface Track {
@@ -296,8 +297,46 @@ export default function PlaylistDetailPage() {
         return `${mins} min`;
     };
 
+    // Convert any item (local or pending) to playable track format
+    const itemToPlayableTrack = (item: PlaylistItem | PendingTrack) => {
+        if (item.type === "pending") {
+            const pending = (item as PendingTrack).pending;
+            return {
+                id: `pending-${pending.id}`,
+                title: pending.title,
+                // No filePath = triggers YouTube Music fallback
+                artist: { name: pending.artist },
+                album: { title: pending.album },
+                duration: 0,
+            };
+        }
+        const playlistItem = item as PlaylistItem;
+        return {
+            id: playlistItem.track.id,
+            title: playlistItem.track.title,
+            filePath: playlistItem.track.filePath,
+            artist: {
+                name: playlistItem.track.album.artist.name,
+                id: playlistItem.track.album.artist.id,
+            },
+            album: {
+                title: playlistItem.track.album.title,
+                coverArt: playlistItem.track.album.coverArt,
+                id: playlistItem.track.album.id,
+            },
+            duration: playlistItem.track.duration,
+        };
+    };
+
+    // Get all tracks (local + pending) as playable format
+    const getAllPlayableTracks = () => {
+        const items = playlist?.mergedItems || playlist?.items || [];
+        return items.map(itemToPlayableTrack);
+    };
+
     const handlePlayPlaylist = () => {
-        if (!playlist?.items || playlist.items.length === 0) return;
+        const allTracks = getAllPlayableTracks();
+        if (allTracks.length === 0) return;
 
         // If this playlist is playing, toggle pause/resume
         if (isThisPlaylistPlaying) {
@@ -309,43 +348,13 @@ export default function PlaylistDetailPage() {
             return;
         }
 
-        const tracks = playlist.items.map((item: PlaylistItem) => ({
-            id: item.track.id,
-            title: item.track.title,
-            filePath: item.track.filePath, // Include filePath to use local streaming
-            artist: {
-                name: item.track.album.artist.name,
-                id: item.track.album.artist.id,
-            },
-            album: {
-                title: item.track.album.title,
-                coverArt: item.track.album.coverArt,
-                id: item.track.album.id,
-            },
-            duration: item.track.duration,
-        }));
-        playTracks(tracks, 0);
+        playTracks(allTracks, 0);
     };
 
     const handlePlayTrack = (index: number) => {
-        if (!playlist?.items || playlist.items.length === 0) return;
-
-        const tracks = playlist.items.map((item: PlaylistItem) => ({
-            id: item.track.id,
-            title: item.track.title,
-            filePath: item.track.filePath, // Include filePath to use local streaming
-            artist: {
-                name: item.track.album.artist.name,
-                id: item.track.album.artist.id,
-            },
-            album: {
-                title: item.track.album.title,
-                coverArt: item.track.album.coverArt,
-                id: item.track.album.id,
-            },
-            duration: item.track.duration,
-        }));
-        playTracks(tracks, index);
+        const allTracks = getAllPlayableTracks();
+        if (allTracks.length === 0) return;
+        playTracks(allTracks, index);
     };
 
     const handleAddToQueue = (track: Track) => {
@@ -517,7 +526,7 @@ export default function PlaylistDetailPage() {
                                     <span className="mx-1">•</span>
                                 </>
                             )}
-                            <span>{playlist.items?.length || 0} songs</span>
+                            <span>{(playlist.items?.length || 0) + (playlist.pendingCount || 0)} songs</span>
                             {totalDuration > 0 && (
                                 <>
                                     <span>
@@ -526,6 +535,12 @@ export default function PlaylistDetailPage() {
                                 </>
                             )}
                         </div>
+                        {/* Show "X of Y available locally" only when there are streaming tracks */}
+                        {playlist.pendingCount > 0 && (
+                            <p className="text-xs text-gray-500 mt-1">
+                                {playlist.items?.length || 0} of {(playlist.items?.length || 0) + playlist.pendingCount} songs available locally
+                            </p>
+                        )}
                     </div>
                 </div>
             </div>
@@ -548,32 +563,13 @@ export default function PlaylistDetailPage() {
                     )}
 
                     {/* Shuffle Button */}
-                    {playlist.items && playlist.items.length > 1 && (
+                    {((playlist.items?.length || 0) + (playlist.pendingCount || 0)) > 1 && (
                         <button
                             onClick={() => {
-                                if (
-                                    !playlist?.items ||
-                                    playlist.items.length === 0
-                                )
-                                    return;
-                                const tracks = playlist.items.map(
-                                    (item: PlaylistItem) => ({
-                                        id: item.track.id,
-                                        title: item.track.title,
-                                        artist: {
-                                            name: item.track.album.artist.name,
-                                            id: item.track.album.artist.id,
-                                        },
-                                        album: {
-                                            title: item.track.album.title,
-                                            coverArt: item.track.album.coverArt,
-                                            id: item.track.album.id,
-                                        },
-                                        duration: item.track.duration,
-                                    })
-                                );
+                                const allTracks = getAllPlayableTracks();
+                                if (allTracks.length === 0) return;
                                 // Shuffle the tracks
-                                const shuffled = [...tracks].sort(
+                                const shuffled = [...allTracks].sort(
                                     () => Math.random() - 0.5
                                 );
                                 playTracks(shuffled, 0);
@@ -603,16 +599,14 @@ export default function PlaylistDetailPage() {
 
             {/* Track Listing */}
             <div className="px-4 md:px-8 pb-32">
-                {/* Show failed/pending count if any */}
+                {/* Show pending count banner if any */}
                 {playlist.pendingCount > 0 && (
                     <div className="mb-4 px-4 py-2 bg-red-900/20 border border-red-500/30 rounded-lg flex items-center justify-between gap-3">
                         <div className="flex items-center gap-2">
                             <AlertCircle className="w-4 h-4 text-red-400" />
                             <span className="text-sm text-red-200">
                                 {playlist.pendingCount} track
-                                {playlist.pendingCount !== 1 ? "s" : ""} still
-                                missing. They will be added if they appear in
-                                your library after a scan.
+                                {playlist.pendingCount !== 1 ? "s" : ""} not downloaded yet.
                             </span>
                         </div>
 
@@ -622,7 +616,7 @@ export default function PlaylistDetailPage() {
                                 className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-red-500/20 text-red-200 border border-red-500/30 hover:bg-red-500/30 transition-colors"
                                 title="Retry downloading missing tracks"
                             >
-                                Retry missing
+                                Retry all
                             </button>
                         )}
                     </div>
@@ -647,85 +641,106 @@ export default function PlaylistDetailPage() {
                                     item: PlaylistItem | PendingTrack,
                                     index: number
                                 ) => {
-                                    // Handle pending/failed tracks
+                                    // Handle streaming (pending) tracks - same design as local tracks
                                     if (item.type === "pending") {
-                                        const pending = (item as PendingTrack)
-                                            .pending;
-                                        const isPreviewPlaying =
-                                            playingPreviewId === pending.id;
-                                        const isRetrying =
-                                            retryingTrackId === pending.id;
-                                        const isRemoving =
-                                            removingTrackId === pending.id;
+                                        const pending = (item as PendingTrack).pending;
+                                        const pendingTrackId = `pending-${pending.id}`;
+                                        const isCurrentlyPlaying = currentTrack?.id === pendingTrackId;
+                                        const isActuallyPlaying = isCurrentlyPlaying && isPlaying;
+                                        const isRetrying = retryingTrackId === pending.id;
+                                        const isRemoving = removingTrackId === pending.id;
 
                                         return (
                                             <div
                                                 key={`pending-${pending.id}`}
-                                                className="grid grid-cols-[40px_1fr_auto] md:grid-cols-[40px_minmax(200px,4fr)_minmax(100px,1fr)_70px_80px] gap-4 px-4 py-2 rounded-md opacity-60 hover:opacity-80 group transition-opacity"
+                                                onClick={() => {
+                                                    if (isActuallyPlaying) {
+                                                        pause();
+                                                    } else {
+                                                        handlePlayTrack(index);
+                                                    }
+                                                }}
+                                                className={cn(
+                                                    "grid grid-cols-[40px_1fr_auto] md:grid-cols-[40px_minmax(200px,4fr)_minmax(100px,1fr)_70px_80px] gap-4 px-4 py-2 rounded-md hover:bg-white/5 transition-colors group cursor-pointer",
+                                                    isCurrentlyPlaying && "bg-white/10"
+                                                )}
                                             >
-                                                {/* Track Number - failed icon */}
+                                                {/* Track Number / Play or Pause Icon */}
                                                 <div className="flex items-center justify-center">
-                                                    <AlertCircle className="w-4 h-4 text-red-400" />
+                                                    <span
+                                                        className={cn(
+                                                            "text-sm group-hover:hidden",
+                                                            isCurrentlyPlaying
+                                                                ? "text-[#ecb200]"
+                                                                : "text-gray-400"
+                                                        )}
+                                                    >
+                                                        {isActuallyPlaying ? (
+                                                            <Music className="w-4 h-4 text-[#ecb200] animate-pulse" />
+                                                        ) : (
+                                                            index + 1
+                                                        )}
+                                                    </span>
+                                                    {isActuallyPlaying ? (
+                                                        <Pause className="w-4 h-4 text-white hidden group-hover:block" />
+                                                    ) : (
+                                                        <Play className="w-4 h-4 text-white hidden group-hover:block" />
+                                                    )}
                                                 </div>
 
                                                 {/* Title + Artist */}
                                                 <div className="flex items-center gap-3 min-w-0">
                                                     <div className="w-10 h-10 bg-[#282828] rounded shrink-0 overflow-hidden flex items-center justify-center">
-                                                        <button
-                                                            onClick={() =>
-                                                                handlePlayPreview(
-                                                                    pending.id
-                                                                )
-                                                            }
-                                                            className="w-full h-full flex items-center justify-center hover:bg-white/10 transition-colors"
-                                                            title="Play 30s Deezer preview"
-                                                        >
-                                                            {isPreviewPlaying ? (
-                                                                <Volume2 className="w-5 h-5 text-[#ecb200] animate-pulse" />
-                                                            ) : (
-                                                                <Play className="w-5 h-5 text-gray-400 hover:text-white" />
-                                                            )}
-                                                        </button>
+                                                        <Music className="w-5 h-5 text-gray-600" />
                                                     </div>
                                                     <div className="min-w-0">
-                                                        <p className="text-sm font-medium truncate text-gray-400">
+                                                        <p
+                                                            className={cn(
+                                                                "text-sm font-medium truncate",
+                                                                isCurrentlyPlaying
+                                                                    ? "text-[#ecb200]"
+                                                                    : "text-white"
+                                                            )}
+                                                        >
                                                             {pending.title}
                                                         </p>
-                                                        <p className="text-xs text-gray-500 truncate">
+                                                        <p className="text-xs text-gray-400 truncate">
                                                             {pending.artist}
                                                         </p>
                                                     </div>
                                                 </div>
 
                                                 {/* Album (hidden on mobile) */}
-                                                <p className="hidden md:flex items-center text-sm text-gray-500 truncate">
+                                                <p className="hidden md:flex items-center text-sm text-gray-400 truncate">
                                                     {pending.album}
                                                 </p>
 
-                                                {/* Empty codec column for pending tracks */}
-                                                <div className="hidden md:block" />
-
-                                                {/* Actions: Retry + Remove */}
-                                                <div className="flex items-center justify-end gap-1">
-                                                    <span className="text-xs text-red-400 mr-2 hidden sm:inline">
-                                                        Failed
+                                                {/* YT Badge for streaming tracks */}
+                                                <div className="hidden md:flex items-center justify-end">
+                                                    <span
+                                                        className="flex-shrink-0 px-1 py-0.5 text-[9px] font-semibold rounded bg-red-600/80 text-white leading-none"
+                                                        title="Streaming from YouTube Music"
+                                                    >
+                                                        YT
                                                     </span>
-                                                    {/* Retry button */}
+                                                </div>
+
+                                                {/* Duration + Actions */}
+                                                <div className="flex items-center justify-end gap-2">
+                                                    {/* Download button */}
                                                     <button
                                                         onClick={(e) => {
                                                             e.stopPropagation();
-                                                            handleRetryPendingTrack(
-                                                                pending.id
-                                                            );
+                                                            handleRetryPendingTrack(pending.id);
                                                         }}
                                                         disabled={isRetrying}
                                                         className={cn(
-                                                            "p-1.5 rounded-full hover:bg-white/10 transition-all",
+                                                            "p-1.5 rounded-full opacity-0 group-hover:opacity-100 hover:bg-white/10 transition-all",
                                                             isRetrying
-                                                                ? "text-[#ecb200]"
+                                                                ? "text-[#ecb200] opacity-100"
                                                                 : "text-gray-400 hover:text-white"
                                                         )}
-                                                        title="Retry download"
+                                                        title="Download track"
                                                     >
                                                         {isRetrying ? (
                                                             <Loader2 className="w-4 h-4 animate-spin" />
@@ -733,19 +748,16 @@ export default function PlaylistDetailPage() {
                                                             <RefreshCw className="w-4 h-4" />
                                                         )}
                                                     </button>
+
                                                     {/* Remove button */}
                                                     {playlist.isOwner && (
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                handleRemovePendingTrack(
-                                                                    pending.id
-                                                                );
+                                                                handleRemovePendingTrack(pending.id);
                                                             }}
-                                                            disabled={
-                                                                isRemoving
-                                                            }
-                                                            className="p-1.5 rounded-full hover:bg-white/10 text-gray-400 hover:text-red-400 transition-all"
+                                                            disabled={isRemoving}
+                                                            className="p-1.5 rounded-full opacity-0 group-hover:opacity-100 hover:bg-white/10 text-gray-400 hover:text-red-400 transition-all"
                                                             title="Remove from playlist"
                                                         >
                                                             {isRemoving ? (
@@ -755,6 +767,10 @@ export default function PlaylistDetailPage() {
                                                             )}
                                                         </button>
                                                     )}
+
+                                                    <span className="text-sm text-gray-400 w-12 text-right">
+                                                        --:--
+                                                    </span>
                                                 </div>
                                             </div>
                                         );
@@ -766,12 +782,6 @@ export default function PlaylistDetailPage() {
                                         currentTrack?.id ===
                                         playlistItem.track.id;
                                     const isActuallyPlaying = isCurrentlyPlaying && isPlaying;
-                                    // Calculate the index for playback (only count actual tracks)
-                                    const trackIndex =
-                                        playlist.items?.findIndex(
-                                            (i: PlaylistItem) =>
-                                                i.id === playlistItem.id
-                                        ) ?? index;
 
                                     return (
                                         <div
@@ -780,7 +790,7 @@ export default function PlaylistDetailPage() {
                                                 if (isActuallyPlaying) {
                                                     pause();
                                                 } else {
-                                                    handlePlayTrack(trackIndex);
+                                                    handlePlayTrack(index);
                                                 }
                                             }}
                                             className={cn(
@@ -802,7 +812,7 @@ export default function PlaylistDetailPage() {
                                                     {isActuallyPlaying ? (
                                                         <Music className="w-4 h-4 text-[#ecb200] animate-pulse" />
                                                     ) : (
-                                                        trackIndex + 1
+                                                        index + 1
                                                     )}
                                                 </span>
                                                 {isActuallyPlaying ? (

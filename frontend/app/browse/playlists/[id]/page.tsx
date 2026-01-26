@@ -10,6 +10,7 @@ import {
     Loader2,
     ExternalLink,
     Music2,
+    Plus,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useToast } from "@/lib/toast-context";
@@ -88,6 +89,7 @@ export default function BrowsePlaylistDetailPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [isImporting, setIsImporting] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
 
     // Fetch playlist data - route based on source
     useEffect(() => {
@@ -144,13 +146,46 @@ export default function BrowsePlaylistDetailPage() {
         playTracks(tracks, index);
     };
 
-    // Handle import/download
+    // Handle import/download - goes to full import wizard
     const handleImport = () => {
         if (!playlist || isImporting) return;
         setIsImporting(true);
         router.push(
             `/import/spotify?url=${encodeURIComponent(playlist.url)}`
         );
+    };
+
+    // Handle save only (no download) - creates playlist with pending tracks
+    const handleSaveOnly = async () => {
+        if (!playlist || isSaving) return;
+        setIsSaving(true);
+        try {
+            // First get preview data
+            const preview = await api.post<any>("/spotify/preview", { url: playlist.url });
+            
+            // Then start import with skipDownload=true
+            const response = await api.post<{ jobId: string; status: string }>(
+                "/spotify/import",
+                {
+                    spotifyPlaylistId: playlist.id,
+                    url: playlist.url,
+                    playlistName: playlist.title,
+                    preview,
+                    skipDownload: true,
+                }
+            );
+
+            toast.success(`Playlist "${playlist.title}" saved to library`);
+            
+            // Navigate to playlists page after short delay
+            setTimeout(() => {
+                router.push("/playlists");
+            }, 500);
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Failed to save playlist";
+            toast.error(message);
+            setIsSaving(false);
+        }
     };
 
     // Format duration
@@ -229,7 +264,7 @@ export default function BrowsePlaylistDetailPage() {
     return (
         <div className="min-h-screen">
             {/* Hero Section */}
-            <div className="relative bg-gradient-to-b from-[#EF4444]/20 via-[#1a1a1a] to-transparent pt-16 pb-10 px-4 md:px-8">
+            <div className="relative bg-gradient-to-b from-[#ecb200]/20 via-[#1a1a1a] to-transparent pt-16 pb-10 px-4 md:px-8">
                 <div className="flex items-end gap-6">
                     {/* Cover Art */}
                     <div className="w-[140px] h-[140px] md:w-[192px] md:h-[192px] bg-[#282828] rounded shadow-2xl shrink-0 overflow-hidden">
@@ -240,7 +275,7 @@ export default function BrowsePlaylistDetailPage() {
                                 className="w-full h-full object-cover"
                             />
                         ) : (
-                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-[#EF4444]/30 to-[#EF4444]/10">
+                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-[#ecb200]/30 to-[#ecb200]/10">
                                 <Music2 className="w-16 h-16 text-gray-600" />
                             </div>
                         )}
@@ -286,7 +321,7 @@ export default function BrowsePlaylistDetailPage() {
 
             {/* Action Bar */}
             <div className="bg-gradient-to-b from-[#1a1a1a]/60 to-transparent px-4 md:px-8 py-4">
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3">
                     {/* Play All Button */}
                     <button
                         onClick={() =>
@@ -294,24 +329,40 @@ export default function BrowsePlaylistDetailPage() {
                             handlePlay(playlist.tracks[0], 0)
                         }
                         disabled={playlist.tracks.length === 0}
-                        className="w-12 h-12 rounded-full bg-[#EF4444] hover:bg-[#DC2626] hover:scale-105 flex items-center justify-center shadow-lg transition-all disabled:opacity-50 disabled:hover:scale-100"
+                        className="w-10 h-10 rounded-full bg-[#ecb200] hover:bg-[#d4a000] hover:scale-105 flex items-center justify-center shadow-lg transition-all disabled:opacity-50 disabled:hover:scale-100"
                     >
-                        <Play className="w-5 h-5 text-white ml-0.5" fill="white" />
+                        <Play className="w-4 h-4 text-black ml-0.5" fill="black" />
                     </button>
 
-                    {/* Download/Import Button */}
+                    {/* Save to Library Button (no download) */}
+                    <button
+                        onClick={handleSaveOnly}
+                        disabled={isSaving || isImporting}
+                        className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white text-sm font-medium transition-colors disabled:opacity-50"
+                    >
+                        {isSaving ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                            <Plus className="w-4 h-4" />
+                        )}
+                        <span className="hidden sm:inline">
+                            {isSaving ? "Saving..." : "Save to Library"}
+                        </span>
+                    </button>
+
+                    {/* Save & Download Button */}
                     <button
                         onClick={handleImport}
-                        disabled={isImporting}
-                        className="h-12 px-6 rounded-full bg-[#ecb200] hover:bg-[#d4a000] hover:scale-105 flex items-center justify-center gap-2 shadow-lg transition-all disabled:opacity-50 disabled:hover:scale-100"
+                        disabled={isImporting || isSaving}
+                        className="flex items-center gap-2 px-4 py-2 rounded-full bg-[#ecb200] hover:bg-[#d4a000] text-black text-sm font-medium transition-colors disabled:opacity-50"
                     >
                         {isImporting ? (
-                            <Loader2 className="w-5 h-5 text-black animate-spin" />
+                            <Loader2 className="w-4 h-4 animate-spin" />
                         ) : (
-                            <Download className="w-5 h-5 text-black" />
+                            <Download className="w-4 h-4" />
                         )}
-                        <span className="text-black font-medium">
-                            {isImporting ? "Importing..." : "Download Playlist"}
+                        <span className="hidden sm:inline">
+                            {isImporting ? "Importing..." : "Save & Download"}
                         </span>
                     </button>
 
