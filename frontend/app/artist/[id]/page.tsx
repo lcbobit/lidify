@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAudio } from "@/lib/audio-context";
 import { useDownloadContext } from "@/lib/download-context";
@@ -9,6 +9,7 @@ import { useImageColor } from "@/hooks/useImageColor";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { ReleaseSelectionModal } from "@/components/ui/ReleaseSelectionModal";
+import type { Album, Track } from "@/features/artist/types";
 
 // Hooks
 import { useArtistData } from "@/features/artist/hooks/useArtistData";
@@ -58,7 +59,7 @@ export default function ArtistPage() {
     try {
       const albumData = await api.getAlbum(albumId);
       if (albumData.tracks && albumData.tracks.length > 0) {
-        const tracksWithAlbum = albumData.tracks.map((track: any) => ({
+        const tracksWithAlbum = albumData.tracks.map((track: Track) => ({
           ...track,
           album: {
             id: albumData.id,
@@ -76,11 +77,11 @@ export default function ArtistPage() {
   }
 
   // Play track handler (for popular tracks)
-  function handlePlayTrack(track: any) {
+  function handlePlayTrack(track: Track) {
     if (!artist?.topTracks) return;
 
-    const playableTracks = artist.topTracks.filter((t: any) => t.album?.id);
-    const formattedTracks = playableTracks.map((t: any) => ({
+    const playableTracks = artist.topTracks.filter((t: Track) => Boolean(t.album?.id));
+    const formattedTracks = playableTracks.map((t: Track) => ({
       id: t.id,
       title: t.title,
       filePath: t.filePath, // Include filePath to use local streaming
@@ -93,18 +94,18 @@ export default function ArtistPage() {
       duration: t.duration,
     }));
 
-    const startIndex = formattedTracks.findIndex((t: any) => t.id === track.id);
+    const startIndex = formattedTracks.findIndex((t: Track) => t.id === track.id);
     playTracks(formattedTracks, Math.max(0, startIndex));
   }
 
   // Download album handler
-  function handleDownloadAlbum(album: any, e: React.MouseEvent) {
+  function handleDownloadAlbum(album: Album, e: MouseEvent<HTMLButtonElement>) {
     downloadAlbum(album, artist?.name || "", e);
   }
 
   // Search album handler - opens release selection modal
-  const [searchAlbum, setSearchAlbum] = useState<any | null>(null);
-  function handleSearchAlbum(album: any, e: React.MouseEvent) {
+  const [searchAlbum, setSearchAlbum] = useState<Album | null>(null);
+  function handleSearchAlbum(album: Album, e: MouseEvent<HTMLButtonElement>) {
     e.preventDefault();
     e.stopPropagation();
     setSearchAlbum(album);
@@ -213,7 +214,7 @@ export default function ArtistPage() {
               previewPlaying={previewPlaying}
               previewAlbumInfo={previewAlbumInfo}
               noPreviewTracks={noPreviewTracks}
-              onPreview={(track: any, e: React.MouseEvent) =>
+              onPreview={(track: Track, e: MouseEvent<HTMLButtonElement>) =>
                 handlePreview(track, artist.name, e)
               }
             />

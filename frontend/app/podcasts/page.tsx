@@ -11,6 +11,7 @@ import { usePodcastsQuery, useTopPodcastsQuery, queryKeys } from "@/hooks/useQue
 import { useQueryClient } from "@tanstack/react-query";
 import { PodcastSubscriptionList } from "@/features/podcast/components";
 import Image from "next/image";
+import type { Episode, Podcast as PodcastType } from "@/features/podcast/types";
 
 // Always proxy images through the backend for caching and mobile compatibility
 const getProxiedImageUrl = (imageUrl: string | undefined): string | null => {
@@ -18,20 +19,10 @@ const getProxiedImageUrl = (imageUrl: string | undefined): string | null => {
     return api.getCoverArtUrl(imageUrl, 300);
 };
 
-interface Podcast {
-    id: string;
-    title: string;
-    author: string;
-    description?: string;
-    coverUrl: string;
-    autoDownload: boolean;
-    autoRemoveAds: boolean;
-    accessToken?: string;
-    genres?: string[];
-    feedUrl?: string;
-    episodes?: any[];
+type SubscribedPodcast = Omit<PodcastType, "episodes"> & {
+    episodes?: Episode[];
     episodeCount?: number;
-}
+};
 
 interface SearchResult {
     type?: string;
@@ -56,6 +47,31 @@ const isUrl = (text: string): boolean => {
            trimmed.includes('/rss');
 };
 
+function isPodcastSearchResult(value: unknown): value is SearchResult {
+    if (typeof value !== "object" || value === null) return false;
+    const candidate = value as Record<string, unknown>;
+    return (
+        candidate.type === "podcast" &&
+        typeof candidate.id === "number" &&
+        typeof candidate.coverUrl === "string" &&
+        typeof candidate.feedUrl === "string"
+    );
+}
+
+function getErrorMessage(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    if (typeof error === "string") return error;
+    if (
+        typeof error === "object" &&
+        error !== null &&
+        "message" in error &&
+        typeof (error as Record<string, unknown>).message === "string"
+    ) {
+        return (error as { message: string }).message;
+    }
+    return "An unexpected error occurred";
+}
+
 export default function PodcastsPage() {
     const [searchQuery, setSearchQuery] = useState("");
     const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -70,8 +86,9 @@ export default function PodcastsPage() {
     const queryClient = useQueryClient();
 
     // Use React Query hooks
-    const { data: podcasts = [], isLoading: isLoadingPodcasts } =
+    const { data: rawPodcasts = [], isLoading: isLoadingPodcasts } =
         usePodcastsQuery();
+    const podcasts = rawPodcasts as SubscribedPodcast[];
     const { data: topPodcasts = [], isLoading: isLoadingTopPodcasts } =
         useTopPodcastsQuery(12);
 
@@ -124,6 +141,15 @@ export default function PodcastsPage() {
         const start = (currentPage - 1) * itemsPerPage;
         return sortedPodcasts.slice(start, start + itemsPerPage);
     }, [sortedPodcasts, currentPage, itemsPerPage]);
+
+    const subscriptionListPodcasts = useMemo(
+        () =>
+            paginatedPodcasts.map((podcast) => ({
+                ...podcast,
+                episodes: podcast.episodes ?? [],
+            })),
+        [paginatedPodcasts]
+    );
 
     // Reset page when sort changes
     useEffect(() => {
@@ -180,10 +206,10 @@ export default function PodcastsPage() {
                 );
 
                 // Filter for podcasts from the results array
-                const podcastResults =
-                    results?.results?.filter(
-                        (r: any) => r.type === "podcast"
-                    ) || [];
+                const rawResults = Array.isArray(results?.results)
+                    ? results.results
+                    : [];
+                const podcastResults = rawResults.filter(isPodcastSearchResult);
                 setSearchResults(podcastResults);
                 setShowDropdown(podcastResults.length > 0);
             } catch (error) {
@@ -224,7 +250,7 @@ export default function PodcastsPage() {
         }
     };
 
-    const handleSubscribe = async (result: SearchResult | any) => {
+    const handleSubscribe = async (result: SearchResult) => {
         try {
             toast.info(`Subscribing to ${result.name || result.title}...`);
 
@@ -244,9 +270,9 @@ export default function PodcastsPage() {
                 // Navigate to new podcast (React Query will automatically refetch)
                 router.push(`/podcasts/${response.podcast.id}`);
             }
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error("Subscribe error:", error);
-            toast.error(error.message || "Failed to subscribe");
+            toast.error(getErrorMessage(error) || "Failed to subscribe");
         }
     };
 
@@ -261,9 +287,12 @@ export default function PodcastsPage() {
                 setShowDropdown(false);
                 router.push(`/podcasts/${response.podcast.id}`);
             }
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error("Subscribe by URL error:", error);
-            toast.error(error.message || "Failed to add podcast. Is this a valid RSS feed?");
+            toast.error(
+                getErrorMessage(error) ||
+                    "Failed to add podcast. Is this a valid RSS feed?"
+            );
         }
     };
 
@@ -478,7 +507,7 @@ export default function PodcastsPage() {
                         </div>
 
                         <PodcastSubscriptionList
-                            podcasts={paginatedPodcasts as any}
+                            podcasts={subscriptionListPodcasts}
                             adRemovalAvailable={adRemovalAvailable}
                             onUpdateSettings={handleUpdateSettings}
                             onPodcastClick={(id) => router.push(`/podcasts/${id}`)}

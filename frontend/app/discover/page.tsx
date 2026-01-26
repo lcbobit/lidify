@@ -155,7 +155,8 @@ export default function DiscoverPage() {
         loadPreferences();
     }, []);
 
-    // Handle mode change - save preference and reload
+    // Handle mode change - save preference, show cached data if available
+    // User clicks Generate to fetch new data
     const handleModeChange = async (newMode: DiscoveryMode) => {
         if (newMode === mode || loading) return;
         setMode(newMode);
@@ -163,16 +164,16 @@ export default function DiscoverPage() {
         // Save preference (fire and forget)
         api.updateDiscoverConfig({ discoveryMode: newMode }).catch(() => {});
 
-        // Check cache or fetch new data
+        // Check if we have cached data for this setting - show it if available
         const cached = getCachedData(newMode, timeframe, includeLibrary);
         if (cached) {
             setData(cached);
-        } else {
-            handleGenerateWithSettings(newMode, timeframe, includeLibrary);
         }
+        // Don't auto-generate - user will click Generate when ready
     };
 
-    // Handle timeframe change - save preference and reload
+    // Handle timeframe change - save preference, show cached data if available
+    // User clicks Generate to fetch new data
     const handleTimeframeChange = async (newTimeframe: DiscoveryTimeframe) => {
         if (newTimeframe === timeframe || loading) return;
         setTimeframe(newTimeframe);
@@ -180,13 +181,12 @@ export default function DiscoverPage() {
         // Save preference (fire and forget)
         api.updateDiscoverConfig({ discoveryTimeframe: newTimeframe }).catch(() => {});
 
-        // Check cache or fetch new data
+        // Check if we have cached data for this setting - show it if available
         const cached = getCachedData(mode, newTimeframe, includeLibrary);
         if (cached) {
             setData(cached);
-        } else {
-            handleGenerateWithSettings(mode, newTimeframe, includeLibrary);
         }
+        // Don't auto-generate - user will click Generate when ready
     };
 
     // Handle include library toggle - just update setting, don't auto-generate

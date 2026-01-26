@@ -19,6 +19,7 @@ import { AlbumHero } from "@/features/album/components/AlbumHero";
 import { AlbumActionBar } from "@/features/album/components/AlbumActionBar";
 import { TrackList } from "@/features/album/components/TrackList";
 import { SimilarAlbums } from "@/features/album/components/SimilarAlbums";
+import type { Track } from "@/features/album/types";
 
 interface AlbumPageProps {
     params: Promise<{
@@ -81,7 +82,7 @@ export default function AlbumPage({ params }: AlbumPageProps) {
     }
 
     // Event handlers
-    const handlePlayTrack = (track: any, index: number) => {
+    const handlePlayTrack = (track: Track, index: number) => {
         playAlbum(album, index);
     };
 
@@ -95,7 +96,7 @@ export default function AlbumPage({ params }: AlbumPageProps) {
     const handleAddAlbumToPlaylist = () => {
         if (!album?.tracks?.length) return;
         const trackIds = album.tracks
-            .map((track: any) => track.id)
+            .map((track: Track) => track.id)
             .filter(Boolean);
         openPlaylistSelector(trackIds, true);
     };
@@ -177,15 +178,17 @@ export default function AlbumPage({ params }: AlbumPageProps) {
                             album={album}
                             source={source || "discovery"}
                             currentTrackId={currentTrack?.id}
+                            isPlaying={isPlaying}
                             colors={colors}
                             onPlayTrack={handlePlayTrack}
-                            onAddToQueue={(track: any) =>
+                            onPause={pause}
+                            onAddToQueue={(track: Track) =>
                                 addToQueue(track, album)
                             }
                             onAddToPlaylist={handleAddToPlaylist}
                             previewTrack={previewTrack}
                             previewPlaying={previewPlaying}
-                            onPreview={(track: any, e: React.MouseEvent) =>
+                            onPreview={(track: Track, e: React.MouseEvent) =>
                                 handlePreview(
                                     track,
                                     album.artist?.name || "",

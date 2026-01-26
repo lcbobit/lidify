@@ -6,6 +6,30 @@ import { api } from "@/lib/api";
 import Image from "next/image";
 import { GradientSpinner } from "@/components/ui/GradientSpinner";
 
+type ApiErrorResponse = {
+    message?: string;
+    response?: {
+        data?: {
+            error?: string;
+            details?: string;
+        };
+    };
+};
+
+const getErrorMessageFromUnknown = (error: unknown, fallback: string): string => {
+    if (error instanceof Error) return error.message;
+    if (typeof error === "object" && error !== null) {
+        const candidate = error as ApiErrorResponse;
+        return (
+            candidate.response?.data?.error ||
+            candidate.response?.data?.details ||
+            candidate.message ||
+            fallback
+        );
+    }
+    return fallback;
+};
+
 export default function OnboardingPage() {
     const router = useRouter();
     const [step, setStep] = useState(1);
@@ -45,11 +69,6 @@ export default function OnboardingPage() {
         apiKey: "",
         enabled: false,
     });
-    const [audiobookshelf, setAudiobookshelf] = useState({
-        url: "",
-        apiKey: "",
-        enabled: false,
-    });
     const [soulseek, setSoulseek] = useState({
         username: "",
         password: "",
@@ -75,27 +94,22 @@ export default function OnboardingPage() {
 
         setLoading(true);
         try {
-            const response = await api.post<{ token: string; user: any }>(
+            const response = await api.post<{ token?: string }>(
                 "/onboarding/register",
                 { username, password }
             );
-            // Store the JWT token for subsequent API calls
             if (response.token) {
                 api.setToken(response.token);
             }
             setStep(2);
-        } catch (err: any) {
-            // Check if user already exists
-            if (err.message?.includes("already taken")) {
+        } catch (err: unknown) {
+            const message = getErrorMessageFromUnknown(err, "Failed to create account");
+            if (message.toLowerCase().includes("already taken")) {
                 setError(
                     "Username already taken. If this is you, please refresh and continue where you left off."
                 );
             } else {
-                setError(
-                    err.response?.data?.error ||
-                        err.message ||
-                        "Failed to create account"
-                );
+                setError(message);
             }
         } finally {
             setLoading(false);
@@ -103,7 +117,7 @@ export default function OnboardingPage() {
     };
 
     const testConnection = async (
-        type: "lidarr" | "audiobookshelf" | "soulseek"
+        type: "lidarr" | "soulseek"
     ) => {
         setError("");
         setLoading(true);
@@ -118,14 +132,6 @@ export default function OnboardingPage() {
                     url: lidarr.url,
                     apiKey: lidarr.apiKey,
                 });
-            } else if (type === "audiobookshelf") {
-                if (!audiobookshelf.url || !audiobookshelf.apiKey) {
-                    throw new Error("URL and API key are required");
-                }
-                await api.post("/system-settings/test-audiobookshelf", {
-                    url: audiobookshelf.url,
-                    apiKey: audiobookshelf.apiKey,
-                });
             } else if (type === "soulseek") {
                 if (!soulseek.username || !soulseek.password) {
                     throw new Error("Username and password are required");
@@ -136,12 +142,11 @@ export default function OnboardingPage() {
                 });
             }
             setError(`${type} connected successfully!`);
-        } catch (err: any) {
-            const errorMessage =
-                err.response?.data?.error ||
-                err.response?.data?.details ||
-                err.message ||
-                `Failed to connect to ${type}`;
+        } catch (err: unknown) {
+            const errorMessage = getErrorMessageFromUnknown(
+                err,
+                `Failed to connect to ${type}`
+            );
             setError(errorMessage);
         } finally {
             setLoading(false);
@@ -157,7 +162,6 @@ export default function OnboardingPage() {
                 // Save all integration configs
                 await Promise.all([
                     api.post("/onboarding/lidarr", lidarr),
-                    api.post("/onboarding/audiobookshelf", audiobookshelf),
                     api.post("/onboarding/soulseek", soulseek),
                 ]);
                 setStep(3);
@@ -170,9 +174,9 @@ export default function OnboardingPage() {
                 // Redirect to sync page
                 router.push("/sync");
             }
-        } catch (err: any) {
+        } catch (err: unknown) {
             setError(
-                err.response?.data?.error || "Failed to save configuration"
+                getErrorMessageFromUnknown(err, "Failed to save configuration")
             );
         } finally {
             setLoading(false);
@@ -429,56 +433,6 @@ export default function OnboardingPage() {
                                                 }
                                                 onTest={() =>
                                                     testConnection("lidarr")
-                                                }
-                                                loading={loading}
-                                            />
-
-                                            {/* Audiobookshelf */}
-                                            <IntegrationCard
-                                                title="Audiobookshelf"
-                                                description="Audiobook library management"
-                                                localPort="localhost:13378"
-                                                icon={
-                                                    <svg
-                                                        className="w-6 h-6"
-                                                        fill="none"
-                                                        stroke="currentColor"
-                                                        viewBox="0 0 24 24"
-                                                    >
-                                                        <path
-                                                            strokeLinecap="round"
-                                                            strokeLinejoin="round"
-                                                            strokeWidth={2}
-                                                            d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
-                                                        />
-                                                    </svg>
-                                                }
-                                                enabled={audiobookshelf.enabled}
-                                                onToggle={() =>
-                                                    setAudiobookshelf({
-                                                        ...audiobookshelf,
-                                                        enabled:
-                                                            !audiobookshelf.enabled,
-                                                    })
-                                                }
-                                                url={audiobookshelf.url}
-                                                apiKey={audiobookshelf.apiKey}
-                                                onUrlChange={(url) =>
-                                                    setAudiobookshelf({
-                                                        ...audiobookshelf,
-                                                        url,
-                                                    })
-                                                }
-                                                onApiKeyChange={(apiKey) =>
-                                                    setAudiobookshelf({
-                                                        ...audiobookshelf,
-                                                        apiKey,
-                                                    })
-                                                }
-                                                onTest={() =>
-                                                    testConnection(
-                                                        "audiobookshelf"
-                                                    )
                                                 }
                                                 loading={loading}
                                             />
