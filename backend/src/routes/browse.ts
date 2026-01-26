@@ -126,8 +126,26 @@ router.get("/playlists/:id", async (req, res) => {
             return res.status(404).json({ error: "Playlist not found" });
         }
 
+        // Normalize to match Spotify format for frontend compatibility
         res.json({
-            ...playlist,
+            id: playlist.id,
+            title: playlist.title,
+            description: playlist.description,
+            creator: playlist.creator,
+            imageUrl: playlist.imageUrl,
+            trackCount: playlist.trackCount,
+            tracks: playlist.tracks.map(t => ({
+                id: t.deezerId,           // Normalize field name (was deezerId)
+                title: t.title,
+                artist: t.artist,
+                artistId: t.artistId,
+                album: t.album,
+                albumId: t.albumId,
+                durationMs: t.durationMs,
+                previewUrl: t.previewUrl,
+                coverUrl: t.coverUrl,
+            })),
+            isPublic: playlist.isPublic,
             source: "deezer",
             url: `https://www.deezer.com/playlist/${id}`,
         });
@@ -247,8 +265,26 @@ router.get("/radios/:id", async (req, res) => {
             return res.status(404).json({ error: "Radio station not found" });
         }
 
+        // Normalize track IDs for frontend compatibility
         res.json({
-            ...radioPlaylist,
+            id: radioPlaylist.id,
+            title: radioPlaylist.title,
+            description: radioPlaylist.description,
+            creator: radioPlaylist.creator,
+            imageUrl: radioPlaylist.imageUrl,
+            trackCount: radioPlaylist.trackCount,
+            tracks: radioPlaylist.tracks.map(t => ({
+                id: t.deezerId,           // Normalize field name (was deezerId)
+                title: t.title,
+                artist: t.artist,
+                artistId: t.artistId,
+                album: t.album,
+                albumId: t.albumId,
+                durationMs: t.durationMs,
+                previewUrl: t.previewUrl,
+                coverUrl: t.coverUrl,
+            })),
+            isPublic: radioPlaylist.isPublic,
             source: "deezer",
             type: "radio",
         });

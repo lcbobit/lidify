@@ -133,15 +133,8 @@ router.get("/", async (req, res) => {
             type === "all" || type === "tracks"
                 ? searchService.searchTracks({ query, limit: searchLimit })
                 : Promise.resolve([]);
-        const audiobookSearchPromise =
-            type === "all" || type === "audiobooks"
-                ? audiobookshelfService
-                      .searchAudiobooks(query)
-                      .catch((error) => {
-                          console.error("Audiobook search error:", error);
-                          return [];
-                      })
-                : Promise.resolve([]);
+        // Audiobook search disabled - feature hidden
+        const audiobookSearchPromise = Promise.resolve([]);
         const podcastSearchPromise =
             type === "all" || type === "podcasts"
                 ? audiobookshelfService.getAllPodcasts().catch((error) => {

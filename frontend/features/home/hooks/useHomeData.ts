@@ -13,7 +13,6 @@ import type {
     Artist,
     ListenedItem,
     Podcast,
-    Audiobook,
     Mix,
     PopularArtist,
 } from "../types";
@@ -24,7 +23,6 @@ import {
     useMixesQuery,
     usePopularArtistsQuery,
     useTopPodcastsQuery,
-    useAudiobooksQuery,
     useRefreshMixesMutation,
     useBrowseAllQuery,
     queryKeys,
@@ -50,7 +48,6 @@ export interface UseHomeDataReturn {
     mixes: Mix[];
     popularArtists: PopularArtist[];
     recentPodcasts: Podcast[];
-    recentAudiobooks: Audiobook[];
     featuredPlaylists: PlaylistPreview[];
 
     // Loading states
@@ -72,7 +69,6 @@ export interface UseHomeDataReturn {
  * 4. Mixes (Made For You)
  * 5. Popular artists
  * 6. Recent podcasts
- * 7. Recent audiobooks
  *
  * @returns {UseHomeDataReturn} All home page data and loading states
  */
@@ -117,8 +113,6 @@ export function useHomeData(): UseHomeDataReturn {
         usePopularArtistsQuery(20);
     const { data: podcastsData, isLoading: isLoadingPodcasts } =
         useTopPodcastsQuery(10);
-    const { data: audiobooksData, isLoading: isLoadingAudiobooks } =
-        useAudiobooksQuery();
     const { data: browseData, isLoading: isBrowseLoading } =
         useBrowseAllQuery();
 
@@ -150,8 +144,7 @@ export function useHomeData(): UseHomeDataReturn {
         isLoadingRecommended ||
         isLoadingMixes ||
         isLoadingPopular ||
-        isLoadingPodcasts ||
-        isLoadingAudiobooks;
+        isLoadingPodcasts;
 
     return {
         recentlyListened: items,
@@ -161,9 +154,6 @@ export function useHomeData(): UseHomeDataReturn {
         popularArtists: popularData?.artists || [],
         recentPodcasts: Array.isArray(podcastsData)
             ? podcastsData.slice(0, 10)
-            : [],
-        recentAudiobooks: Array.isArray(audiobooksData)
-            ? audiobooksData.slice(0, 10)
             : [],
         featuredPlaylists: browseData?.playlists || [],
         isLoading,

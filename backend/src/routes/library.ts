@@ -1613,11 +1613,23 @@ router.get("/artists/:id", async (req, res) => {
                 // Collect non-library tracks that need cover fetching
                 const tracksNeedingCovers: Array<{ index: number; albumTitle: string; trackTitle?: string }> = [];
 
+                // Normalize title for matching - remove punctuation and extra whitespace
+                const normalizeTitle = (title: string): string => {
+                    return title
+                        .toLowerCase()
+                        // Remove all types of apostrophes/quotes (straight, curly, backtick)
+                        .replace(/[\u0027\u0060\u2018\u2019\u201B\u2032\u0092]/g, "")
+                        .replace(/[^\w\s]/g, " ") // Replace other punctuation with spaces
+                        .replace(/\s+/g, " ") // Collapse multiple spaces
+                        .trim();
+                };
+
                 for (let i = 0; i < lastfmTopTracks.length; i++) {
                     const lfmTrack = lastfmTopTracks[i];
-                    // Try to find matching track in library
+                    // Try to find matching track in library (normalized comparison)
+                    const lfmTitleNorm = normalizeTitle(lfmTrack.name);
                     const matchedTrack = allTracks.find(
-                        (t) => t.title.toLowerCase() === lfmTrack.name.toLowerCase()
+                        (t) => normalizeTitle(t.title) === lfmTitleNorm
                     );
 
                     if (matchedTrack) {
@@ -3254,9 +3266,11 @@ router.post("/youtube/match-batch", async (req, res) => {
 
         // Pre-fetch stream URLs for matched tracks
         // First 3 are awaited (so user can click immediately), rest run in background
+        // Use 3-hour max age so URLs older than 3h get refreshed (avoids 403s at playback)
         const matchedResults = results.filter(r => r.match !== null);
         const immediateCount = Math.min(3, matchedResults.length);
-        const backgroundCount = Math.min(10, matchedResults.length) - immediateCount;
+        const backgroundCount = matchedResults.length - immediateCount; // All remaining tracks
+        const PREFETCH_MAX_AGE_MS = 3 * 60 * 60 * 1000; // 3 hours
         
         // Prefetch first 3 BEFORE responding (parallel)
         if (immediateCount > 0) {
@@ -3265,7 +3279,7 @@ router.post("/youtube/match-batch", async (req, res) => {
             await Promise.all(
                 immediateIds.map(async (videoId, idx) => {
                     try {
-                        await youtubeMusicService.getStreamUrl(videoId);
+                        await youtubeMusicService.getStreamUrl(videoId, PREFETCH_MAX_AGE_MS);
                         console.log(`[YouTube] Pre-fetched stream URL ${idx + 1}/${immediateCount}: ${videoId} (immediate)`);
                     } catch (err: any) {
                         console.warn(`[YouTube] Failed to pre-fetch stream URL for ${videoId}:`, err.message);
@@ -3274,22 +3288,27 @@ router.post("/youtube/match-batch", async (req, res) => {
             );
         }
 
-        // Prefetch remaining 7 in background after response
+        // Prefetch ALL remaining in background after response (parallel with concurrency limit)
         if (backgroundCount > 0) {
-            const backgroundIds = matchedResults.slice(immediateCount, immediateCount + backgroundCount).map(r => r.match.videoId);
+            const backgroundIds = matchedResults.slice(immediateCount).map(r => r.match.videoId);
             // Don't await - let this run in background
             (async () => {
                 console.log(`[YouTube] Pre-fetching ${backgroundCount} more stream URLs (background)...`);
-                await Promise.all(
-                    backgroundIds.map(async (videoId, idx) => {
-                        try {
-                            await youtubeMusicService.getStreamUrl(videoId);
-                            console.log(`[YouTube] Pre-fetched stream URL ${immediateCount + idx + 1}/${immediateCount + backgroundCount}: ${videoId}`);
-                        } catch (err: any) {
-                            console.warn(`[YouTube] Failed to pre-fetch stream URL for ${videoId}:`, err.message);
-                        }
-                    })
-                );
+                // Process in chunks of 5 to avoid overwhelming yt-dlp
+                const CHUNK_SIZE = 5;
+                for (let i = 0; i < backgroundIds.length; i += CHUNK_SIZE) {
+                    const chunk = backgroundIds.slice(i, i + CHUNK_SIZE);
+                    await Promise.all(
+                        chunk.map(async (videoId, idx) => {
+                            try {
+                                await youtubeMusicService.getStreamUrl(videoId, PREFETCH_MAX_AGE_MS);
+                                console.log(`[YouTube] Pre-fetched stream URL ${immediateCount + i + idx + 1}/${immediateCount + backgroundCount}: ${videoId}`);
+                            } catch (err: any) {
+                                console.warn(`[YouTube] Failed to pre-fetch stream URL for ${videoId}:`, err.message);
+                            }
+                        })
+                    );
+                }
                 console.log(`[YouTube] Stream URL pre-fetch complete`);
             })();
         }
@@ -3320,23 +3339,42 @@ router.get("/youtube/stream/:videoId", async (req, res) => {
 
         console.log(`[YouTube] Stream request for ${videoId}`);
 
+        // Helper to fetch stream with given URL info
+        const fetchStream = async (streamInfo: { url: string; format: string }) => {
+            const contentType = streamInfo.format === "m4a" ? "audio/mp4" : "audio/webm";
+            
+            const response = await axios.get(streamInfo.url, {
+                responseType: "stream",
+                headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "*/*",
+                    "Accept-Encoding": "identity", // Don't compress - we're proxying
+                    "Range": req.headers.range || "bytes=0-", // Forward range header for seeking
+                },
+                timeout: 30000,
+            });
+            
+            return { response, contentType };
+        };
+
         // Get stream URL (cached)
-        const streamInfo = await youtubeMusicService.getStreamUrl(videoId);
+        let streamInfo = await youtubeMusicService.getStreamUrl(videoId);
+        let response;
+        let contentType;
 
-        // Determine content type based on format
-        const contentType = streamInfo.format === "m4a" ? "audio/mp4" : "audio/webm";
-
-        // Fetch the stream from YouTube and proxy to client
-        const response = await axios.get(streamInfo.url, {
-            responseType: "stream",
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "*/*",
-                "Accept-Encoding": "identity", // Don't compress - we're proxying
-                "Range": req.headers.range || "bytes=0-", // Forward range header for seeking
-            },
-            timeout: 30000,
-        });
+        try {
+            ({ response, contentType } = await fetchStream(streamInfo));
+        } catch (fetchError: any) {
+            // If 403 (expired URL), invalidate cache and retry with fresh URL
+            if (fetchError.response?.status === 403) {
+                console.log(`[YouTube] Stream URL expired for ${videoId}, fetching fresh URL...`);
+                await youtubeMusicService.invalidateStreamUrl(videoId);
+                streamInfo = await youtubeMusicService.getStreamUrl(videoId);
+                ({ response, contentType } = await fetchStream(streamInfo));
+            } else {
+                throw fetchError;
+            }
+        }
 
         // Forward relevant headers
         res.setHeader("Content-Type", contentType);

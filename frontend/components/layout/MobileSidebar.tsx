@@ -152,21 +152,6 @@ export function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
                         </Link>
 
                         <Link
-                            href="/audiobooks"
-                            className={cn(
-                                "flex items-center gap-3 px-3 py-3 rounded-lg transition-colors",
-                                pathname === "/audiobooks"
-                                    ? "bg-white/10 text-white"
-                                    : "text-gray-400 hover:text-white hover:bg-white/5"
-                            )}
-                        >
-                            <Headphones className="w-5 h-5" />
-                            <span className="text-[15px] font-medium">
-                                Audiobooks
-                            </span>
-                        </Link>
-
-                        <Link
                             href="/podcasts"
                             className={cn(
                                 "flex items-center gap-3 px-3 py-3 rounded-lg transition-colors",

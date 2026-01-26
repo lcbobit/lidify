@@ -22,7 +22,7 @@ import { AccountSection } from "@/features/settings/components/sections/AccountS
 import { PlaybackSection } from "@/features/settings/components/sections/PlaybackSection";
 import { DownloadPreferencesSection } from "@/features/settings/components/sections/DownloadPreferencesSection";
 import { LidarrSection } from "@/features/settings/components/sections/LidarrSection";
-import { AudiobookshelfSection } from "@/features/settings/components/sections/AudiobookshelfSection";
+
 import { SoulseekSection } from "@/features/settings/components/sections/SoulseekSection";
 import { AIServicesSection } from "@/features/settings/components/sections/AIServicesSection";
 import { StoragePathsSection } from "@/features/settings/components/sections/StoragePathsSection";
@@ -37,7 +37,7 @@ const sidebarItems: SidebarItem[] = [
     { id: "playback", label: "Playback" },
     { id: "download-preferences", label: "Download Preferences", adminOnly: true },
     { id: "lidarr", label: "Download Services", adminOnly: true },
-    { id: "audiobookshelf", label: "Media Servers", adminOnly: true },
+
     { id: "soulseek", label: "P2P Networks", adminOnly: true },
     { id: "ai-services", label: "Artwork", adminOnly: true },
     { id: "storage", label: "Storage", adminOnly: true },
@@ -173,14 +173,6 @@ export default function SettingsPage() {
                             onUpdate={updateSystemSettings}
                             onTest={handleTestService}
                             isTesting={testingServices.lidarr || false}
-                        />
-
-                        {/* Media Servers - Audiobookshelf */}
-                        <AudiobookshelfSection
-                            settings={systemSettings}
-                            onUpdate={updateSystemSettings}
-                            onTest={handleTestService}
-                            isTesting={testingServices.audiobookshelf || false}
                         />
 
                         {/* P2P Networks - Soulseek */}

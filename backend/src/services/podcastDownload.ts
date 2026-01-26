@@ -140,11 +140,15 @@ export async function getCachedFilePath(episodeId: string): Promise<string | nul
 /**
  * Start a background download for an episode
  * Returns immediately, download happens asynchronously
+ * 
+ * @param forceAdRemoval - If true, run ad removal after download completes
+ *                         regardless of subscription settings (for manual requests)
  */
 export function downloadInBackground(
     episodeId: string, 
     audioUrl: string,
-    userId: string
+    userId: string,
+    forceAdRemoval: boolean = false
 ): void {
     // Skip if already downloading
     if (downloadingEpisodes.has(episodeId)) {
@@ -156,7 +160,7 @@ export function downloadInBackground(
     downloadingEpisodes.add(episodeId);
     
     // Start download in background (don't await)
-    performDownload(episodeId, audioUrl, userId)
+    performDownload(episodeId, audioUrl, userId, 1, forceAdRemoval)
         .catch(err => {
             console.error(`[PODCAST-DL] Background download failed for ${episodeId}:`, err.message);
         })
@@ -167,12 +171,16 @@ export function downloadInBackground(
 
 /**
  * Perform the actual download with retry support
+ * 
+ * @param forceAdRemoval - If true, run ad removal after download completes
+ *                         regardless of subscription settings
  */
 async function performDownload(
     episodeId: string, 
     audioUrl: string,
     userId: string,
-    attempt: number = 1
+    attempt: number = 1,
+    forceAdRemoval: boolean = false
 ): Promise<void> {
     const maxAttempts = 3;
     console.log(`[PODCAST-DL] Starting background download for episode ${episodeId} (attempt ${attempt}/${maxAttempts})`);
@@ -353,33 +361,39 @@ async function performDownload(
         // Enforce per-podcast limit (cleanup oldest if over limit)
         await enforcePerPodcastLimit(episodeId);
 
-        // Check if user has autoRemoveAds enabled and trigger ad removal
+        // Check if ad removal should run (forceAdRemoval from manual request OR subscription setting)
         try {
-            const episode = await prisma.podcastEpisode.findUnique({
-                where: { id: episodeId },
-                select: { podcastId: true },
-            });
-
-            if (episode) {
-                const subscription = await prisma.podcastSubscription.findUnique({
-                    where: {
-                        userId_podcastId: { userId, podcastId: episode.podcastId },
-                    },
+            let shouldRemoveAds = forceAdRemoval;
+            
+            if (!shouldRemoveAds) {
+                // Check subscription setting
+                const episode = await prisma.podcastEpisode.findUnique({
+                    where: { id: episodeId },
+                    select: { podcastId: true },
                 });
 
-                if (subscription?.autoRemoveAds) {
-                    const { processDownloadedEpisode } = await import("./podcastAdRemoval");
-                    console.log(`[PODCAST-DL] Auto-removing ads for episode ${episodeId}`);
-
-                    // Run ad removal in background (don't await)
-                    processDownloadedEpisode(episodeId, finalPath, userId).catch(err => {
-                        console.error(`[PODCAST-DL] Auto ad removal failed for ${episodeId}:`, err.message);
+                if (episode) {
+                    const subscription = await prisma.podcastSubscription.findUnique({
+                        where: {
+                            userId_podcastId: { userId, podcastId: episode.podcastId },
+                        },
                     });
+                    shouldRemoveAds = subscription?.autoRemoveAds ?? false;
                 }
+            }
+
+            if (shouldRemoveAds) {
+                const { processDownloadedEpisode } = await import("./podcastAdRemoval");
+                console.log(`[PODCAST-DL] ${forceAdRemoval ? "Manual" : "Auto"}-removing ads for episode ${episodeId}`);
+
+                // Run ad removal in background (don't await)
+                processDownloadedEpisode(episodeId, finalPath, userId).catch(err => {
+                    console.error(`[PODCAST-DL] Ad removal failed for ${episodeId}:`, err.message);
+                });
             }
         } catch (err: any) {
             // Non-fatal - ad removal failure shouldn't fail the download
-            console.error(`[PODCAST-DL] Error checking autoRemoveAds:`, err.message);
+            console.error(`[PODCAST-DL] Error checking ad removal:`, err.message);
         }
 
         // Clean up progress tracking
@@ -394,7 +408,7 @@ async function performDownload(
         if (attempt < maxAttempts) {
             console.log(`[PODCAST-DL] Download failed (attempt ${attempt}), retrying in 5s: ${error.message}`);
             await new Promise(resolve => setTimeout(resolve, 5000));
-            return performDownload(episodeId, audioUrl, userId, attempt + 1);
+            return performDownload(episodeId, audioUrl, userId, attempt + 1, forceAdRemoval);
         }
         
         throw error;

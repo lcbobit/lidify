@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
@@ -12,7 +12,7 @@ import { useAudio } from "@/lib/audio-context";
 import { Play, Music } from "lucide-react";
 import { GradientSpinner } from "@/components/ui/GradientSpinner";
 import { api } from "@/lib/api";
-import { cn, isLocalUrl } from "@/utils/cn";
+import { cn } from "@/utils/cn";
 
 // Lidify brand yellow
 const LIDIFY_YELLOW = "#ecb200";
@@ -32,7 +32,6 @@ interface Playlist {
     trackCount?: number;
     items?: PlaylistItem[];
     isOwner?: boolean;
-    isHidden?: boolean;
     user?: {
         username: string;
     };
@@ -127,48 +126,24 @@ function PlaylistCard({
     playlist,
     index,
     onPlay,
-    onToggleHide,
-    isHiddenView = false,
 }: {
     playlist: Playlist;
     index: number;
     onPlay: (playlistId: string) => void;
-    onToggleHide: (playlistId: string, hide: boolean) => void;
-    isHiddenView?: boolean;
 }) {
     const isShared = playlist.isOwner === false;
-    const [isHiding, setIsHiding] = useState(false);
-
-    const handleToggleHide = async (e: React.MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsHiding(true);
-        try {
-            await onToggleHide(playlist.id, !playlist.isHidden);
-        } finally {
-            setIsHiding(false);
-        }
-    };
 
     return (
         <Link href={`/playlist/${playlist.id}`}>
             <div
-                className={cn(
-                    "group cursor-pointer p-3 rounded-md transition-colors hover:bg-white/5",
-                    isHiddenView && "opacity-60 hover:opacity-100"
-                )}
+                className="group cursor-pointer p-3 rounded-md transition-colors hover:bg-white/5"
                 data-tv-card
                 data-tv-card-index={index}
                 tabIndex={0}
             >
                 {/* Cover Image */}
                 <div className="relative aspect-square mb-3 rounded-md overflow-hidden bg-[#282828] shadow-lg">
-                    <PlaylistMosaic
-                        items={playlist.items}
-                        greyed={isHiddenView}
-                    />
-
-{/* Hide/Unhide button disabled - feature removed */}
+                    <PlaylistMosaic items={playlist.items} />
 
                     {/* Play button overlay */}
                     <button
@@ -191,12 +166,7 @@ function PlaylistCard({
                 </div>
 
                 {/* Title and info */}
-                <h3
-                    className={cn(
-                        "text-sm font-semibold truncate",
-                        isHiddenView ? "text-gray-400" : "text-white"
-                    )}
-                >
+                <h3 className="text-sm font-semibold truncate text-white">
                     {playlist.name}
                 </h3>
                 <p className="text-xs text-gray-400 mt-0.5 truncate">
@@ -218,26 +188,9 @@ export default function PlaylistsPage() {
     const { isAuthenticated } = useAuth();
     const { playTracks } = useAudio();
     const queryClient = useQueryClient();
-    const [showHiddenTab, setShowHiddenTab] = useState(false);
 
     // Use React Query hook for playlists
     const { data: playlists = [], isLoading } = usePlaylistsQuery();
-
-    // Separate visible and hidden playlists
-    const { visiblePlaylists, hiddenPlaylists } = useMemo(() => {
-        const visible: Playlist[] = [];
-        const hidden: Playlist[] = [];
-
-        playlists.forEach((p: Playlist) => {
-            if (p.isHidden) {
-                hidden.push(p);
-            } else {
-                visible.push(p);
-            }
-        });
-
-        return { visiblePlaylists: visible, hiddenPlaylists: hidden };
-    }, [playlists]);
 
     // Listen for playlist events and invalidate cache
     useEffect(() => {
@@ -282,20 +235,6 @@ export default function PlaylistsPage() {
         }
     };
 
-    const handleToggleHide = async (playlistId: string, hide: boolean) => {
-        try {
-            if (hide) {
-                await api.hidePlaylist(playlistId);
-            } else {
-                await api.unhidePlaylist(playlistId);
-            }
-            // Invalidate and refetch playlists
-            queryClient.invalidateQueries({ queryKey: queryKeys.playlists() });
-        } catch (error) {
-            console.error("Failed to toggle playlist visibility:", error);
-        }
-    };
-
     if (isLoading) {
         return (
             <div className="flex items-center justify-center min-h-screen">
@@ -303,10 +242,6 @@ export default function PlaylistsPage() {
             </div>
         );
     }
-
-    const displayedPlaylists = showHiddenTab
-        ? hiddenPlaylists
-        : visiblePlaylists;
 
     return (
         <div className="min-h-screen relative">
@@ -330,8 +265,8 @@ export default function PlaylistsPage() {
                             Playlists
                         </h1>
                         <p className="text-sm text-gray-400 mt-0.5">
-                            {visiblePlaylists.length}{" "}
-                            {visiblePlaylists.length === 1
+                            {playlists.length}{" "}
+                            {playlists.length === 1
                                 ? "playlist"
                                 : "playlists"}
                         </p>
@@ -345,38 +280,24 @@ export default function PlaylistsPage() {
                         >
                             Browse Playlists
                         </Link>
-
-{/* Hidden Playlists Toggle - feature disabled */}
                     </div>
                 </div>
             </div>
 
             {/* Content */}
             <div className="relative px-4 pb-24">
-                {/* Hidden playlists notice */}
-                {showHiddenTab && (
-                    <div className="mx-2 mb-4 px-4 py-3 bg-white/5 rounded-lg">
-                        <p className="text-sm text-gray-400">
-                            Hidden playlists won&apos;t appear in your library. Hover
-                            and click the eye icon to restore.
-                        </p>
-                    </div>
-                )}
-
-                {displayedPlaylists.length > 0 ? (
+                {playlists.length > 0 ? (
                     <div
                         data-tv-section="playlists"
                         className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-2"
                     >
-                        {displayedPlaylists.map(
+                        {playlists.map(
                             (playlist: Playlist, index: number) => (
                                 <PlaylistCard
                                     key={playlist.id}
                                     playlist={playlist}
                                     index={index}
                                     onPlay={handlePlayPlaylist}
-                                    onToggleHide={handleToggleHide}
-                                    isHiddenView={showHiddenTab}
                                 />
                             )
                         )}
@@ -387,23 +308,17 @@ export default function PlaylistsPage() {
                             <Music className="w-8 h-8 text-gray-500" />
                         </div>
                         <h2 className="text-lg font-semibold text-white mb-1">
-                            {showHiddenTab
-                                ? "No hidden playlists"
-                                : "No playlists yet"}
+                            No playlists yet
                         </h2>
                         <p className="text-sm text-gray-400 max-w-sm">
-                            {showHiddenTab
-                                ? "You haven't hidden any playlists"
-                                : "Create your first playlist by adding songs from albums or artists"}
+                            Create your first playlist by adding songs from albums or artists
                         </p>
-                        {!showHiddenTab && (
-                            <Link
-                                href="/browse/playlists"
-                                className="mt-6 px-5 py-2.5 rounded-full text-sm font-medium bg-[#ecb200] text-black hover:brightness-110 transition-all"
-                            >
-                                Browse Playlists
-                            </Link>
-                        )}
+                        <Link
+                            href="/browse/playlists"
+                            className="mt-6 px-5 py-2.5 rounded-full text-sm font-medium bg-[#ecb200] text-black hover:brightness-110 transition-all"
+                        >
+                            Browse Playlists
+                        </Link>
                     </div>
                 )}
             </div>

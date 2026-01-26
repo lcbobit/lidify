@@ -135,9 +135,6 @@ export function CacheSection({ settings, onUpdate }: CacheSectionProps) {
         setSyncing(true);
         setError(null);
         try {
-            if (settings.autoEnrichMetadata) {
-                await api.post("/audiobooks/sync", {});
-            }
             await api.post("/podcasts/sync-covers", {});
             await api.startLibraryEnrichment();
             refreshNotifications();

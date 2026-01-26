@@ -23,7 +23,6 @@ const navigation = [
     { name: "Library", href: "/library" },
     { name: "Radio", href: "/radio" },
     { name: "Discovery", href: "/discover" },
-    { name: "Audiobooks", href: "/audiobooks" },
     { name: "Podcasts", href: "/podcasts" },
     { name: "Browse", href: "/browse/playlists", badge: "Beta" },
 ] as const;
@@ -32,7 +31,6 @@ interface Playlist {
     id: string;
     name: string;
     trackCount: number;
-    isHidden?: boolean;
     isOwner?: boolean;
     user?: { username: string };
 }
@@ -404,10 +402,8 @@ export function Sidebar() {
                                 </div>
                             ))}
                         </>
-                    ) : playlists.filter((p) => !p.isHidden).length > 0 ? (
-                        playlists
-                            .filter((p) => !p.isHidden) // Filter out hidden playlists
-                            .map((playlist) => {
+                    ) : playlists.length > 0 ? (
+                        playlists.map((playlist) => {
                                 const isActive =
                                     pathname === `/playlist/${playlist.id}`;
                                 const isShared = playlist.isOwner === false;

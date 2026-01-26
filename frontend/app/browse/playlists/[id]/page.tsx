@@ -354,14 +354,20 @@ export default function BrowsePlaylistDetailPage() {
                                 return (
                                     <div
                                         key={track.id}
-                                        onClick={() => handlePlay(track, index)}
+                                        onClick={() => {
+                                            if (isThisTrackPlaying) {
+                                                pause();
+                                            } else {
+                                                handlePlay(track, index);
+                                            }
+                                        }}
                                         className={cn(
                                             "grid grid-cols-[40px_1fr_auto] md:grid-cols-[40px_minmax(200px,4fr)_minmax(100px,1fr)_80px] gap-4 px-4 py-2 rounded-md transition-colors group",
                                             "hover:bg-white/5 cursor-pointer",
                                             isCurrentlyPlaying && "bg-white/10"
                                         )}
                                     >
-                                        {/* Track Number / Play Icon */}
+                                        {/* Track Number / Play or Pause Icon */}
                                         <div className="flex items-center justify-center">
                                             <span
                                                 className={cn(
@@ -377,7 +383,11 @@ export default function BrowsePlaylistDetailPage() {
                                                     index + 1
                                                 )}
                                             </span>
-                                            <Play className="w-4 h-4 text-white hidden group-hover:block" />
+                                            {isThisTrackPlaying ? (
+                                                <Pause className="w-4 h-4 text-white hidden group-hover:block" />
+                                            ) : (
+                                                <Play className="w-4 h-4 text-white hidden group-hover:block" />
+                                            )}
                                         </div>
 
                                         {/* Title + Artist */}

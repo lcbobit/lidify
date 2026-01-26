@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { Music, Disc, BookOpen } from "lucide-react";
+import { Music, Disc } from "lucide-react";
 import { api } from "@/lib/api";
 import { HorizontalCarousel, CarouselItem } from "@/components/ui/HorizontalCarousel";
 import { memo } from "react";
@@ -30,10 +30,6 @@ const getArtistImageSrc = (coverArt: string | undefined) => {
 };
 
 const getImageForItem = (item: ContinueListeningItem) => {
-    if (item.type === "audiobook") {
-        return api.getCoverArtUrl(`/audiobooks/${item.id}/cover`, 300);
-    }
-
     if (item.coverArt) {
         return getArtistImageSrc(item.coverArt);
     }
@@ -53,12 +49,6 @@ const getDescriptionLabel = (item: ContinueListeningItem) => {
         return "Podcast";
     }
 
-    if (item.type === "audiobook") {
-        return item.author && item.author.trim().length > 0
-            ? item.author
-            : "Audiobook";
-    }
-
     return "Artist";
 };
 
@@ -72,15 +62,12 @@ const ContinueListeningCard = memo(function ContinueListeningCard({
     index 
 }: ContinueListeningCardProps) {
     const isPodcast = item.type === "podcast";
-    const isAudiobook = item.type === "audiobook";
     const imageSrc = getImageForItem(item);
     const href = isPodcast
         ? `/podcasts/${item.id}`
-        : isAudiobook
-        ? `/audiobooks/${item.id}`
         : `/artist/${item.id}`;
     const hasProgress =
-        (isPodcast || isAudiobook) &&
+        isPodcast &&
         item.progress &&
         item.progress > 0;
 
@@ -106,8 +93,6 @@ const ContinueListeningCard = memo(function ContinueListeningCard({
                             />
                         ) : isPodcast ? (
                             <Disc className="w-10 h-10 text-gray-600" />
-                        ) : isAudiobook ? (
-                            <BookOpen className="w-10 h-10 text-gray-600" />
                         ) : (
                             <Music className="w-10 h-10 text-gray-600" />
                         )}
@@ -137,9 +122,12 @@ const ContinueListeningCard = memo(function ContinueListeningCard({
 });
 
 export function ContinueListening({ items }: ContinueListeningProps) {
+    // Filter out audiobooks (feature hidden)
+    const filteredItems = items.filter(item => item.type !== "audiobook");
+    
     return (
         <HorizontalCarousel>
-            {items.map((item, index) => (
+            {filteredItems.map((item, index) => (
                 <ContinueListeningCard 
                     key={`${item.type}-${item.id}`} 
                     item={item} 

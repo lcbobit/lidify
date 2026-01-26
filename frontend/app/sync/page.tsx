@@ -42,16 +42,6 @@ export default function SyncPage() {
                             setProgress(90);
                             setCompletedSteps(["tracks", "library", "albums", "indexes"]);
 
-                            // Trigger post-scan operations
-                            try {
-                                // 1. Audiobook sync
-                                setMessage("Syncing audiobooks...");
-                                await api.post("/audiobooks/sync");
-                            } catch (audiobookError) {
-                                console.error("Audiobook sync failed:", audiobookError);
-                                // Don't fail the whole flow if audiobook sync fails
-                            }
-
                             if (!mounted) return;
                             setProgress(95);
 

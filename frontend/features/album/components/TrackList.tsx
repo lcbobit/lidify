@@ -9,8 +9,10 @@ interface TrackListProps {
   album: Album;
   source: AlbumSource;
   currentTrackId: string | undefined;
+  isPlaying?: boolean;
   colors: any;
   onPlayTrack: (track: Track, index: number) => void;
+  onPause?: () => void;
   onAddToQueue: (track: Track) => void;
   onAddToPlaylist: (trackId: string) => void;
   previewTrack: string | null;
@@ -24,10 +26,12 @@ interface TrackRowProps {
   displayNumber: number;
   album: Album;
   isOwned: boolean;
-  isPlaying: boolean;
+  isCurrentTrack: boolean;
+  isActuallyPlaying: boolean; // Current track AND audio is playing (not paused)
   isPreviewPlaying: boolean;
   colors: any;
   onPlayTrack: (track: Track, index: number) => void;
+  onPause?: () => void;
   onAddToQueue: (track: Track) => void;
   onAddToPlaylist: (trackId: string) => void;
   onPreview: (track: Track, e: React.MouseEvent) => void;
@@ -116,10 +120,12 @@ const TrackRow = memo(function TrackRow({
   displayNumber,
   album,
   isOwned,
-  isPlaying,
+  isCurrentTrack,
+  isActuallyPlaying,
   isPreviewPlaying,
   colors,
   onPlayTrack,
+  onPause,
   onAddToQueue,
   onAddToPlaylist,
   onPreview,
@@ -144,14 +150,22 @@ const TrackRow = memo(function TrackRow({
     onPlayTrack(track, index);
   }, [track, index, onPlayTrack]);
 
+  const handlePause = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    onPause?.();
+  }, [onPause]);
+
   const handleRowClick = useCallback((e: React.MouseEvent) => {
     // For unowned tracks, play preview instead of local file
     if (isPreviewOnly) {
       onPreview(track, e);
+    } else if (isActuallyPlaying) {
+      // If this track is playing, clicking pauses it
+      onPause?.();
     } else {
       onPlayTrack(track, index);
     }
-  }, [isPreviewOnly, track, index, onPlayTrack, onPreview]);
+  }, [isPreviewOnly, isActuallyPlaying, track, index, onPlayTrack, onPreview, onPause]);
 
   return (
     <div
@@ -161,20 +175,17 @@ const TrackRow = memo(function TrackRow({
       tabIndex={0}
       className={cn(
         'group relative flex items-center gap-3 md:gap-4 px-3 md:px-4 py-3 cursor-pointer',
-        isPlaying && 'bg-[#1a1a1a] border-l-2',
+        isCurrentTrack && 'bg-[#1a1a1a]',
         isPreviewOnly && 'opacity-70 hover:opacity-90'
       )}
-      style={
-        isPlaying
-          ? { borderLeftColor: colors?.vibrant || '#a855f7' }
-          : undefined
-      }
       onClick={handleRowClick}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
           if (isPreviewOnly) {
             onPreview(track, e as unknown as React.MouseEvent);
+          } else if (isActuallyPlaying) {
+            onPause?.();
           } else {
             handlePlayTrack();
           }
@@ -185,19 +196,28 @@ const TrackRow = memo(function TrackRow({
         <span
           className={cn(
             'group-hover:hidden text-sm',
-            isPlaying ? 'text-purple-400 font-bold' : 'text-gray-500'
+            isCurrentTrack ? 'text-purple-400 font-bold' : 'text-gray-500'
           )}
         >
           {displayNumber}
         </span>
-        <Play
-          className="hidden group-hover:inline-block w-4 h-4 text-white"
-          fill="currentColor"
-        />
+        {/* Show pause icon on hover if this track is actually playing, otherwise show play */}
+        {isActuallyPlaying ? (
+          <Pause
+            className="hidden group-hover:inline-block w-4 h-4 text-white"
+            fill="currentColor"
+            onClick={handlePause}
+          />
+        ) : (
+          <Play
+            className="hidden group-hover:inline-block w-4 h-4 text-white"
+            fill="currentColor"
+          />
+        )}
       </div>
 
       <div className="flex-1 min-w-0">
-        <div className={cn('font-medium truncate text-sm md:text-base flex items-center gap-2', isPlaying ? 'text-purple-400' : 'text-white')}>
+        <div className={cn('font-medium truncate text-sm md:text-base flex items-center gap-2', isCurrentTrack ? 'text-purple-400' : 'text-white')}>
           <span className="truncate">{track.title}</span>
           {isPreviewOnly && (
             <span className="shrink-0 text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/30 font-medium">
@@ -286,7 +306,8 @@ const TrackRow = memo(function TrackRow({
 }, (prevProps, nextProps) => {
   return (
     prevProps.track.id === nextProps.track.id &&
-    prevProps.isPlaying === nextProps.isPlaying &&
+    prevProps.isCurrentTrack === nextProps.isCurrentTrack &&
+    prevProps.isActuallyPlaying === nextProps.isActuallyPlaying &&
     prevProps.isPreviewPlaying === nextProps.isPreviewPlaying &&
     prevProps.index === nextProps.index &&
     prevProps.displayNumber === nextProps.displayNumber &&
@@ -299,8 +320,10 @@ export const TrackList = memo(function TrackList({
   album,
   source,
   currentTrackId,
+  isPlaying = false,
   colors,
   onPlayTrack,
+  onPause,
   onAddToQueue,
   onAddToPlaylist,
   previewTrack,
@@ -359,8 +382,9 @@ export const TrackList = memo(function TrackList({
               <div className="divide-y divide-[#1c1c1c]">
                 {discTracks.map((track) => {
                   const overallIndex = trackIndexMap.get(track.id) ?? 0;
-                  const isPlaying = currentTrackId === track.id;
-                  const isPreviewPlaying = previewTrack === track.id && previewPlaying;
+                  const isCurrentTrack = currentTrackId === track.id;
+                  const isActuallyPlaying = isCurrentTrack && isPlaying;
+                  const isPreviewPlayingTrack = previewTrack === track.id && previewPlaying;
 
                   return (
                     <TrackRow
@@ -370,10 +394,12 @@ export const TrackList = memo(function TrackList({
                       displayNumber={track.trackNo ?? (overallIndex + 1)}
                       album={album}
                       isOwned={isOwned}
-                      isPlaying={isPlaying}
-                      isPreviewPlaying={isPreviewPlaying}
+                      isCurrentTrack={isCurrentTrack}
+                      isActuallyPlaying={isActuallyPlaying}
+                      isPreviewPlaying={isPreviewPlayingTrack}
                       colors={colors}
                       onPlayTrack={onPlayTrack}
+                      onPause={onPause}
                       onAddToQueue={onAddToQueue}
                       onAddToPlaylist={onAddToPlaylist}
                       onPreview={onPreview}

@@ -14,12 +14,6 @@ const navigationItems = [
         matchPattern: "/library"
     },
     { 
-        name: "Audiobooks", 
-        href: "/audiobooks", 
-        icon: BookOpen,
-        matchPattern: "/audiobooks"
-    },
-    { 
         name: "Podcasts", 
         href: "/podcasts", 
         icon: Mic,

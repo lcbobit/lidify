@@ -2002,9 +2002,8 @@ router.post("/episodes/:episodeId/remove-ads", requireAuth, async (req, res) => 
                 });
             }
 
-            // Start download - ad removal will trigger automatically after download
-            // (via the hook in podcastDownload.ts performDownload)
-            downloadInBackground(episodeId, episode.audioUrl, req.user!.id);
+            // Start download with forceAdRemoval=true so ad removal runs after download
+            downloadInBackground(episodeId, episode.audioUrl, req.user!.id, true);
 
             return res.json({
                 success: true,

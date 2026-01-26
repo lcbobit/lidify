@@ -16,7 +16,6 @@ import {
     Pause,
     Trash2,
     Shuffle,
-    EyeOff,
     ListPlus,
     ListMusic,
     Music,
@@ -76,7 +75,6 @@ export default function PlaylistDetailPage() {
     const playlistId = params.id as string;
 
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-    const [isHiding, setIsHiding] = useState(false);
     const [playingPreviewId, setPlayingPreviewId] = useState<string | null>(
         null
     );
@@ -223,30 +221,6 @@ export default function PlaylistDetailPage() {
 
     // Check if this is a shared playlist
     const isShared = playlist?.isOwner === false;
-
-    const handleToggleHide = async () => {
-        if (!playlist) return;
-        setIsHiding(true);
-        try {
-            if (playlist.isHidden) {
-                await api.unhidePlaylist(playlistId);
-            } else {
-                await api.hidePlaylist(playlistId);
-            }
-            // Dispatch event to update sidebar and other components
-            window.dispatchEvent(
-                new CustomEvent("playlist-updated", { detail: { playlistId } })
-            );
-            // Optionally navigate away if hiding
-            if (!playlist.isHidden) {
-                router.push("/playlists");
-            }
-        } catch (error) {
-            console.error("Failed to toggle playlist visibility:", error);
-        } finally {
-            setIsHiding(false);
-        }
-    };
 
     // Calculate cover arts from playlist tracks for mosaic (memoized)
     const coverUrls = useMemo(() => {
@@ -614,26 +588,6 @@ export default function PlaylistDetailPage() {
                     {/* Spacer */}
                     <div className="flex-1" />
 
-                    {/* Hide Button */}
-                    <button
-                        onClick={handleToggleHide}
-                        disabled={isHiding}
-                        className={cn(
-                            "h-8 w-8 rounded-full flex items-center justify-center transition-all",
-                            playlist.isHidden
-                                ? "text-[#ecb200] hover:text-[#d4a000]"
-                                : "text-white/40 hover:text-white",
-                            isHiding && "opacity-50 cursor-not-allowed"
-                        )}
-                        title={
-                            playlist.isHidden
-                                ? "Show playlist"
-                                : "Hide playlist"
-                        }
-                    >
-                        <EyeOff className="w-5 h-5" />
-                    </button>
-
                     {/* Delete Button */}
                     {playlist.isOwner && (
                         <button
@@ -678,10 +632,11 @@ export default function PlaylistDetailPage() {
                 playlist.pendingTracks?.length > 0 ? (
                     <div className="w-full">
                         {/* Table Header */}
-                        <div className="hidden md:grid grid-cols-[40px_minmax(200px,4fr)_minmax(100px,1fr)_80px] gap-4 px-4 py-2 text-xs text-gray-400 uppercase tracking-wider border-b border-white/10 mb-2">
+                        <div className="hidden md:grid grid-cols-[40px_minmax(200px,4fr)_minmax(100px,1fr)_70px_80px] gap-4 px-4 py-2 text-xs text-gray-400 uppercase tracking-wider border-b border-white/10 mb-2">
                             <span className="text-center">#</span>
                             <span>Title</span>
                             <span>Album</span>
+                            <span className="text-right">Format</span>
                             <span className="text-right">Duration</span>
                         </div>
 
@@ -706,7 +661,7 @@ export default function PlaylistDetailPage() {
                                         return (
                                             <div
                                                 key={`pending-${pending.id}`}
-                                                className="grid grid-cols-[40px_1fr_auto] md:grid-cols-[40px_minmax(200px,4fr)_minmax(100px,1fr)_120px] gap-4 px-4 py-2 rounded-md opacity-60 hover:opacity-80 group transition-opacity"
+                                                className="grid grid-cols-[40px_1fr_auto] md:grid-cols-[40px_minmax(200px,4fr)_minmax(100px,1fr)_70px_80px] gap-4 px-4 py-2 rounded-md opacity-60 hover:opacity-80 group transition-opacity"
                                             >
                                                 {/* Track Number - failed icon */}
                                                 <div className="flex items-center justify-center">
@@ -746,6 +701,9 @@ export default function PlaylistDetailPage() {
                                                 <p className="hidden md:flex items-center text-sm text-gray-500 truncate">
                                                     {pending.album}
                                                 </p>
+
+                                                {/* Empty codec column for pending tracks */}
+                                                <div className="hidden md:block" />
 
                                                 {/* Actions: Retry + Remove */}
                                                 <div className="flex items-center justify-end gap-1">
@@ -807,6 +765,7 @@ export default function PlaylistDetailPage() {
                                     const isCurrentlyPlaying =
                                         currentTrack?.id ===
                                         playlistItem.track.id;
+                                    const isActuallyPlaying = isCurrentlyPlaying && isPlaying;
                                     // Calculate the index for playback (only count actual tracks)
                                     const trackIndex =
                                         playlist.items?.findIndex(
@@ -817,16 +776,20 @@ export default function PlaylistDetailPage() {
                                     return (
                                         <div
                                             key={playlistItem.id}
-                                            onClick={() =>
-                                                handlePlayTrack(trackIndex)
-                                            }
+                                            onClick={() => {
+                                                if (isActuallyPlaying) {
+                                                    pause();
+                                                } else {
+                                                    handlePlayTrack(trackIndex);
+                                                }
+                                            }}
                                             className={cn(
-                                                "grid grid-cols-[40px_1fr_auto] md:grid-cols-[40px_minmax(200px,4fr)_minmax(100px,1fr)_80px] gap-4 px-4 py-2 rounded-md hover:bg-white/5 transition-colors group cursor-pointer",
+                                                "grid grid-cols-[40px_1fr_auto] md:grid-cols-[40px_minmax(200px,4fr)_minmax(100px,1fr)_70px_80px] gap-4 px-4 py-2 rounded-md hover:bg-white/5 transition-colors group cursor-pointer",
                                                 isCurrentlyPlaying &&
                                                     "bg-white/10"
                                             )}
                                         >
-                                            {/* Track Number / Play Icon */}
+                                            {/* Track Number / Play or Pause Icon */}
                                             <div className="flex items-center justify-center">
                                                 <span
                                                     className={cn(
@@ -836,14 +799,17 @@ export default function PlaylistDetailPage() {
                                                             : "text-gray-400"
                                                     )}
                                                 >
-                                                    {isCurrentlyPlaying &&
-                                                    isPlaying ? (
+                                                    {isActuallyPlaying ? (
                                                         <Music className="w-4 h-4 text-[#ecb200] animate-pulse" />
                                                     ) : (
                                                         trackIndex + 1
                                                     )}
                                                 </span>
-                                                <Play className="w-4 h-4 text-white hidden group-hover:block" />
+                                                {isActuallyPlaying ? (
+                                                    <Pause className="w-4 h-4 text-white hidden group-hover:block" />
+                                                ) : (
+                                                    <Play className="w-4 h-4 text-white hidden group-hover:block" />
+                                                )}
                                             </div>
 
                                             {/* Title + Artist */}
@@ -871,76 +837,19 @@ export default function PlaylistDetailPage() {
                                                     )}
                                                 </div>
                                                 <div className="min-w-0">
-                                                    <div className="flex items-center gap-2 min-w-0">
-                                                        <p
-                                                            className={cn(
-                                                                "text-sm font-medium truncate",
-                                                                isCurrentlyPlaying
-                                                                    ? "text-[#ecb200]"
-                                                                    : "text-white"
-                                                            )}
-                                                        >
-                                                            {
-                                                                playlistItem
-                                                                    .track.title
-                                                            }
-                                                        </p>
-                                                        {(() => {
-                                                            const codec =
-                                                                getCodecLabel(
-                                                                    playlistItem
-                                                                        .track
-                                                                        .mime,
-                                                                    playlistItem
-                                                                        .track
-                                                                        .filePath
-                                                                );
-                                                            const bitrate =
-                                                                formatBitrate(
-                                                                    playlistItem
-                                                                        .track
-                                                                        .fileSize,
-                                                                    playlistItem
-                                                                        .track
-                                                                        .duration
-                                                                );
-                                                            if (!codec && !bitrate)
-                                                                return null;
-                                                            const lossless =
-                                                                isLossless(
-                                                                    codec
-                                                                );
-                                                            return (
-                                                                <div
-                                                                    className={cn(
-                                                                        "hidden md:flex shrink-0 items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium",
-                                                                        lossless
-                                                                            ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20"
-                                                                            : "bg-gray-500/15 text-gray-400 border border-gray-500/20"
-                                                                    )}
-                                                                    title={`${
-                                                                        codec ||
-                                                                        "Unknown"
-                                                                    }${
-                                                                        bitrate
-                                                                            ? ` @ ${bitrate} kbps`
-                                                                            : ""
-                                                                    }`}
-                                                                >
-                                                                    {codec && (
-                                                                        <span>
-                                                                            {codec}
-                                                                        </span>
-                                                                    )}
-                                                                    {bitrate && (
-                                                                        <span className="opacity-70">
-                                                                            {bitrate}
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                            );
-                                                        })()}
-                                                    </div>
+                                                    <p
+                                                        className={cn(
+                                                            "text-sm font-medium truncate",
+                                                            isCurrentlyPlaying
+                                                                ? "text-[#ecb200]"
+                                                                : "text-white"
+                                                        )}
+                                                    >
+                                                        {
+                                                            playlistItem
+                                                                .track.title
+                                                        }
+                                                    </p>
                                                     <p className="text-xs text-gray-400 truncate">
                                                         {
                                                             playlistItem.track
@@ -955,6 +864,36 @@ export default function PlaylistDetailPage() {
                                             <p className="hidden md:flex items-center text-sm text-gray-400 truncate">
                                                 {playlistItem.track.album.title}
                                             </p>
+
+                                            {/* Codec/Bitrate column (hidden on mobile) */}
+                                            <div className="hidden md:flex items-center justify-end">
+                                                {(() => {
+                                                    const codec = getCodecLabel(
+                                                        playlistItem.track.mime,
+                                                        playlistItem.track.filePath
+                                                    );
+                                                    const bitrate = formatBitrate(
+                                                        playlistItem.track.fileSize,
+                                                        playlistItem.track.duration
+                                                    );
+                                                    if (!codec && !bitrate) return null;
+                                                    const lossless = isLossless(codec);
+                                                    return (
+                                                        <div
+                                                            className={cn(
+                                                                "flex shrink-0 items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium",
+                                                                lossless
+                                                                    ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20"
+                                                                    : "bg-gray-500/15 text-gray-400 border border-gray-500/20"
+                                                            )}
+                                                            title={`${codec || "Unknown"}${bitrate ? ` @ ${bitrate} kbps` : ""}`}
+                                                        >
+                                                            {codec && <span>{codec}</span>}
+                                                            {bitrate && <span className="opacity-70">{bitrate}</span>}
+                                                        </div>
+                                                    );
+                                                })()}
+                                            </div>
 
                                             {/* Duration + Actions */}
                                             <div className="flex items-center justify-end gap-2">

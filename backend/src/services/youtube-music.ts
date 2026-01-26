@@ -161,6 +161,14 @@ class YouTubeMusicService {
         }
     }
 
+    private async deleteCache(key: string): Promise<void> {
+        try {
+            await redisClient.del(key);
+        } catch (err) {
+            // Redis errors are non-critical
+        }
+    }
+
     // ============================================
     // Search Methods
     // ============================================
@@ -468,8 +476,12 @@ class YouTubeMusicService {
 
     /**
      * Get a stream URL for a video (cached)
+     * 
+     * @param videoId - YouTube video ID
+     * @param maxAgeMs - Optional max age in ms. If cached URL is older than this, refresh it.
+     *                   Useful for pre-fetching where we want fresher URLs to avoid 403s at playback.
      */
-    async getStreamUrl(videoId: string): Promise<StreamUrlResult> {
+    async getStreamUrl(videoId: string, maxAgeMs?: number): Promise<StreamUrlResult> {
         if (!this.isEnabled()) {
             throw new Error("YouTube Music is disabled");
         }
@@ -478,8 +490,20 @@ class YouTubeMusicService {
         const cacheKey = STREAM_KEY(videoId);
         const cached = await this.getCached<StreamUrlResult>(cacheKey);
         if (cached && cached.expiresAt > Date.now()) {
-            console.log(`[YouTube Music] Stream URL cache hit for ${videoId}`);
-            return cached;
+            // If maxAgeMs specified, check if URL is fresh enough
+            if (maxAgeMs !== undefined) {
+                const urlAge = (STREAM_URL_TTL * 1000) - (cached.expiresAt - Date.now());
+                if (urlAge > maxAgeMs) {
+                    console.log(`[YouTube Music] Stream URL too old for ${videoId} (${Math.round(urlAge / 60000)}min), refreshing...`);
+                    // Fall through to extract fresh URL
+                } else {
+                    console.log(`[YouTube Music] Stream URL cache hit for ${videoId}`);
+                    return cached;
+                }
+            } else {
+                console.log(`[YouTube Music] Stream URL cache hit for ${videoId}`);
+                return cached;
+            }
         }
 
         // Extract fresh URL via yt-dlp
@@ -522,6 +546,15 @@ class YouTubeMusicService {
             console.error(`[YouTube Music] Failed to extract stream URL for ${videoId}:`, error.message);
             throw new Error(`Failed to get stream URL: ${error.message}`);
         }
+    }
+
+    /**
+     * Invalidate cached stream URL (e.g., when it returns 403)
+     */
+    async invalidateStreamUrl(videoId: string): Promise<void> {
+        const cacheKey = STREAM_KEY(videoId);
+        await this.deleteCache(cacheKey);
+        console.log(`[YouTube Music] Invalidated stream URL cache for ${videoId}`);
     }
 
     // ============================================

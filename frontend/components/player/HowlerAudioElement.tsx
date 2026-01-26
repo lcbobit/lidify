@@ -425,7 +425,7 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
                 // Only play if this device is in local mode
                 const canPlayLocally = controlModeRef.current === "local";
                 if (shouldPlay && !isCurrentlyPlaying && canPlayLocally) {
-                    howlerEngine.seek(0);
+                    // Resume from current position (don't seek to 0)
                     howlerEngine.play();
                 } else if (shouldPlay && !canPlayLocally) {
                     console.log("[HowlerAudioElement] Blocking same-track play - in remote mode");
