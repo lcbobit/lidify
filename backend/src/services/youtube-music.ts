@@ -12,14 +12,15 @@ const execPromise = promisify(exec);
  * YouTube Music Service
  *
  * Provides YouTube Music search, streaming, and download capabilities via:
- * - youtubei.js (InnerTube API) for search - fast, no auth required
- * - yt-dlp CLI for stream URLs and downloads - handles signature decryption
+ * - youtubei.js (InnerTube API) for search and streaming - fast, no auth required
+ * - yt-dlp CLI for downloads only - handles format conversion
  *
  * Features:
  * - No authentication required (uses anonymous visitor tokens)
  * - No DRM on audio streams (unlike Spotify)
  * - No ads in extracted streams
  * - Up to 256kbps AAC/OPUS quality
+ * - Built-in signature decryption via youtubei.js (no external JS runtime needed)
  */
 
 // ============================================
@@ -44,6 +45,8 @@ export interface StreamUrlResult {
     url: string;
     format: string;
     expiresAt: number;
+    mimeType?: string;
+    contentLength?: number;
 }
 
 export interface DownloadResult {
@@ -70,6 +73,8 @@ const YOUTUBE_MUSIC_ENABLED = process.env.YOUTUBE_MUSIC_ENABLED !== "false";
 // Use opus (YouTube's native format ~130kbps) to avoid lossy transcoding
 // MP3 transcoding from opus source just wastes space without quality gain
 const DOWNLOAD_FORMAT = process.env.YOUTUBE_MUSIC_DOWNLOAD_FORMAT || "opus";
+const DOWNLOAD_USER_AGENT =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36";
 
 // Cache TTLs
 const STREAM_URL_TTL = 4 * 60 * 60; // 4 hours (conservative vs 5-6h expiry)
@@ -121,6 +126,9 @@ class YouTubeMusicService {
             this.innertube = await Innertube.create({
                 cache: new UniversalCache(false), // Don't persist cache to disk
                 generate_session_locally: true,
+                retrieve_player: true, // Required for signature decryption
+                location: "US",
+                lang: "en",
             });
             console.log("[YouTube Music] InnerTube client ready");
         } catch (error: any) {
@@ -477,9 +485,11 @@ class YouTubeMusicService {
     /**
      * Get a stream URL for a video (cached)
      * 
+     * Uses yt-dlp to extract stream URLs. URLs are cached but can be
+     * invalidated when they return 403 (expired).
+     * 
      * @param videoId - YouTube video ID
      * @param maxAgeMs - Optional max age in ms. If cached URL is older than this, refresh it.
-     *                   Useful for pre-fetching where we want fresher URLs to avoid 403s at playback.
      */
     async getStreamUrl(videoId: string, maxAgeMs?: number): Promise<StreamUrlResult> {
         if (!this.isEnabled()) {
@@ -507,13 +517,13 @@ class YouTubeMusicService {
         }
 
         // Extract fresh URL via yt-dlp
-        console.log(`[YouTube Music] Extracting stream URL for ${videoId}...`);
+        console.log(`[YouTube Music] Extracting stream URL for ${videoId} via yt-dlp...`);
         const url = `https://music.youtube.com/watch?v=${videoId}`;
 
         try {
             // Get best audio stream URL
             const { stdout } = await execPromise(
-                `yt-dlp -f "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio" -g --no-warnings "${url}"`,
+                `yt-dlp -f "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio" -g --extractor-args "youtube:player_client=android_vr" --no-warnings "${url}"`,
                 { timeout: 30000 }
             );
 
@@ -524,17 +534,34 @@ class YouTubeMusicService {
 
             // Get format info
             const { stdout: formatInfo } = await execPromise(
-                `yt-dlp -f "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio" --print "%(ext)s" --no-warnings "${url}"`,
+                `yt-dlp -f "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio" --print "%(ext)s" --extractor-args "youtube:player_client=android_vr" --no-warnings "${url}"`,
                 { timeout: 10000 }
             ).catch(() => ({ stdout: "webm" }));
 
             const format = formatInfo.trim() || "webm";
             const expiresAt = Date.now() + STREAM_URL_TTL * 1000;
 
+            // Try to extract content length from URL
+            let contentLength: number | undefined;
+            try {
+                const urlObj = new URL(streamUrl);
+                const clenParam = urlObj.searchParams.get("clen");
+                if (clenParam) {
+                    const parsed = parseInt(clenParam, 10);
+                    if (Number.isFinite(parsed)) {
+                        contentLength = parsed;
+                    }
+                }
+            } catch {
+                // Ignore URL parse failures
+            }
+
             const result: StreamUrlResult = {
                 url: streamUrl,
                 format,
                 expiresAt,
+                mimeType: format === "m4a" ? "audio/mp4" : "audio/webm",
+                contentLength,
             };
 
             // Cache the result
@@ -616,6 +643,9 @@ class YouTubeMusicService {
                 "--audio-quality", "0", // 0 = best available (no upsampling)
                 "--add-metadata",
                 "--no-warnings",
+                "--extractor-args", "youtube:player_client=android_vr", // Use android_vr to bypass SABR/PO token
+                "--user-agent", `"${DOWNLOAD_USER_AGENT}"`,
+                "--referer", "https://music.youtube.com/",
                 "-o", `"${outputTemplate}"`,
                 "--print", "after_move:filepath", // Print final path
                 `"${url}"`,

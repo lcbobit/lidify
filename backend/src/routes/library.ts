@@ -3264,52 +3264,24 @@ router.post("/youtube/match-batch", async (req, res) => {
         const matchedCount = results.filter(r => r.match !== null).length;
         console.log(`[YouTube] Batch match complete: ${matchedCount}/${results.length} matched`);
 
-        // Pre-fetch stream URLs for matched tracks
-        // First 3 are awaited (so user can click immediately), rest run in background
-        // Use 3-hour max age so URLs older than 3h get refreshed (avoids 403s at playback)
+        // Pre-DOWNLOAD first 3 matched tracks via yt-dlp for instant playback
+        // Only cache 3 to avoid rate limiting - look-ahead caching handles the rest
         const matchedResults = results.filter(r => r.match !== null);
-        const immediateCount = Math.min(3, matchedResults.length);
-        const backgroundCount = matchedResults.length - immediateCount; // All remaining tracks
-        const PREFETCH_MAX_AGE_MS = 3 * 60 * 60 * 1000; // 3 hours
+        const PRECACHE_COUNT = 3;
+        const toPrecache = matchedResults.slice(0, PRECACHE_COUNT);
         
-        // Prefetch first 3 BEFORE responding (parallel)
-        if (immediateCount > 0) {
-            console.log(`[YouTube] Pre-fetching first ${immediateCount} stream URLs (blocking)...`);
-            const immediateIds = matchedResults.slice(0, immediateCount).map(r => r.match.videoId);
-            await Promise.all(
-                immediateIds.map(async (videoId, idx) => {
-                    try {
-                        await youtubeMusicService.getStreamUrl(videoId, PREFETCH_MAX_AGE_MS);
-                        console.log(`[YouTube] Pre-fetched stream URL ${idx + 1}/${immediateCount}: ${videoId} (immediate)`);
-                    } catch (err: any) {
-                        console.warn(`[YouTube] Failed to pre-fetch stream URL for ${videoId}:`, err.message);
-                    }
-                })
-            );
-        }
-
-        // Prefetch ALL remaining in background after response (parallel with concurrency limit)
-        if (backgroundCount > 0) {
-            const backgroundIds = matchedResults.slice(immediateCount).map(r => r.match.videoId);
-            // Don't await - let this run in background
+        if (toPrecache.length > 0) {
+            // Start pre-caching in background (don't block response)
             (async () => {
-                console.log(`[YouTube] Pre-fetching ${backgroundCount} more stream URLs (background)...`);
-                // Process in chunks of 5 to avoid overwhelming yt-dlp
-                const CHUNK_SIZE = 5;
-                for (let i = 0; i < backgroundIds.length; i += CHUNK_SIZE) {
-                    const chunk = backgroundIds.slice(i, i + CHUNK_SIZE);
-                    await Promise.all(
-                        chunk.map(async (videoId, idx) => {
-                            try {
-                                await youtubeMusicService.getStreamUrl(videoId, PREFETCH_MAX_AGE_MS);
-                                console.log(`[YouTube] Pre-fetched stream URL ${immediateCount + i + idx + 1}/${immediateCount + backgroundCount}: ${videoId}`);
-                            } catch (err: any) {
-                                console.warn(`[YouTube] Failed to pre-fetch stream URL for ${videoId}:`, err.message);
-                            }
-                        })
-                    );
+                console.log(`[YouTube] Pre-caching first ${toPrecache.length} tracks...`);
+                for (const item of toPrecache) {
+                    try {
+                        await precacheYouTubeTrack(item.match.videoId);
+                    } catch (err: any) {
+                        console.warn(`[YouTube] Pre-cache failed for ${item.match.videoId}:`, err.message);
+                    }
                 }
-                console.log(`[YouTube] Stream URL pre-fetch complete`);
+                console.log(`[YouTube] Pre-cache complete for ${toPrecache.length} tracks`);
             })();
         }
 
@@ -3323,6 +3295,125 @@ router.post("/youtube/match-batch", async (req, res) => {
         res.status(500).json({ error: error.message || "Batch match failed" });
     }
 });
+
+// Cache for downloaded YouTube audio files (temp files)
+// Key: videoId, Value: { filePath, format, downloadedAt, size }
+const youtubeFileCache = new Map<string, { filePath: string; format: string; downloadedAt: number; size: number }>();
+const YOUTUBE_FILE_TTL_MS = 60 * 60 * 1000; // 1 hour - keep downloaded files for listening sessions
+
+// Track downloads in progress so stream endpoint can wait
+const downloadsInProgress = new Map<string, Promise<void>>();
+
+// Cleanup old temp files periodically
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, value] of youtubeFileCache.entries()) {
+        if (now - value.downloadedAt > YOUTUBE_FILE_TTL_MS) {
+            // Delete the temp file
+            try {
+                if (fs.existsSync(value.filePath)) {
+                    fs.unlinkSync(value.filePath);
+                    console.log(`[YouTube] Cleaned up temp file: ${value.filePath}`);
+                }
+            } catch (err) {
+                // Ignore cleanup errors
+            }
+            youtubeFileCache.delete(key);
+        }
+    }
+}, 5 * 60 * 1000); // Clean up every 5 minutes
+
+/**
+ * Pre-download a YouTube track to temp cache for instant playback
+ * Returns immediately if already cached, or waits for in-progress download
+ */
+async function precacheYouTubeTrack(videoId: string): Promise<void> {
+    // Check if already cached and valid
+    const cached = youtubeFileCache.get(videoId);
+    const now = Date.now();
+    
+    if (cached && fs.existsSync(cached.filePath) && (now - cached.downloadedAt) < YOUTUBE_FILE_TTL_MS) {
+        console.log(`[YouTube] Pre-cache hit for ${videoId}`);
+        return;
+    }
+    
+    // Check if download is already in progress - wait for it
+    const inProgress = downloadsInProgress.get(videoId);
+    if (inProgress) {
+        console.log(`[YouTube] Waiting for in-progress download: ${videoId}`);
+        await inProgress;
+        return;
+    }
+    
+    console.log(`[YouTube] Pre-caching ${videoId}...`);
+    
+    const tempDir = "/tmp/youtube-streams";
+    if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+    }
+    
+    const tempPath = path.join(tempDir, `${videoId}.opus`);
+    
+    // Check if file already exists from previous download
+    if (fs.existsSync(tempPath)) {
+        const stats = fs.statSync(tempPath);
+        if (stats.size > 0) {
+            youtubeFileCache.set(videoId, {
+                filePath: tempPath,
+                format: "opus",
+                downloadedAt: now,
+                size: stats.size,
+            });
+            console.log(`[YouTube] Pre-cache: found existing file for ${videoId} (${Math.round(stats.size / 1024)}KB)`);
+            return;
+        }
+    }
+    
+    // Create download promise and track it
+    const downloadPromise = (async () => {
+        const url = `https://music.youtube.com/watch?v=${videoId}`;
+        const command = [
+            "yt-dlp",
+            "-x",
+            "--audio-format", "opus",
+            "--audio-quality", "0",
+            "-o", `"${tempPath}"`,
+            "--no-warnings",
+            "--extractor-args", "youtube:player_client=android_vr",
+            `"${url}"`,
+        ].join(" ");
+        
+        const { promisify } = require("util");
+        const { exec } = require("child_process");
+        const execPromise = promisify(exec);
+        
+        await execPromise(command, { timeout: 120000 });
+        
+        if (!fs.existsSync(tempPath)) {
+            throw new Error("Download completed but file not found");
+        }
+        
+        const downloadedAt = Date.now();
+        const stats = fs.statSync(tempPath);
+        youtubeFileCache.set(videoId, {
+            filePath: tempPath,
+            format: "opus",
+            downloadedAt,
+            size: stats.size,
+        });
+        
+        console.log(`[YouTube] Pre-cached ${videoId}: ${Math.round(stats.size / 1024)}KB`);
+    })();
+    
+    // Track the download
+    downloadsInProgress.set(videoId, downloadPromise);
+    
+    try {
+        await downloadPromise;
+    } finally {
+        downloadsInProgress.delete(videoId);
+    }
+}
 
 /**
  * GET /library/youtube/stream/:videoId
@@ -3339,9 +3430,54 @@ router.get("/youtube/stream/:videoId", async (req, res) => {
 
         console.log(`[YouTube] Stream request for ${videoId}`);
 
+        // Check if we have a pre-cached file (instant playback)
+        // Don't wait for in-progress downloads - just stream if not cached
+        const cached = youtubeFileCache.get(videoId);
+        const now = Date.now();
+        
+        if (cached && fs.existsSync(cached.filePath) && (now - cached.downloadedAt) < YOUTUBE_FILE_TTL_MS) {
+            console.log(`[YouTube] Serving from cache: ${videoId}`);
+            const filePath = cached.filePath;
+            const fileSize = cached.size;
+            const localContentType = "audio/ogg";
+            
+            const range = req.headers.range;
+            if (range) {
+                const parts = (range as string).replace(/bytes=/, "").split("-");
+                const start = parseInt(parts[0], 10);
+                const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+                const chunkSize = end - start + 1;
+                
+                res.setHeader("Content-Type", localContentType);
+                res.setHeader("Content-Range", `bytes ${start}-${end}/${fileSize}`);
+                res.setHeader("Accept-Ranges", "bytes");
+                res.setHeader("Content-Length", chunkSize);
+                res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+                res.setHeader("Access-Control-Allow-Credentials", "true");
+                res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+                res.status(206);
+                
+                const stream = fs.createReadStream(filePath, { start, end });
+                stream.pipe(res);
+                req.on("close", () => stream.destroy());
+            } else {
+                res.setHeader("Content-Type", localContentType);
+                res.setHeader("Content-Length", fileSize);
+                res.setHeader("Accept-Ranges", "bytes");
+                res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+                res.setHeader("Access-Control-Allow-Credentials", "true");
+                res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+                
+                const stream = fs.createReadStream(filePath);
+                stream.pipe(res);
+                req.on("close", () => stream.destroy());
+            }
+            return;
+        }
+
         // Helper to fetch stream with given URL info
-        const fetchStream = async (streamInfo: { url: string; format: string }) => {
-            const contentType = streamInfo.format === "m4a" ? "audio/mp4" : "audio/webm";
+        const fetchStream = async (streamInfo: { url: string; format: string; mimeType?: string }) => {
+            const contentType = streamInfo.mimeType || (streamInfo.format === "m4a" ? "audio/mp4" : "audio/webm");
             
             const response = await axios.get(streamInfo.url, {
                 responseType: "stream",
@@ -3370,7 +3506,109 @@ router.get("/youtube/stream/:videoId", async (req, res) => {
                 console.log(`[YouTube] Stream URL expired for ${videoId}, fetching fresh URL...`);
                 await youtubeMusicService.invalidateStreamUrl(videoId);
                 streamInfo = await youtubeMusicService.getStreamUrl(videoId);
-                ({ response, contentType } = await fetchStream(streamInfo));
+                try {
+                    ({ response, contentType } = await fetchStream(streamInfo));
+                } catch (retryError: any) {
+                    // Proxy failed even with fresh URL, fall back to yt-dlp download
+                    console.log(`[YouTube] Proxy retry failed for ${videoId}, falling back to yt-dlp download...`);
+                    
+                    // Check if we have this file cached
+                    let cached = youtubeFileCache.get(videoId);
+                    const now = Date.now();
+                    
+                    // Verify cached file still exists and is fresh
+                    if (cached) {
+                        if (!fs.existsSync(cached.filePath) || (now - cached.downloadedAt) > YOUTUBE_FILE_TTL_MS) {
+                            youtubeFileCache.delete(videoId);
+                            cached = undefined;
+                        }
+                    }
+
+                    // Download if not cached
+                    if (!cached) {
+                        console.log(`[YouTube] Downloading ${videoId} to temp file...`);
+                        
+                        const tempDir = "/tmp/youtube-streams";
+                        if (!fs.existsSync(tempDir)) {
+                            fs.mkdirSync(tempDir, { recursive: true });
+                        }
+                        
+                        const tempPath = path.join(tempDir, `${videoId}.opus`);
+                        const url = `https://music.youtube.com/watch?v=${videoId}`;
+                        const command = [
+                            "yt-dlp",
+                            "-x",
+                            "--audio-format", "opus",
+                            "--audio-quality", "0",
+                            "-o", `"${tempPath}"`,
+                            "--no-warnings",
+                            "--extractor-args", "youtube:player_client=android_vr", // Bypass SABR/PO token
+                            `"${url}"`,
+                        ].join(" ");
+                        
+                        try {
+                            const { promisify } = require("util");
+                            const { exec } = require("child_process");
+                            const execPromise = promisify(exec);
+                            await execPromise(command, { timeout: 120000 });
+                        } catch (downloadError: any) {
+                            console.error(`[YouTube] Download failed for ${videoId}:`, downloadError.message);
+                            return res.status(500).json({ error: "Failed to download audio" });
+                        }
+                        
+                        if (!fs.existsSync(tempPath)) {
+                            return res.status(500).json({ error: "Download completed but file not found" });
+                        }
+                        
+                        const stats = fs.statSync(tempPath);
+                        cached = {
+                            filePath: tempPath,
+                            format: "opus",
+                            downloadedAt: now,
+                            size: stats.size,
+                        };
+                        youtubeFileCache.set(videoId, cached);
+                        console.log(`[YouTube] Downloaded ${videoId}: ${Math.round(stats.size / 1024)}KB`);
+                    }
+
+                    // Stream from local file
+                    const filePath = cached.filePath;
+                    const fileSize = cached.size;
+                    const localContentType = "audio/ogg";
+                    
+                    const range = req.headers.range;
+                    if (range) {
+                        const parts = (range as string).replace(/bytes=/, "").split("-");
+                        const start = parseInt(parts[0], 10);
+                        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+                        const chunkSize = end - start + 1;
+                        
+                        res.setHeader("Content-Type", localContentType);
+                        res.setHeader("Content-Range", `bytes ${start}-${end}/${fileSize}`);
+                        res.setHeader("Accept-Ranges", "bytes");
+                        res.setHeader("Content-Length", chunkSize);
+                        res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+                        res.setHeader("Access-Control-Allow-Credentials", "true");
+                        res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+                        res.status(206);
+                        
+                        const stream = fs.createReadStream(filePath, { start, end });
+                        stream.pipe(res);
+                        req.on("close", () => stream.destroy());
+                    } else {
+                        res.setHeader("Content-Type", localContentType);
+                        res.setHeader("Content-Length", fileSize);
+                        res.setHeader("Accept-Ranges", "bytes");
+                        res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+                        res.setHeader("Access-Control-Allow-Credentials", "true");
+                        res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+                        
+                        const stream = fs.createReadStream(filePath);
+                        stream.pipe(res);
+                        req.on("close", () => stream.destroy());
+                    }
+                    return;
+                }
             } else {
                 throw fetchError;
             }
@@ -3406,6 +3644,46 @@ router.get("/youtube/stream/:videoId", async (req, res) => {
         if (!res.headersSent) {
             res.status(500).json({ error: error.message || "Stream failed" });
         }
+    }
+});
+
+/**
+ * POST /library/youtube/precache
+ * Pre-download YouTube tracks to temp cache for instant playback
+ * Body: { videoIds: string[] }
+ */
+router.post("/youtube/precache", async (req, res) => {
+    try {
+        const { videoIds } = req.body;
+        
+        if (!Array.isArray(videoIds) || videoIds.length === 0) {
+            return res.status(400).json({ error: "videoIds array required" });
+        }
+        
+        // Limit to reasonable batch size
+        const idsToCache = videoIds.slice(0, 5);
+        
+        console.log(`[YouTube] Pre-cache request for ${idsToCache.length} tracks`);
+        
+        // Start pre-caching in background
+        (async () => {
+            for (const videoId of idsToCache) {
+                if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) continue;
+                try {
+                    await precacheYouTubeTrack(videoId);
+                } catch (err: any) {
+                    console.warn(`[YouTube] Pre-cache failed for ${videoId}:`, err.message);
+                }
+            }
+        })();
+        
+        res.json({ 
+            queued: idsToCache.length,
+            message: "Pre-caching started in background" 
+        });
+    } catch (error: any) {
+        console.error("[YouTube] Pre-cache error:", error);
+        res.status(500).json({ error: error.message || "Pre-cache failed" });
     }
 });
 

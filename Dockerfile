@@ -42,13 +42,16 @@ RUN mkdir -p /app/backend /app/frontend /app/audio-analyzer /app/models \
 # ============================================
 WORKDIR /app/audio-analyzer
 
-# Install Python dependencies for audio analysis and yt-dlp (with cache mount for speed)
+# Install Python dependencies for audio analysis and yt-dlp nightly (with cache mount for speed)
+# Note: yt-dlp nightly is required to work around YouTube's SABR/PO token restrictions
+# See: https://github.com/yt-dlp/yt-dlp/issues/15689
+# Nightly builds are in: https://github.com/yt-dlp/yt-dlp-nightly-builds/releases
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install --break-system-packages \
     essentia-tensorflow \
     redis \
     psycopg2-binary \
-    yt-dlp \
+    "yt-dlp @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz" \
     mutagen
 
 # Download Essentia ML models (~200MB total) - these enable Enhanced vibe matching

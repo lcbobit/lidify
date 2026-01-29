@@ -738,6 +738,28 @@ class ApiClient {
             });
     }
 
+    /**
+     * Pre-cache YouTube tracks by video ID (downloads files for instant playback)
+     * Call this with the next few upcoming track videoIds for seamless playback
+     */
+    precacheYouTubeTracks(videoIds: string[]): void {
+        if (!videoIds || videoIds.length === 0) return;
+        
+        // Filter valid video IDs
+        const validIds = videoIds.filter(id => /^[a-zA-Z0-9_-]{11}$/.test(id));
+        if (validIds.length === 0) return;
+        
+        console.log(`[YouTube] Requesting pre-cache for ${validIds.length} tracks`);
+        
+        // Fire and forget
+        this.request("/library/youtube/precache", {
+            method: "POST",
+            body: JSON.stringify({ videoIds: validIds }),
+        }).catch((err) => {
+            console.warn("[YouTube] Pre-cache request failed:", err.message);
+        });
+    }
+
     getCoverArtUrl(coverId: string, size?: number): string {
         const baseUrl = this.getBaseUrl();
 

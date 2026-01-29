@@ -730,9 +730,10 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
         howlerEngine.setMuted(isMuted);
     }, [isMuted]);
 
-    // Look-ahead prefetch: warm cache for next 3 YouTube tracks
+    // Look-ahead: keep next 3 YouTube tracks pre-cached for instant playback
     // Only runs on active player device to avoid spam from controller devices
-    const PREFETCH_AHEAD_COUNT = 3;
+    const CACHE_AHEAD_COUNT = 3;
+    const precacheRequestedRef = useRef<Set<string>>(new Set());
     
     useEffect(() => {
         // Only prefetch if this device is in local mode AND is the active player
@@ -743,7 +744,7 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
 
         // Get next N tracks that need YouTube streaming (no local file)
         const upcoming = queue
-            .slice(currentIndex + 1, currentIndex + 1 + PREFETCH_AHEAD_COUNT)
+            .slice(currentIndex + 1, currentIndex + 1 + CACHE_AHEAD_COUNT)
             .filter(
                 (t) =>
                     !t.filePath && // No local file - needs YouTube
@@ -751,15 +752,46 @@ export const HowlerAudioElement = memo(function HowlerAudioElement() {
                     t.title // Has title
             );
 
-        if (upcoming.length > 0) {
-            api.prefetchYouTubeMatches(
-                upcoming.map((t) => ({
-                    artist: t.artist?.name || "",
-                    title: t.title,
-                    duration: t.duration,
-                }))
-            );
-        }
+        if (upcoming.length === 0) return;
+
+        // Fetch matches and trigger pre-cache downloads
+        (async () => {
+            const videoIdsToCache: string[] = [];
+            
+            for (const track of upcoming) {
+                const key = `${track.artist?.name}|${track.title}`;
+                
+                // Skip if we already requested pre-cache for this track
+                if (precacheRequestedRef.current.has(key)) continue;
+                
+                try {
+                    const result = await api.findYouTubeMatch(
+                        track.artist?.name || "",
+                        track.title,
+                        track.duration
+                    );
+                    
+                    if (result.match?.videoId) {
+                        videoIdsToCache.push(result.match.videoId);
+                        precacheRequestedRef.current.add(key);
+                        
+                        // Limit tracking size
+                        if (precacheRequestedRef.current.size > 100) {
+                            const first = precacheRequestedRef.current.values().next().value;
+                            if (first) precacheRequestedRef.current.delete(first);
+                        }
+                    }
+                } catch {
+                    // Ignore - will retry at playback
+                }
+            }
+            
+            // Request pre-cache download for all matched tracks
+            if (videoIdsToCache.length > 0) {
+                console.log(`[Player] Pre-caching ${videoIdsToCache.length} upcoming YouTube tracks`);
+                api.precacheYouTubeTracks(videoIdsToCache);
+            }
+        })();
     }, [currentIndex, queue, playbackType]);
 
     // Poll for podcast cache and reload when ready
