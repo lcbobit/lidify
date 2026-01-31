@@ -375,6 +375,8 @@ model PlaylistPendingTrack {
   albumMbid        String?  // MusicBrainz album ID if resolved
   artistMbid       String?  // MusicBrainz artist ID if resolved
   deezerPreviewUrl String?  // Deezer 30s preview URL for playback while pending
+  duration         Int?     // Track duration in seconds (from Spotify/Deezer)
+  albumArt         String?  // Album cover URL (from Spotify/Deezer)
   sort             Int      // Position in original playlist
   createdAt        DateTime @default(now())
 

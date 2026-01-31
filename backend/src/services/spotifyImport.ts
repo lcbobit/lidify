@@ -104,6 +104,7 @@ export interface ImportJob {
         durationMs: number;
         sort: number;
         previewUrl: string | null;
+        coverUrl: string | null; // Album art URL from Spotify/Deezer
         preMatchedTrackId: string | null; // Track ID if already matched in preview
     }>;
 }
@@ -1003,6 +1004,7 @@ class SpotifyImportService {
             durationMs: m.spotifyTrack.durationMs || 0,
             sort: index,
             previewUrl: m.spotifyTrack.previewUrl || null,
+            coverUrl: m.spotifyTrack.coverUrl || null,
             preMatchedTrackId: m.localTrack?.id || null,
         }));
 
@@ -1106,6 +1108,8 @@ class SpotifyImportService {
                 spotifyTitle: t.title,
                 spotifyAlbum: t.album,
                 deezerPreviewUrl: t.previewUrl,
+                duration: t.durationMs ? Math.round(t.durationMs / 1000) : null,
+                albumArt: t.coverUrl,
                 sort: t.sort,
             }));
 
@@ -1711,6 +1715,8 @@ class SpotifyImportService {
                     spotifyTitle: track.title,
                     spotifyAlbum: track.album,
                     deezerPreviewUrl: track.deezerPreviewUrl,
+                    duration: track.durationMs ? Math.round(track.durationMs / 1000) : null,
+                    albumArt: track.coverUrl,
                     sort: track.originalIndex,
                 })),
                 skipDuplicates: true,

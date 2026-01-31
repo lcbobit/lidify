@@ -63,6 +63,8 @@ interface PendingTrack {
         title: string;
         album: string;
         previewUrl: string | null;
+        duration: number | null;
+        albumArt: string | null;
     };
 }
 
@@ -71,7 +73,7 @@ export default function PlaylistDetailPage() {
     const router = useRouter();
     const queryClient = useQueryClient();
     const { toast } = useToast();
-    const { playTracks, addToQueue, currentTrack, isPlaying, pause, resume } =
+    const { playTracks, addToQueue, currentTrack, isPlaying, pause, resume, currentSource } =
         useAudio();
     const playlistId = params.id as string;
 
@@ -306,8 +308,11 @@ export default function PlaylistDetailPage() {
                 title: pending.title,
                 // No filePath = triggers YouTube Music fallback
                 artist: { name: pending.artist },
-                album: { title: pending.album },
-                duration: 0,
+                album: { 
+                    title: pending.album,
+                    coverArt: pending.albumArt, // Pass album art for miniplayer
+                },
+                duration: pending.duration || 0,
             };
         }
         const playlistItem = item as PlaylistItem;
@@ -666,17 +671,18 @@ export default function PlaylistDetailPage() {
                                                 )}
                                             >
                                                 {/* Track Number / Play or Pause Icon */}
+                                                {/* Track Number / Play or Pause Icon - RED for YouTube streaming */}
                                                 <div className="flex items-center justify-center">
                                                     <span
                                                         className={cn(
                                                             "text-sm group-hover:hidden",
                                                             isCurrentlyPlaying
-                                                                ? "text-[#ecb200]"
+                                                                ? "text-red-500"
                                                                 : "text-gray-400"
                                                         )}
                                                     >
                                                         {isActuallyPlaying ? (
-                                                            <Music className="w-4 h-4 text-[#ecb200] animate-pulse" />
+                                                            <Music className="w-4 h-4 text-red-500 animate-pulse" />
                                                         ) : (
                                                             index + 1
                                                         )}
@@ -688,17 +694,25 @@ export default function PlaylistDetailPage() {
                                                     )}
                                                 </div>
 
-                                                {/* Title + Artist */}
+                                                {/* Title + Artist - RED for YouTube streaming */}
                                                 <div className="flex items-center gap-3 min-w-0">
                                                     <div className="w-10 h-10 bg-[#282828] rounded shrink-0 overflow-hidden flex items-center justify-center">
-                                                        <Music className="w-5 h-5 text-gray-600" />
+                                                        {pending.albumArt ? (
+                                                            <img
+                                                                src={pending.albumArt}
+                                                                alt={pending.title}
+                                                                className="w-full h-full object-cover"
+                                                            />
+                                                        ) : (
+                                                            <Music className="w-5 h-5 text-gray-600" />
+                                                        )}
                                                     </div>
                                                     <div className="min-w-0">
                                                         <p
                                                             className={cn(
                                                                 "text-sm font-medium truncate",
                                                                 isCurrentlyPlaying
-                                                                    ? "text-[#ecb200]"
+                                                                    ? "text-red-500"
                                                                     : "text-white"
                                                             )}
                                                         >
@@ -769,7 +783,7 @@ export default function PlaylistDetailPage() {
                                                     )}
 
                                                     <span className="text-sm text-gray-400 w-12 text-right">
-                                                        --:--
+                                                        {pending.duration ? formatDuration(pending.duration) : "--:--"}
                                                     </span>
                                                 </div>
                                             </div>
@@ -782,6 +796,8 @@ export default function PlaylistDetailPage() {
                                         currentTrack?.id ===
                                         playlistItem.track.id;
                                     const isActuallyPlaying = isCurrentlyPlaying && isPlaying;
+                                    // Track streams from YouTube if no local file
+                                    const isYouTubeTrack = !playlistItem.track.filePath;
 
                                     return (
                                         <div
@@ -799,18 +815,18 @@ export default function PlaylistDetailPage() {
                                                     "bg-white/10"
                                             )}
                                         >
-                                            {/* Track Number / Play or Pause Icon */}
+                                            {/* Track Number / Play or Pause Icon - RED for YouTube, YELLOW for local */}
                                             <div className="flex items-center justify-center">
                                                 <span
                                                     className={cn(
                                                         "text-sm group-hover:hidden",
                                                         isCurrentlyPlaying
-                                                            ? "text-[#ecb200]"
+                                                            ? isYouTubeTrack ? "text-red-500" : "text-[#ecb200]"
                                                             : "text-gray-400"
                                                     )}
                                                 >
                                                     {isActuallyPlaying ? (
-                                                        <Music className="w-4 h-4 text-[#ecb200] animate-pulse" />
+                                                        <Music className={cn("w-4 h-4 animate-pulse", isYouTubeTrack ? "text-red-500" : "text-[#ecb200]")} />
                                                     ) : (
                                                         index + 1
                                                     )}
@@ -822,7 +838,7 @@ export default function PlaylistDetailPage() {
                                                 )}
                                             </div>
 
-                                            {/* Title + Artist */}
+                                            {/* Title + Artist - RED for YouTube, YELLOW for local */}
                                             <div className="flex items-center gap-3 min-w-0">
                                                 <div className="w-10 h-10 bg-[#282828] rounded shrink-0 overflow-hidden">
                                                     {playlistItem.track.album
@@ -851,7 +867,7 @@ export default function PlaylistDetailPage() {
                                                         className={cn(
                                                             "text-sm font-medium truncate",
                                                             isCurrentlyPlaying
-                                                                ? "text-[#ecb200]"
+                                                                ? isYouTubeTrack ? "text-red-500" : "text-[#ecb200]"
                                                                 : "text-white"
                                                         )}
                                                     >
@@ -875,9 +891,20 @@ export default function PlaylistDetailPage() {
                                                 {playlistItem.track.album.title}
                                             </p>
 
-                                            {/* Codec/Bitrate column (hidden on mobile) */}
+                                            {/* Codec/Bitrate column OR YT badge (hidden on mobile) */}
                                             <div className="hidden md:flex items-center justify-end">
                                                 {(() => {
+                                                    // Show YT badge if no local file
+                                                    if (isYouTubeTrack) {
+                                                        return (
+                                                            <span
+                                                                className="flex-shrink-0 px-1 py-0.5 text-[9px] font-semibold rounded bg-red-600/80 text-white leading-none"
+                                                                title="Will stream from YouTube Music"
+                                                            >
+                                                                YT
+                                                            </span>
+                                                        );
+                                                    }
                                                     const codec = getCodecLabel(
                                                         playlistItem.track.mime,
                                                         playlistItem.track.filePath
