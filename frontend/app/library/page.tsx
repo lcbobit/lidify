@@ -17,7 +17,7 @@ import { LibraryTabs } from "@/features/library/components/LibraryTabs";
 import { ArtistsGrid } from "@/features/library/components/ArtistsGrid";
 import { AlbumsGrid } from "@/features/library/components/AlbumsGrid";
 import { TracksList } from "@/features/library/components/TracksList";
-import { Shuffle, ListFilter } from "lucide-react";
+import { Shuffle } from "lucide-react";
 
 export default function LibraryPage() {
     const router = useRouter();
@@ -30,10 +30,27 @@ export default function LibraryPage() {
     const initialPage = parseInt(searchParams.get("page") || "1", 10) || 1;
 
     // Filter state (owned = your library, discovery = discovery weekly artists)
-    const [filter, setFilter] = useState<LibraryFilter>("owned");
+    // Initialize from localStorage if available
+    const [filter, setFilter] = useState<LibraryFilter>(() => {
+        if (typeof window !== "undefined") {
+            const saved = localStorage.getItem("library-filter");
+            if (saved && ["owned", "discovery", "all"].includes(saved)) {
+                return saved as LibraryFilter;
+            }
+        }
+        return "owned";
+    });
 
     // Sort and pagination state
-    const [sortBy, setSortBy] = useState<SortOption>(initialSortBy);
+    const [sortBy, setSortBy] = useState<SortOption>(() => {
+        // URL param takes precedence, then localStorage
+        if (initialSortBy !== "name") return initialSortBy;
+        if (typeof window !== "undefined") {
+            const saved = localStorage.getItem("library-sortBy");
+            if (saved) return saved as SortOption;
+        }
+        return initialSortBy;
+    });
     const [itemsPerPage, setItemsPerPage] = useState<number>(() => {
         // Initialize from localStorage if available
         if (typeof window !== "undefined") {
@@ -46,7 +63,6 @@ export default function LibraryPage() {
         return 50;
     });
     const [currentPage, setCurrentPage] = useState(initialPage);
-    const [showFilters, setShowFilters] = useState(false);
     const isFirstRender = useRef(true);
 
     // Use custom hooks with server-side pagination
@@ -99,10 +115,18 @@ export default function LibraryPage() {
         window.history.replaceState(null, "", newUrl);
     }, [currentPage, searchParams]);
 
-    // Persist itemsPerPage to localStorage
+    // Persist settings to localStorage
     useEffect(() => {
         localStorage.setItem("library-items-per-page", itemsPerPage.toString());
     }, [itemsPerPage]);
+
+    useEffect(() => {
+        localStorage.setItem("library-filter", filter);
+    }, [filter]);
+
+    useEffect(() => {
+        localStorage.setItem("library-sortBy", sortBy);
+    }, [sortBy]);
 
     // Reset page when filter or sort changes (skip on first render to preserve URL state)
     useEffect(() => {
@@ -232,19 +256,6 @@ export default function LibraryPage() {
                             <Shuffle className="w-4 h-4" />
                         </button>
 
-                        {/* Filter Toggle */}
-                        <button
-                            onClick={() => setShowFilters(!showFilters)}
-                            className={`flex items-center justify-center w-8 h-8 rounded-full transition-all ${
-                                showFilters
-                                    ? "bg-white/20 text-white"
-                                    : "bg-white/5 text-gray-400 hover:text-white hover:bg-white/10"
-                            }`}
-                            title="Show Filters"
-                        >
-                            <ListFilter className="w-4 h-4" />
-                        </button>
-
                         {/* Item Count */}
                         <span className="text-sm text-gray-400 ml-2">
                             {totalItems.toLocaleString()}{" "}
@@ -257,9 +268,8 @@ export default function LibraryPage() {
                     </div>
                 </div>
 
-                {/* Expandable Filters Row */}
-                {showFilters && (
-                    <div className="flex flex-wrap items-center gap-2 mb-6 pb-4 border-b border-white/5">
+                {/* Filters Row - Always visible */}
+                <div className="flex flex-wrap items-center gap-2 mb-6 pb-4 border-b border-white/5">
                         {/* Filter Toggle (Owned / Discovery / All) - Only show for artists and albums */}
                         {(activeTab === "artists" ||
                             activeTab === "albums") && (
@@ -268,7 +278,7 @@ export default function LibraryPage() {
                                     onClick={() => setFilter("owned")}
                                     className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all ${
                                         filter === "owned"
-                                            ? "bg-[#ecb200] text-black"
+                                            ? "bg-white text-black"
                                             : "bg-white/5 text-gray-400 hover:text-white hover:bg-white/10"
                                     }`}
                                 >
@@ -278,7 +288,7 @@ export default function LibraryPage() {
                                     onClick={() => setFilter("discovery")}
                                     className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all ${
                                         filter === "discovery"
-                                            ? "bg-purple-500 text-white"
+                                            ? "bg-white text-black"
                                             : "bg-white/5 text-gray-400 hover:text-white hover:bg-white/10"
                                     }`}
                                 >
@@ -288,7 +298,7 @@ export default function LibraryPage() {
                                     onClick={() => setFilter("all")}
                                     className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all ${
                                         filter === "all"
-                                            ? "bg-white/20 text-white"
+                                            ? "bg-white text-black"
                                             : "bg-white/5 text-gray-400 hover:text-white hover:bg-white/10"
                                     }`}
                                 >
@@ -306,13 +316,12 @@ export default function LibraryPage() {
                             <option value="name">Name (A-Z)</option>
                             <option value="name-desc">Name (Z-A)</option>
                             <option value="dateAdded">Date Added</option>
+                            <option value="lastPlayed">Last Played</option>
                             {activeTab === "albums" && (
                                 <option value="recent">Year (Newest)</option>
                             )}
                             {activeTab === "artists" && (
                                 <>
-                                    <option value="lastPlayed">Last Played</option>
-                                    <option value="tracks">Most Tracks</option>
                                 </>
                             )}
                         </select>
@@ -329,7 +338,6 @@ export default function LibraryPage() {
                             <option value={250}>250 per page</option>
                         </select>
                     </div>
-                )}
 
                 {/* Top Pagination */}
                 {totalPages > 1 && (
@@ -374,56 +382,58 @@ export default function LibraryPage() {
                     </div>
                 )}
 
-                {activeTab === "artists" && (
-                    <ArtistsGrid
-                        artists={artists}
-                        isLoading={isLoading}
-                        onPlay={playArtist}
-                        onDelete={(id, name) =>
-                            setDeleteConfirm({
-                                isOpen: true,
-                                type: "artist",
-                                id,
-                                title: name,
-                            })
-                        }
-                    />
-                )}
+                <div className={`transition-opacity duration-200 ${isLoading ? "opacity-50 pointer-events-none" : ""}`}>
+                    {activeTab === "artists" && (
+                        <ArtistsGrid
+                            artists={artists}
+                            isLoading={isLoading}
+                            onPlay={playArtist}
+                            onDelete={(id, name) =>
+                                setDeleteConfirm({
+                                    isOpen: true,
+                                    type: "artist",
+                                    id,
+                                    title: name,
+                                })
+                            }
+                        />
+                    )}
 
-                {activeTab === "albums" && (
-                    <AlbumsGrid
-                        albums={albums}
-                        isLoading={isLoading}
-                        onPlay={playAlbum}
-                        onDelete={(id, title) =>
-                            setDeleteConfirm({
-                                isOpen: true,
-                                type: "album",
-                                id,
-                                title,
-                            })
-                        }
-                    />
-                )}
+                    {activeTab === "albums" && (
+                        <AlbumsGrid
+                            albums={albums}
+                            isLoading={isLoading}
+                            onPlay={playAlbum}
+                            onDelete={(id, title) =>
+                                setDeleteConfirm({
+                                    isOpen: true,
+                                    type: "album",
+                                    id,
+                                    title,
+                                })
+                            }
+                        />
+                    )}
 
-                {activeTab === "tracks" && (
-                    <TracksList
-                        tracks={tracks}
-                        isLoading={isLoading}
-                        currentTrackId={currentTrack?.id}
-                        onPlay={handlePlayTracks}
-                        onAddToQueue={addTrackToQueue}
-                        onAddToPlaylist={addTrackToPlaylist}
-                        onDelete={(id: string, title: string) =>
-                            setDeleteConfirm({
-                                isOpen: true,
-                                type: "track",
-                                id,
-                                title,
-                            })
-                        }
-                    />
-                )}
+                    {activeTab === "tracks" && (
+                        <TracksList
+                            tracks={tracks}
+                            isLoading={isLoading}
+                            currentTrackId={currentTrack?.id}
+                            onPlay={handlePlayTracks}
+                            onAddToQueue={addTrackToQueue}
+                            onAddToPlaylist={addTrackToPlaylist}
+                            onDelete={(id: string, title: string) =>
+                                setDeleteConfirm({
+                                    isOpen: true,
+                                    type: "track",
+                                    id,
+                                    title,
+                                })
+                            }
+                        />
+                    )}
+                </div>
 
                 {/* Pagination */}
                 {totalPages > 1 && (

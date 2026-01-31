@@ -476,6 +476,7 @@ class ApiClient {
         albumId?: string;
         limit?: number;
         offset?: number;
+        sortBy?: string;
     }) {
         return this.request<{
             tracks: any[];
@@ -1927,7 +1928,8 @@ class ApiClient {
         timeframe: "7d" | "28d" | "90d" | "all" = "28d",
         mode: "safe" | "adjacent" | "adventurous" | "mix" = "mix",
         includeLibrary = false,
-        source: "auto" | "ai" | "lastfm" = "auto"
+        source: "auto" | "ai" | "lastfm" = "auto",
+        refresh = false
     ) {
         return this.request<{
             recommendations: Array<{
@@ -1977,7 +1979,7 @@ class ApiClient {
             mode: "safe" | "adjacent" | "adventurous" | "mix";
             timeframe: "7d" | "28d" | "90d" | "all";
             generatedAt: string;
-        }>(`/discover/recommendations?limit=${limit}&timeframe=${timeframe}&mode=${mode}&includeLibrary=${includeLibrary}&source=${source}`);
+        }>(`/discover/recommendations?limit=${limit}&timeframe=${timeframe}&mode=${mode}&includeLibrary=${includeLibrary}&source=${source}${refresh ? "&refresh=true" : ""}`);
     }
 
     // API Keys Management

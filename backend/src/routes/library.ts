@@ -624,116 +624,14 @@ router.get("/recently-added", async (req, res) => {
             albumCounts.map((ac) => [ac.artistId, ac._count.id])
         );
 
-        // ========== ON-DEMAND IMAGE FETCHING FOR RECENTLY ADDED ==========
-        // For artists without heroUrl, fetch images on-demand
-        const artistsWithImages = await Promise.all(
-            recentArtists.map(async (artist) => {
-                let coverArt = artist.heroUrl;
+        // Return artists with existing heroUrl - background enrichment worker handles missing images
+        const artistsWithAlbumCount = recentArtists.map((artist) => ({
+            ...artist,
+            coverArt: artist.heroUrl,
+            albumCount: albumCountMap.get(artist.id) || 0,
+        }));
 
-                if (!coverArt) {
-                    console.log(
-                        `[IMAGE] Fetching image on-demand for ${artist.name}...`
-                    );
-
-                    // Check Redis cache first
-                    const cacheKey = `hero-image:${artist.id}`;
-                    try {
-                        const cached = await redisClient.get(cacheKey);
-                        if (cached) {
-                            coverArt = cached;
-                            console.log(`  Found cached image`);
-                        }
-                    } catch (err) {
-                        // Redis errors are non-critical
-                    }
-
-                    // Try Fanart.tv if we have real MBID
-                    if (
-                        !coverArt &&
-                        artist.mbid &&
-                        !artist.mbid.startsWith("temp-")
-                    ) {
-                        try {
-                            coverArt = await fanartService.getArtistImage(
-                                artist.mbid
-                            );
-                        } catch (err) {
-                            // Fanart.tv failed, continue to next source
-                        }
-                    }
-
-                    // Fallback to Deezer
-                    if (!coverArt) {
-                        try {
-                            coverArt = await deezerService.getArtistImage(
-                                artist.name
-                            );
-                        } catch (err) {
-                            // Deezer failed, continue to next source
-                        }
-                    }
-
-                    // Fallback to Last.fm
-                    if (!coverArt) {
-                        try {
-                            const validMbid =
-                                artist.mbid && !artist.mbid.startsWith("temp-")
-                                    ? artist.mbid
-                                    : undefined;
-                            const lastfmInfo =
-                                await lastFmService.getArtistInfo(
-                                    artist.name,
-                                    validMbid
-                                );
-
-                            if (
-                                lastfmInfo.image &&
-                                lastfmInfo.image.length > 0
-                            ) {
-                                const largestImage =
-                                    lastfmInfo.image.find(
-                                        (img: any) =>
-                                            img.size === "extralarge" ||
-                                            img.size === "mega"
-                                    ) ||
-                                    lastfmInfo.image[
-                                        lastfmInfo.image.length - 1
-                                    ];
-
-                                if (largestImage && largestImage["#text"]) {
-                                    coverArt = largestImage["#text"];
-                                    console.log(`  Found Last.fm image`);
-                                }
-                            }
-                        } catch (err) {
-                            // Last.fm failed, leave as null
-                        }
-                    }
-
-                    // Cache the result for 7 days
-                    if (coverArt) {
-                        try {
-                            await redisClient.setEx(
-                                cacheKey,
-                                7 * 24 * 60 * 60,
-                                coverArt
-                            );
-                            console.log(`  Cached image for 7 days`);
-                        } catch (err) {
-                            // Redis errors are non-critical
-                        }
-                    }
-                }
-
-                return {
-                    ...artist,
-                    coverArt,
-                    albumCount: albumCountMap.get(artist.id) || 0,
-                };
-            })
-        );
-
-        res.json({ artists: artistsWithImages });
+        res.json({ artists: artistsWithAlbumCount });
     } catch (error) {
         console.error("Get recently added error:", error);
         res.status(500).json({ error: "Failed to fetch recently added" });
@@ -1142,6 +1040,9 @@ router.get("/artists/:id", async (req, res) => {
 
         const artistInclude = {
             albums: {
+                where: {
+                    location: "LIBRARY", // Only show LIBRARY albums, not DISCOVER/playlist albums
+                },
                 orderBy: [{ year: "desc" as const }, { title: "asc" as const }],
                 include: {
                     tracks: {
@@ -1202,7 +1103,7 @@ router.get("/artists/:id", async (req, res) => {
         }
 
         const isOwnedArtist = artist.albums.some(
-            (album) => album.tracks.length > 0
+            (album) => album.location === "LIBRARY" && album.tracks.length > 0
         );
         const skipExternal = isOwnedArtist && !includeExternal;
 
@@ -2074,6 +1975,58 @@ router.get("/albums", async (req, res) => {
             }
         }
 
+        // Handle lastPlayed sorting separately (requires join with Play table)
+        if (sortBy === "lastPlayed") {
+            // Get album IDs ordered by last play time
+            const albumsWithLastPlayed = await prisma.$queryRaw<{ albumId: string; lastPlayed: Date }[]>`
+                SELECT DISTINCT t."albumId", MAX(p."playedAt") as "lastPlayed"
+                FROM "Play" p
+                JOIN "Track" t ON t.id = p."trackId"
+                GROUP BY t."albumId"
+                ORDER BY "lastPlayed" DESC
+            `;
+
+            const orderedAlbumIds = albumsWithLastPlayed.map((a) => a.albumId);
+
+            // Get all albums matching filter
+            const allAlbums = await prisma.album.findMany({
+                where,
+                include: {
+                    artist: {
+                        select: {
+                            id: true,
+                            mbid: true,
+                            name: true,
+                        },
+                    },
+                },
+            });
+
+            // Sort by lastPlayed order, then add unplayed albums at the end
+            const albumsById = new Map(allAlbums.map((a) => [a.id, a]));
+            const playedAlbums = orderedAlbumIds
+                .map((id) => albumsById.get(id))
+                .filter(Boolean) as typeof allAlbums;
+            const unplayedAlbums = allAlbums.filter((a) => !orderedAlbumIds.includes(a.id));
+            const sortedAlbums = [...playedAlbums, ...unplayedAlbums];
+
+            // Apply pagination
+            const paginatedAlbums = sortedAlbums.slice(offset, offset + limit);
+            const total = sortedAlbums.length;
+
+            const albums = paginatedAlbums.map((album) => ({
+                ...album,
+                coverArt: album.coverUrl,
+            }));
+
+            return res.json({
+                albums,
+                total,
+                offset,
+                limit,
+            });
+        }
+
         // Determine orderBy based on sortBy parameter
         let orderBy: any = { title: "asc" };
         switch (sortBy) {
@@ -2209,16 +2162,82 @@ router.get("/albums/:id", async (req, res) => {
     }
 });
 
-// GET /library/tracks?albumId=&limit=100&offset=0
+// GET /library/tracks?albumId=&limit=100&offset=0&sortBy=name
 router.get("/tracks", async (req, res) => {
     try {
-        const { albumId, limit: limitParam = "100", offset: offsetParam = "0" } = req.query;
+        const { albumId, limit: limitParam = "100", offset: offsetParam = "0", sortBy = "name" } = req.query;
         const limit = parseInt(limitParam as string, 10) || 100;
         const offset = parseInt(offsetParam as string, 10) || 0;
 
-        const where: any = {};
+        const where: any = {
+            album: { location: "LIBRARY" }, // Only LIBRARY tracks
+        };
         if (albumId) {
             where.albumId = albumId as string;
+        }
+
+        // Handle lastPlayed sorting separately
+        if (sortBy === "lastPlayed" && !albumId) {
+            // Get track IDs ordered by last play time
+            const tracksWithLastPlayed = await prisma.$queryRaw<{ trackId: string; lastPlayed: Date }[]>`
+                SELECT "trackId", MAX("playedAt") as "lastPlayed"
+                FROM "Play"
+                GROUP BY "trackId"
+                ORDER BY "lastPlayed" DESC
+            `;
+
+            const orderedTrackIds = tracksWithLastPlayed.map((t) => t.trackId);
+
+            // Get all library tracks
+            const allTracks = await prisma.track.findMany({
+                where,
+                include: {
+                    album: {
+                        include: {
+                            artist: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                },
+                            },
+                        },
+                    },
+                },
+            });
+
+            // Sort by lastPlayed order, then add unplayed tracks at the end
+            const tracksById = new Map(allTracks.map((t) => [t.id, t]));
+            const playedTracks = orderedTrackIds
+                .map((id) => tracksById.get(id))
+                .filter(Boolean) as typeof allTracks;
+            const unplayedTracks = allTracks.filter((t) => !orderedTrackIds.includes(t.id));
+            const sortedTracks = [...playedTracks, ...unplayedTracks];
+
+            // Apply pagination
+            const paginatedTracks = sortedTracks.slice(offset, offset + limit);
+            const total = sortedTracks.length;
+
+            const tracks = paginatedTracks.map((track) => ({
+                ...track,
+                album: {
+                    ...track.album,
+                    coverArt: track.album?.coverUrl,
+                },
+            }));
+
+            return res.json({ tracks, total, offset, limit });
+        }
+
+        // Determine orderBy based on sortBy parameter
+        let orderBy: any = albumId ? [{ discNo: "asc" }, { trackNo: "asc" }] : { title: "asc" };
+        switch (sortBy) {
+            case "name-desc":
+                orderBy = { title: "desc" };
+                break;
+            case "dateAdded":
+                orderBy = { fileModified: "desc" };
+                break;
+            // "name" is default (title asc)
         }
 
         const [tracksData, total] = await Promise.all([
@@ -2226,7 +2245,7 @@ router.get("/tracks", async (req, res) => {
                 where,
                 skip: offset,
                 take: limit,
-                orderBy: albumId ? [{ discNo: "asc" }, { trackNo: "asc" }] : { id: "desc" },
+                orderBy,
                 include: {
                     album: {
                         include: {
@@ -2248,7 +2267,7 @@ router.get("/tracks", async (req, res) => {
             ...track,
             album: {
                 ...track.album,
-                coverArt: track.album.coverUrl,
+                coverArt: track.album?.coverUrl,
             },
         }));
 

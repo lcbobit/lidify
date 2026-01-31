@@ -589,11 +589,50 @@ router.get("/discover/:nameOrMbid", async (req, res) => {
             return res.status(404).json({ error: "Artist not found" });
         }
 
-        // Get artist info from Last.fm
-        const lastFmInfo = await lastFmService.getArtistInfo(
-            artistName,
-            mbid || undefined
-        );
+        // Fetch all data in parallel for faster response
+        const [lastFmInfo, topTracksResult, imageResult, releaseGroupsResult] = await Promise.all([
+            // Last.fm artist info (bio, tags, etc.)
+            lastFmService.getArtistInfo(artistName, mbid || undefined).catch(() => null),
+            
+            // Last.fm top tracks
+            (mbid || artistName) 
+                ? lastFmService.getArtistTopTracks(mbid || "", artistName, 10).catch(() => [])
+                : Promise.resolve([]),
+            
+            // Artist image (try Fanart.tv, then Deezer)
+            (async () => {
+                // Try Fanart.tv first (if we have MBID)
+                if (mbid) {
+                    try {
+                        const fanartImage = await fanartService.getArtistImage(mbid);
+                        if (fanartImage) {
+                            console.log(`Fanart.tv image for ${artistName}`);
+                            return fanartImage;
+                        }
+                    } catch {
+                        console.log(`✗ Failed to get Fanart.tv image for ${artistName}`);
+                    }
+                }
+                // Fallback to Deezer
+                try {
+                    const deezerImage = await deezerService.getArtistImage(artistName);
+                    if (deezerImage) {
+                        console.log(`Deezer image for ${artistName}`);
+                        return deezerImage;
+                    }
+                } catch {
+                    console.log(`✗ Failed to get Deezer image for ${artistName}`);
+                }
+                return null;
+            })(),
+            
+            // MusicBrainz discography
+            mbid 
+                ? musicBrainzService.getReleaseGroups(mbid).catch(() => [])
+                : Promise.resolve([]),
+        ]);
+
+        const topTracks = topTracksResult || [];
 
         // Filter out generic "multiple artists" biographies from Last.fm
         // These occur when Last.fm groups artists with the same name
@@ -616,48 +655,8 @@ router.get("/discover/:nameOrMbid", async (req, res) => {
             }
         }
 
-        // Get top tracks from Last.fm
-        let topTracks: any[] = [];
-        if (mbid || artistName) {
-            try {
-                topTracks = await lastFmService.getArtistTopTracks(
-                    mbid || "",
-                    artistName,
-                    10
-                );
-            } catch (error) {
-                console.log(`Failed to get top tracks for ${artistName}`);
-            }
-        }
-
-        // Get artist image
-        let image = null;
-
-        // Try Fanart.tv first (if we have MBID)
-        if (mbid) {
-            try {
-                image = await fanartService.getArtistImage(mbid);
-                console.log(`Fanart.tv image for ${artistName}`);
-            } catch (error) {
-                console.log(
-                    `✗ Failed to get Fanart.tv image for ${artistName}`
-                );
-            }
-        }
-
-        // Fallback to Deezer
-        if (!image) {
-            try {
-                image = await deezerService.getArtistImage(artistName);
-                if (image) {
-                    console.log(`Deezer image for ${artistName}`);
-                }
-            } catch (error) {
-                console.log(`✗ Failed to get Deezer image for ${artistName}`);
-            }
-        }
-
-        // Fallback to Last.fm (but filter placeholders)
+        // Use fetched image, or fallback to Last.fm if available
+        let image = imageResult;
         if (!image && lastFmInfo?.image) {
             const lastFmImage = lastFmService.getBestImage(lastFmInfo.image);
             // Filter out Last.fm placeholder
@@ -672,13 +671,10 @@ router.get("/discover/:nameOrMbid", async (req, res) => {
             }
         }
 
-        // Get discography from MusicBrainz
+        // Process discography from MusicBrainz
         let albums: any[] = [];
-        if (mbid) {
-            try {
-                const releaseGroups = await musicBrainzService.getReleaseGroups(
-                    mbid
-                );
+        if (releaseGroupsResult && releaseGroupsResult.length > 0) {
+            const releaseGroups = releaseGroupsResult;
 
                 // Filter albums - only show studio albums and EPs
                 // Exclude live albums, compilations, soundtracks, remixes, etc.
@@ -757,20 +753,14 @@ router.get("/discover/:nameOrMbid", async (req, res) => {
                     })
                 );
 
-                // Sort albums
-                albums.sort((a: any, b: any) => {
-                    // Sort by year descending (newest first)
-                    if (a.year && b.year) return b.year - a.year;
-                    if (a.year) return -1;
-                    if (b.year) return 1;
-                    return 0;
-                });
-            } catch (error) {
-                console.error(
-                    `Failed to get discography for ${artistName}:`,
-                    error
-                );
-            }
+            // Sort albums
+            albums.sort((a: any, b: any) => {
+                // Sort by year descending (newest first)
+                if (a.year && b.year) return b.year - a.year;
+                if (a.year) return -1;
+                if (b.year) return 1;
+                return 0;
+            });
         }
 
         // Get similar artists from Last.fm and fetch images

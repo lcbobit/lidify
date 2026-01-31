@@ -12,6 +12,7 @@ import { Router, Request, Response } from "express";
 import path from "path";
 import fs from "fs";
 import axios from "axios";
+import sharp from "sharp";
 import { prisma } from "../utils/db";
 import { config } from "../config";
 import { requireSubsonicAuth } from "../middleware/subsonicAuth";
@@ -466,6 +467,7 @@ router.get("/getAlbum.view", async (req: Request, res: Response) => {
                     title: album.title,
                     coverUrl: album.coverUrl,
                     year: album.year,
+                    createdAt: album.createdAt,
                     artist: album.artist,
                 },
             }, {
@@ -571,6 +573,7 @@ router.get("/getSong.view", async (req: Request, res: Response) => {
                         title: track.album.title,
                         coverUrl: track.album.coverUrl,
                         year: track.album.year,
+                        createdAt: track.album.createdAt,
                         artist: track.album.artist,
                     },
                 }, {
@@ -741,6 +744,8 @@ router.get("/getAlbumList2.view", async (req: Request, res: Response) => {
                 break;
             case "newest":
                 orderBy = { createdAt: "desc" };
+                // Only show LIBRARY albums (exclude playlist-imported albums)
+                where.location = "LIBRARY";
                 break;
             case "alphabeticalByName":
                 orderBy = { title: "asc" };
@@ -896,6 +901,7 @@ router.get("/getRandomSongs.view", async (req: Request, res: Response) => {
                         title: track.album!.title,
                         coverUrl: track.album!.coverUrl,
                         year: track.album!.year,
+                        createdAt: track.album!.createdAt,
                         artist: track.album!.artist,
                     },
                 }, {
@@ -950,26 +956,32 @@ router.get("/search3.view", async (req: Request, res: Response) => {
         }
 
         // Build where clauses - empty search term returns all results
+        // Filter to LIBRARY only to exclude playlist-imported content from library sync
         const artistWhere = searchTerm
-            ? { name: { contains: searchTerm, mode: "insensitive" as const } }
-            : {};
+            ? { 
+                  name: { contains: searchTerm, mode: "insensitive" as const },
+                  albums: { some: { location: "LIBRARY" } }, // Only artists with LIBRARY albums
+              }
+            : { albums: { some: { location: "LIBRARY" } } };
         const albumWhere = searchTerm
             ? {
+                  location: "LIBRARY", // Only LIBRARY albums
                   OR: [
                       { title: { contains: searchTerm, mode: "insensitive" as const } },
                       { artist: { name: { contains: searchTerm, mode: "insensitive" as const } } },
                   ],
               }
-            : {};
+            : { location: "LIBRARY" };
         const trackWhere = searchTerm
             ? {
+                  album: { location: "LIBRARY" }, // Only tracks from LIBRARY albums
                   OR: [
                       { title: { contains: searchTerm, mode: "insensitive" as const } },
                       { album: { title: { contains: searchTerm, mode: "insensitive" as const } } },
                       { album: { artist: { name: { contains: searchTerm, mode: "insensitive" as const } } } },
                   ],
               }
-            : {};
+            : { album: { location: "LIBRARY" } };
 
         // Run all searches in parallel for better performance
         const [artists, albums, songs] = await Promise.all([
@@ -980,7 +992,7 @@ router.get("/search3.view", async (req: Request, res: Response) => {
                     id: true,
                     name: true,
                     heroUrl: true,
-                    createdAt: true,
+                    lastSynced: true, // Use lastSynced for "date added" sorting (when content was last added)
                     _count: { select: { albums: true } },
                 },
                 orderBy: { name: "asc" },
@@ -1079,8 +1091,8 @@ router.get("/search3.view", async (req: Request, res: Response) => {
                             coverArt: a.heroUrl ? `ar-${a.id}` : undefined,
                             albumCount: a._count?.albums || 0,
                             artistImageUrl: a.heroUrl || undefined,
-                            created: a.createdAt?.toISOString() || "",
-                            played: lastPlay ? lastPlay.toISOString() : undefined, // Must always include, even if empty
+                            created: a.lastSynced?.toISOString() || "", // lastSynced = when content was last added
+                            played: lastPlay ? lastPlay.toISOString() : undefined,
                             playCount,
                         };
                     }),
@@ -1115,6 +1127,7 @@ router.get("/search3.view", async (req: Request, res: Response) => {
                                     title: track.album!.title,
                                     coverUrl: track.album!.coverUrl,
                                     year: track.album!.year,
+                                    createdAt: track.album!.createdAt,
                                     artist: track.album!.artist,
                                 },
                             }, {
@@ -1335,6 +1348,212 @@ router.get("/getCoverArt.view", async (req: Request, res: Response) => {
     try {
         const { type, id: entityId } = parseSubsonicId(id as string);
 
+        // Cover cache directory
+        const coverCacheDir = path.join(config.music.transcodeCachePath, "../covers");
+
+        // Ensure covers directory exists
+        if (!fs.existsSync(coverCacheDir)) {
+            fs.mkdirSync(coverCacheDir, { recursive: true });
+        }
+
+        // Handle playlist cover art (2x2 mosaic of album covers)
+        if (type === "playlist") {
+            const playlistCachePath = path.join(coverCacheDir, `playlist-${entityId}.jpg`);
+
+            // Check if cached mosaic exists and is recent (24h)
+            if (fs.existsSync(playlistCachePath)) {
+                const stats = fs.statSync(playlistCachePath);
+                const ageMs = Date.now() - stats.mtimeMs;
+                if (ageMs < 24 * 60 * 60 * 1000) {
+                    res.set('Content-Type', 'image/jpeg');
+                    res.set('Cache-Control', 'public, max-age=86400');
+                    return fs.createReadStream(playlistCachePath).pipe(res);
+                }
+            }
+
+            // Get first 4 unique album covers from playlist
+            const playlist = await prisma.playlist.findUnique({
+                where: { id: entityId },
+                include: {
+                    items: {
+                        orderBy: { sort: "asc" },
+                        take: 20, // Get more to find unique covers
+                        include: {
+                            track: {
+                                include: {
+                                    album: { select: { coverUrl: true } },
+                                },
+                            },
+                        },
+                    },
+                },
+            });
+
+            if (!playlist) {
+                return sendSubsonicError(
+                    res,
+                    SubsonicErrorCode.NOT_FOUND,
+                    "Playlist not found",
+                    format,
+                    req.query.callback as string
+                );
+            }
+
+            // Get unique cover URLs
+            const coverUrls: string[] = [];
+            const seenUrls = new Set<string>();
+            for (const item of playlist.items) {
+                const coverUrl = item.track?.album?.coverUrl;
+                if (coverUrl && !seenUrls.has(coverUrl)) {
+                    seenUrls.add(coverUrl);
+                    coverUrls.push(coverUrl);
+                    if (coverUrls.length >= 4) break;
+                }
+            }
+
+            if (coverUrls.length === 0) {
+                return sendSubsonicError(
+                    res,
+                    SubsonicErrorCode.NOT_FOUND,
+                    "No cover art available for playlist",
+                    format,
+                    req.query.callback as string
+                );
+            }
+
+            try {
+                // Fetch cover images
+                const imageBuffers: Buffer[] = [];
+                for (const url of coverUrls) {
+                    try {
+                        let buffer: Buffer;
+                        if (url.startsWith("native:")) {
+                            // Local file
+                            const nativePath = url.replace("native:", "");
+                            const filePath = path.join(coverCacheDir, nativePath);
+                            if (fs.existsSync(filePath)) {
+                                buffer = fs.readFileSync(filePath);
+                            } else {
+                                continue;
+                            }
+                        } else {
+                            // Remote URL
+                            const response = await axios.get(url, {
+                                responseType: 'arraybuffer',
+                                timeout: 5000,
+                            });
+                            buffer = Buffer.from(response.data);
+                        }
+                        imageBuffers.push(buffer);
+                    } catch (err) {
+                        // Skip failed images
+                        console.warn(`[Subsonic] Failed to fetch cover: ${url}`);
+                    }
+                }
+
+                if (imageBuffers.length === 0) {
+                    return sendSubsonicError(
+                        res,
+                        SubsonicErrorCode.NOT_FOUND,
+                        "Failed to fetch cover images",
+                        format,
+                        req.query.callback as string
+                    );
+                }
+
+                // Generate mosaic
+                const tileSize = 300;
+                const outputSize = 600;
+
+                // Resize all images to tile size
+                const resizedImages = await Promise.all(
+                    imageBuffers.map(buf =>
+                        sharp(buf)
+                            .resize(tileSize, tileSize, { fit: 'cover' })
+                            .toBuffer()
+                    )
+                );
+
+                // Create 2x2 mosaic (or smaller if fewer images)
+                let mosaic: Buffer;
+                if (resizedImages.length === 1) {
+                    // Single image - just resize
+                    mosaic = await sharp(resizedImages[0])
+                        .resize(outputSize, outputSize)
+                        .jpeg({ quality: 85 })
+                        .toBuffer();
+                } else if (resizedImages.length === 2) {
+                    // 2 images - side by side
+                    mosaic = await sharp({
+                        create: {
+                            width: outputSize,
+                            height: outputSize,
+                            channels: 3,
+                            background: { r: 30, g: 30, b: 30 },
+                        },
+                    })
+                        .composite([
+                            { input: resizedImages[0], left: 0, top: 0 },
+                            { input: resizedImages[1], left: tileSize, top: 0 },
+                        ])
+                        .jpeg({ quality: 85 })
+                        .toBuffer();
+                } else if (resizedImages.length === 3) {
+                    // 3 images - 2 on top, 1 centered bottom
+                    const halfTile = Math.floor(tileSize / 2);
+                    mosaic = await sharp({
+                        create: {
+                            width: outputSize,
+                            height: outputSize,
+                            channels: 3,
+                            background: { r: 30, g: 30, b: 30 },
+                        },
+                    })
+                        .composite([
+                            { input: resizedImages[0], left: 0, top: 0 },
+                            { input: resizedImages[1], left: tileSize, top: 0 },
+                            { input: resizedImages[2], left: halfTile, top: tileSize },
+                        ])
+                        .jpeg({ quality: 85 })
+                        .toBuffer();
+                } else {
+                    // 4+ images - 2x2 grid
+                    mosaic = await sharp({
+                        create: {
+                            width: outputSize,
+                            height: outputSize,
+                            channels: 3,
+                            background: { r: 30, g: 30, b: 30 },
+                        },
+                    })
+                        .composite([
+                            { input: resizedImages[0], left: 0, top: 0 },
+                            { input: resizedImages[1], left: tileSize, top: 0 },
+                            { input: resizedImages[2], left: 0, top: tileSize },
+                            { input: resizedImages[3], left: tileSize, top: tileSize },
+                        ])
+                        .jpeg({ quality: 85 })
+                        .toBuffer();
+                }
+
+                // Cache the mosaic
+                fs.writeFileSync(playlistCachePath, mosaic);
+
+                res.set('Content-Type', 'image/jpeg');
+                res.set('Cache-Control', 'public, max-age=86400');
+                return res.send(mosaic);
+            } catch (err) {
+                console.error('[Subsonic] Failed to generate playlist mosaic:', err);
+                return sendSubsonicError(
+                    res,
+                    SubsonicErrorCode.GENERIC,
+                    "Failed to generate playlist cover",
+                    format,
+                    req.query.callback as string
+                );
+            }
+        }
+
         let imageUrl: string | null = null;
 
         if (type === "album") {
@@ -1376,9 +1595,7 @@ router.get("/getCoverArt.view", async (req: Request, res: Response) => {
             );
         }
 
-        // Cover cache directory
-        const coverCacheDir = path.join(config.music.transcodeCachePath, "../covers");
-
+        // coverCacheDir already defined above for playlist handling
         // Ensure covers directory exists
         if (!fs.existsSync(coverCacheDir)) {
             fs.mkdirSync(coverCacheDir, { recursive: true });
@@ -1526,20 +1743,29 @@ router.get("/getPlaylists.view", async (req: Request, res: Response) => {
             where: { userId: req.user!.id },
             include: {
                 _count: { select: { items: true } },
+                items: {
+                    include: {
+                        track: { select: { duration: true } },
+                    },
+                },
             },
             orderBy: { createdAt: "desc" },
         });
 
-        const playlistList = playlists.map((pl) => ({
-            id: `pl-${pl.id}`,
-            name: pl.name,
-            songCount: pl._count.items,
-            duration: 0, // Would need to sum track durations
-            public: false,
-            owner: req.user!.username,
-            created: pl.createdAt.toISOString(),
-            changed: pl.createdAt.toISOString(), // No updatedAt field, use createdAt
-        }));
+        const playlistList = playlists.map((pl) => {
+            const duration = pl.items.reduce((sum, item) => sum + (item.track?.duration || 0), 0);
+            return {
+                id: `pl-${pl.id}`,
+                name: pl.name,
+                songCount: pl._count.items,
+                duration,
+                public: false,
+                owner: req.user!.username,
+                created: pl.createdAt.toISOString(),
+                changed: pl.createdAt.toISOString(), // No updatedAt field, use createdAt
+                coverArt: pl._count.items > 0 ? `pl-${pl.id}` : undefined, // Mosaic generated on demand
+            };
+        });
 
         sendSubsonicSuccess(
             res,
@@ -1630,6 +1856,7 @@ router.get("/getPlaylist.view", async (req: Request, res: Response) => {
                         title: item.track.album!.title,
                         coverUrl: item.track.album!.coverUrl,
                         year: item.track.album!.year,
+                        createdAt: item.track.album!.createdAt,
                         artist: item.track.album!.artist,
                     },
                 }, {
@@ -1655,6 +1882,7 @@ router.get("/getPlaylist.view", async (req: Request, res: Response) => {
                     owner: req.user!.username,
                     created: playlist.createdAt.toISOString(),
                     changed: playlist.createdAt.toISOString(), // No updatedAt field
+                    coverArt: songs.length > 0 ? `pl-${playlist.id}` : undefined,
                     entry: songs,
                 },
             },
@@ -2265,6 +2493,7 @@ router.get("/getTopSongs.view", async (req: Request, res: Response) => {
                         title: track.album!.title,
                         coverUrl: track.album!.coverUrl,
                         year: track.album!.year,
+                        createdAt: track.album!.createdAt,
                         artist: track.album!.artist,
                     },
                 }, {

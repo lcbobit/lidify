@@ -24,6 +24,9 @@ interface AlbumRecommendation {
     coverUrl?: string;
     year?: number;
     reason?: string;
+    listeners?: number;
+    tags?: string[];
+    bio?: string;
 }
 
 interface DiscoverData {
@@ -255,7 +258,7 @@ export default function DiscoverPage() {
         }
 
         try {
-            const result = await api.getDiscoverRecommendations(16, targetTimeframe, targetMode, targetIncludeLibrary);
+            const result = await api.getDiscoverRecommendations(16, targetTimeframe, targetMode, targetIncludeLibrary, "auto", forceRefresh);
             setData(result);
             // Only cache if we got actual recommendations
             if (result.recommendations && result.recommendations.length > 0) {
@@ -450,12 +453,19 @@ export default function DiscoverPage() {
         return "yesterday";
     };
 
+    const formatListeners = (count: number) => {
+        if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M listeners`;
+        if (count >= 1_000) return `${(count / 1_000).toFixed(0)}K listeners`;
+        return `${count} listeners`;
+    };
+
     // Render album card
     const renderAlbumCard = (album: AlbumRecommendation, idx: number) => {
         const albumKey = `${album.artistName}:${album.albumTitle}`;
         const details = artistDetails[album.artistName];
         const isExpanded = expandedAlbum === albumKey;
         const isLoadingDetails = loadingArtist === album.artistName;
+        const bioText = album.bio?.trim();
 
         return (
             <div key={idx} className="bg-white/5 rounded-lg overflow-hidden">
@@ -469,7 +479,7 @@ export default function DiscoverPage() {
                         {album.coverUrl ? (
                             <Image
                                 src={album.coverUrl}
-                                alt={album.albumTitle}
+                                alt={album.artistName}
                                 width={64}
                                 height={64}
                                 className="w-full h-full object-cover"
@@ -500,18 +510,22 @@ export default function DiscoverPage() {
                                 <ExternalLink className="w-3 h-3" />
                             </Link>
                         </div>
-                        {/* Album Title - Secondary */}
+                        {/* Tags + Listeners */}
                         <div className="flex items-center gap-2">
-                            <p className="text-sm text-gray-200 truncate">
-                                {album.albumTitle}
-                            </p>
-                            {album.year && (
-                                <span className="text-xs text-gray-400">({album.year})</span>
+                            {album.tags && album.tags.length > 0 && (
+                                <p className="text-sm text-gray-400 truncate">
+                                    {album.tags.slice(0, 4).join(" · ")}
+                                </p>
+                            )}
+                            {album.listeners && (
+                                <span className="text-xs text-gray-500">
+                                    {formatListeners(album.listeners)}
+                                </span>
                             )}
                         </div>
                         {/* Reason */}
                         {album.reason && (
-                            <p className="text-xs text-gray-400 line-clamp-1 mt-1">
+                            <p className="text-xs text-gray-400 mt-1 line-clamp-2">
                                 {album.reason}
                             </p>
                         )}
@@ -532,7 +546,15 @@ export default function DiscoverPage() {
                 {/* Expanded Top Tracks */}
                 {isExpanded && (
                     <div className="border-t border-white/10 px-4 pb-4">
-                        <div className="pt-3 pb-2">
+                        {bioText && (
+                            <p className="text-sm text-gray-300 mb-4">
+                                {bioText}
+                            </p>
+                        )}
+                        <div className={cn(
+                            "pt-3 pb-2",
+                            bioText && "border-t border-white/10"
+                        )}>
                             <p className="text-xs text-gray-500 uppercase tracking-wider">
                                 Popular Tracks by {album.artistName}
                             </p>
@@ -658,11 +680,11 @@ export default function DiscoverPage() {
                             Discover Weekly
                         </h1>
                         <p className="text-sm text-white/60 mb-2">
-                            Top albums from artists similar to your favorites — preview before you download
+                            Artists similar to your favorites — preview before you download
                         </p>
                         {data && (
                             <div className="flex items-center gap-1 text-sm text-white/70 flex-wrap">
-                                <span>{data.recommendations.length} albums</span>
+                                <span>{data.recommendations.length} artists</span>
                                 <span>·</span>
                                 <span>Based on: {data.seedArtists.slice(0, 4).join(", ")}{data.seedArtists.length > 4 ? "..." : ""}</span>
                                 <span>·</span>
@@ -798,7 +820,7 @@ export default function DiscoverPage() {
             {data && mode === "mix" && data.sections && (
                 <div className="px-4 md:px-8 pb-32">
                     <div className="mb-4 text-sm text-gray-300">
-                        Click an album to preview top tracks • Visit artist page to add to library
+                        Click an artist to preview top tracks • Visit artist page to add to library
                     </div>
 
                     {/* Safe Section */}
@@ -849,7 +871,7 @@ export default function DiscoverPage() {
             {data && (mode !== "mix" || !data.sections) && data.recommendations.length > 0 && (
                 <div className="px-4 md:px-8 pb-32">
                     <div className="mb-4 text-sm text-gray-300">
-                        Click an album to preview top tracks • Visit artist page to add to library
+                        Click an artist to preview top tracks • Visit artist page to add to library
                     </div>
 
                     <div className="space-y-3">

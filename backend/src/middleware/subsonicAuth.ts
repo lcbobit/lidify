@@ -13,7 +13,7 @@
 
 import { Request, Response, NextFunction } from "express";
 import { createHash } from "crypto";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { prisma } from "../utils/db";
 import bcrypt from "bcrypt";
 import { decrypt } from "../utils/encryption";
@@ -209,8 +209,8 @@ export const subsonicRateLimiter = rateLimit({
     legacyHeaders: false,
     keyGenerator: (req) => {
         // Rate limit by IP + username to prevent distributed attacks on single account
-        const ip = req.ip || 'unknown';
-        const username = (req.query.u as string) || '';
+        const ip = ipKeyGenerator(req);
+        const username = (req.query.u as string) || "";
         return `subsonic:${ip}:${username}`;
     },
 });

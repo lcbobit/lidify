@@ -97,7 +97,9 @@ export const PopularTracks: React.FC<PopularTracksProps> = ({
                             <div className="flex items-center justify-center">
                                 <span
                                     className={cn(
-                                        "text-sm group-hover:hidden",
+                                        "text-sm",
+                                        // Hide number/icon on hover to show play/pause
+                                        "group-hover:hidden",
                                         isPlaying
                                             ? "text-[#ecb200]"
                                             : isPreviewPlaying
@@ -108,12 +110,19 @@ export const PopularTracks: React.FC<PopularTracksProps> = ({
                                     {isPlaying ? (
                                         <Music className="w-4 h-4 text-[#ecb200] animate-pulse" />
                                     ) : isPreviewPlaying ? (
-                                        <Radio className="w-4 h-4 text-blue-400 animate-pulse" />
+                                        <Pause className="w-4 h-4 text-blue-400" />
                                     ) : (
                                         index + 1
                                     )}
                                 </span>
-                                <Play className="w-4 h-4 text-white hidden group-hover:block" />
+                                {/* Show pause on hover when playing, play otherwise */}
+                                {isPlaying ? (
+                                    <Pause className="w-4 h-4 text-[#ecb200] hidden group-hover:block" />
+                                ) : isPreviewPlaying ? (
+                                    <Pause className="w-4 h-4 text-blue-400 hidden group-hover:block" />
+                                ) : (
+                                    <Play className="w-4 h-4 text-white hidden group-hover:block" />
+                                )}
                             </div>
 
                             {/* Title + Album Art */}
@@ -180,29 +189,9 @@ export const PopularTracks: React.FC<PopularTracksProps> = ({
                                     )}
                             </div>
 
-                            {/* Duration + Preview */}
-                            <div className="flex items-center justify-end gap-2">
-                                {isUnowned && !noPreviewTracks?.has(track.id) && (
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            onPreview(track, e);
-                                        }}
-                                        className={cn(
-                                            "p-1.5 rounded-full hover:bg-white/10 transition-all",
-                                            isPreviewPlaying
-                                                ? "opacity-100 text-blue-400"
-                                                : "opacity-0 group-hover:opacity-100 text-gray-400 hover:text-white"
-                                        )}
-                                    >
-                                        {isPreviewPlaying ? (
-                                            <Pause className="w-4 h-4" />
-                                        ) : (
-                                            <Volume2 className="w-4 h-4" />
-                                        )}
-                                    </button>
-                                )}
-                                {track.duration && (
+                            {/* Duration - only show if > 0 */}
+                            <div className="flex items-center justify-end">
+                                {track.duration > 0 && (
                                     <span className="text-sm text-gray-400 w-10 text-right">
                                         {formatDuration(track.duration)}
                                     </span>

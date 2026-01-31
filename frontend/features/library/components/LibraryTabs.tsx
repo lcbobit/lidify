@@ -8,7 +8,7 @@ interface LibraryTabsProps {
 
 export function LibraryTabs({ activeTab, onTabChange }: LibraryTabsProps) {
   return (
-    <div data-tv-section="library-tabs" className="flex gap-2 mb-4">
+    <div data-tv-section="library-tabs" className="flex gap-2">
       <button
         data-tv-card
         data-tv-card-index={0}

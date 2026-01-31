@@ -903,7 +903,23 @@ def _analyze_track_in_process(args: Tuple[str, str]) -> Tuple[str, str, Dict[str
     try:
         # Normalize path separators (Windows paths -> Unix)
         normalized_path = file_path.replace("\\", "/")
+        lower_path = normalized_path.lower()
+        if lower_path.endswith(".opus"):
+            return (
+                track_id,
+                file_path,
+                {"_error": "Skipped Opus file", "_skip": True},
+            )
         full_path = os.path.join(MUSIC_PATH, normalized_path)
+
+        if DOWNLOAD_PATH:
+            normalized_download_root = DOWNLOAD_PATH.replace("\\", "/").rstrip("/")
+            if full_path.startswith(normalized_download_root + "/"):
+                return (
+                    track_id,
+                    file_path,
+                    {"_error": "Skipped download/playlist path", "_skip": True},
+                )
 
         if not os.path.exists(full_path) and DOWNLOAD_PATH:
             fallback_path = os.path.join(DOWNLOAD_PATH, normalized_path)

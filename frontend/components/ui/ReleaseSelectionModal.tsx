@@ -16,6 +16,7 @@ import {
     Users,
     FileAudio,
     ExternalLink,
+    Link2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -107,6 +108,18 @@ export function ReleaseSelectionModal({
     const approvedReleases = releases.filter((r) => r.approved);
     const rejectedReleases = releases.filter((r) => r.rejected);
 
+    // Build size -> tracker list map for cross-seed indicator (strip Prowlarr suffix)
+    const sizeTrackersMap = new Map<number, string[]>();
+    releases.forEach((r) => {
+        const cleanIndexer = r.indexer.replace(/ \(Prowlarr\)$/, "");
+        if (cleanIndexer === "Prowlarr") return;
+        const trackers = sizeTrackersMap.get(r.size) || [];
+        if (!trackers.includes(cleanIndexer)) {
+            trackers.push(cleanIndexer);
+        }
+        sizeTrackersMap.set(r.size, trackers);
+    });
+
     return (
         <Modal
             isOpen={isOpen}
@@ -165,6 +178,7 @@ export function ReleaseSelectionModal({
                                         onGrab={handleGrabRelease}
                                         grabbing={grabbing === release.guid}
                                         disabled={!!grabbing}
+                                        sizeTrackers={sizeTrackersMap.get(release.size) || []}
                                     />
                                 ))}
                             </div>
@@ -189,6 +203,7 @@ export function ReleaseSelectionModal({
                                         grabbing={grabbing === release.guid}
                                         disabled={true}
                                         showRejections
+                                        sizeTrackers={sizeTrackersMap.get(release.size) || []}
                                     />
                                 ))}
                             </div>
@@ -206,6 +221,7 @@ interface ReleaseRowProps {
     grabbing: boolean;
     disabled: boolean;
     showRejections?: boolean;
+    sizeTrackers?: string[];
 }
 
 function ReleaseRow({
@@ -214,12 +230,14 @@ function ReleaseRow({
     grabbing,
     disabled,
     showRejections,
+    sizeTrackers = [],
 }: ReleaseRowProps) {
     return (
         <div
             className={cn(
-                "flex flex-col gap-2 p-3 rounded-lg bg-white/5 border border-white/10",
+                "flex flex-col gap-2 p-3 rounded-lg border border-white/10",
                 "hover:bg-white/10 transition-colors",
+                "bg-white/5",
                 disabled && !grabbing && "opacity-50 cursor-not-allowed"
             )}
         >
@@ -280,6 +298,31 @@ function ReleaseRow({
 
                 <div className="flex items-center gap-3 text-xs text-white/50">
                     <div className="flex items-center gap-1" title="Size">
+                        {sizeTrackers.length > 1 && (
+                            <div className="relative group">
+                                <span className="inline-flex items-center gap-0.5 mr-1.5 px-1.5 py-0.5 text-xs font-medium text-emerald-400/80 bg-emerald-500/10 border border-emerald-500/20 rounded-full cursor-default hover:bg-emerald-500/20 hover:text-emerald-300">
+                                    <Link2 className="w-3 h-3" />
+                                    <span>×{sizeTrackers.length}</span>
+                                </span>
+                                <div className="absolute z-50 left-1/2 -translate-x-1/2 bottom-full mb-2 min-w-[160px] p-2 bg-zinc-900/95 border border-zinc-700/50 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+                                    <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-medium mb-1.5">
+                                        Cross-seed matches
+                                    </div>
+                                    <ul className="space-y-1">
+                                        {sizeTrackers
+                                            .filter((tracker) => tracker !== release.indexer.replace(/ \(Prowlarr\)$/, ""))
+                                            .map((tracker) => (
+                                            <li
+                                                key={tracker}
+                                                className="text-xs text-zinc-200"
+                                            >
+                                                {tracker}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            </div>
+                        )}
                         <HardDrive className="w-3.5 h-3.5" />
                         <span>{release.sizeFormatted}</span>
                     </div>

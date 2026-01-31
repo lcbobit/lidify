@@ -16,6 +16,7 @@ import { enrichSimilarArtist } from "./artistEnrichment";
 import { lastFmService } from "../services/lastfm";
 import Redis from "ioredis";
 import { config } from "../config";
+import { getAudioAnalysisSkipReason } from "../utils/audioAnalysis";
 
 // Configuration
 const ARTIST_BATCH_SIZE = 10;
@@ -396,9 +397,23 @@ async function queueAudioAnalysis(): Promise<number> {
 
     const redis = getRedis();
     let queued = 0;
+    let skipped = 0;
 
     for (const track of tracks) {
         try {
+            const skipReason = getAudioAnalysisSkipReason(track.filePath);
+            if (skipReason) {
+                await prisma.track.update({
+                    where: { id: track.id },
+                    data: {
+                        analysisStatus: "skipped",
+                        analysisError: skipReason,
+                    },
+                });
+                skipped++;
+                continue;
+            }
+
             // Queue for the Python audio analyzer
             await redis.rpush(
                 "audio:analysis:queue",
@@ -420,8 +435,11 @@ async function queueAudioAnalysis(): Promise<number> {
         }
     }
 
-    if (queued > 0) {
-        console.log(`   ✓ Queued ${queued} tracks for audio analysis`);
+    if (queued > 0 || skipped > 0) {
+        const parts = [];
+        if (queued > 0) parts.push(`${queued} queued`);
+        if (skipped > 0) parts.push(`${skipped} skipped`);
+        console.log(`   ✓ Audio analysis: ${parts.join(", ")}`);
     }
 
     return queued;

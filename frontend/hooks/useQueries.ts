@@ -374,8 +374,8 @@ export function useRecommendationsQuery(limit: number = 10) {
     return useQuery({
         queryKey: queryKeys.recommendations(limit),
         queryFn: async () => {
-            // Use dedicated cache for main page (Last.fm source)
-            const cacheKey = "lidify_home_recommendations";
+            // Shared cache with /recommendations page for consistent results
+            const cacheKey = "lidify_lastfm_recommendations";
             let discoverData: DiscoverCacheData | null = null;
 
             // Check cache
@@ -392,9 +392,9 @@ export function useRecommendationsQuery(limit: number = 10) {
             }
 
             if (!discoverData) {
-                // Fetch with source=lastfm (fast, no AI cost)
-                discoverData = await api.getDiscoverRecommendations(16, "28d", "mix", false, "lastfm");
-                // Cache result
+                // Fetch 20 albums (enough for both home page and /recommendations page)
+                discoverData = await api.getDiscoverRecommendations(20, "28d", "mix", false, "lastfm");
+                // Cache result (shared with /recommendations page)
                 if (typeof window !== "undefined") {
                     try {
                         localStorage.setItem(cacheKey, JSON.stringify({ data: discoverData, timestamp: Date.now() }));

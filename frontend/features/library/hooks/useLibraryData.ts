@@ -89,6 +89,7 @@ export function useLibraryData({
                 const response = await api.getTracks({
                     limit: itemsPerPage,
                     offset,
+                    sortBy,
                 });
                 if (currentRequestId === requestIdRef.current) {
                     setTracks(response.tracks);

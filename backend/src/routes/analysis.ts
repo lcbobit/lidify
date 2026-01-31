@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "../utils/db";
 import { redisClient } from "../utils/redis";
 import { requireAuth, requireAdmin } from "../middleware/auth";
+import { getAudioAnalysisSkipReason } from "../utils/audioAnalysis";
 
 const router = Router();
 
@@ -79,19 +80,36 @@ router.post("/start", requireAuth, requireAdmin, async (req, res) => {
 
         // Queue tracks for analysis
         const pipeline = redisClient.multi();
+        let queued = 0;
+        let skipped = 0;
         for (const track of tracks) {
+            const skipReason = getAudioAnalysisSkipReason(track.filePath);
+            if (skipReason) {
+                await prisma.track.update({
+                    where: { id: track.id },
+                    data: {
+                        analysisStatus: "skipped",
+                        analysisError: skipReason,
+                    },
+                });
+                skipped++;
+                continue;
+            }
+
             pipeline.rPush(ANALYSIS_QUEUE, JSON.stringify({
                 trackId: track.id,
                 filePath: track.filePath,
             }));
+            queued++;
         }
         await pipeline.exec();
 
-        console.log(`Queued ${tracks.length} tracks for audio analysis`);
+        console.log(`Queued ${queued} tracks for audio analysis`);
 
         res.json({
-            message: `Queued ${tracks.length} tracks for analysis`,
-            queued: tracks.length,
+            message: `Queued ${queued} tracks for analysis`,
+            queued,
+            skipped,
         });
     } catch (error: any) {
         console.error("Analysis start error:", error);
@@ -145,6 +163,23 @@ router.post("/analyze/:trackId", requireAuth, async (req, res) => {
 
         if (!track) {
             return res.status(404).json({ error: "Track not found" });
+        }
+
+        const skipReason = getAudioAnalysisSkipReason(track.filePath);
+        if (skipReason) {
+            await prisma.track.update({
+                where: { id: trackId },
+                data: {
+                    analysisStatus: "skipped",
+                    analysisError: skipReason,
+                },
+            });
+
+            return res.json({
+                message: "Track skipped for analysis",
+                reason: skipReason,
+                trackId,
+            });
         }
 
         // Queue for analysis
@@ -286,7 +321,6 @@ router.get("/features", requireAuth, async (req, res) => {
 });
 
 export default router;
-
 
 
 

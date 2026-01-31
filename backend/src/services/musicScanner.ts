@@ -342,19 +342,22 @@ export class MusicScannerService {
         // - (CD 1), (CD 2), [CD 1], {CD 1}
         // - (Disc One), (Disc Two), etc.
         // - - Disc 1, - CD 1 (with leading dash)
+        // - , Dsc 1 (comma separator, abbreviated)
         const suffixPatterns = [
-            /\s*[\(\[\{]\s*(?:disc|cd)\s*\d+\s*[\)\]\}]\s*$/i,
-            /\s*[\(\[\{]\s*(?:disc|cd)\s*(?:one|two|three|four|five|six|seven|eight|nine|ten)\s*[\)\]\}]\s*$/i,
-            /\s*-\s*(?:disc|cd)\s*\d+\s*$/i,
-            /\s*-\s*(?:disc|cd)\s*(?:one|two|three|four|five|six|seven|eight|nine|ten)\s*$/i,
+            /\s*[\(\[\{]\s*(?:disc|cd|dsc)\s*\d+\s*[\)\]\}]\s*$/i,
+            /\s*[\(\[\{]\s*(?:disc|cd|dsc)\s*(?:one|two|three|four|five|six|seven|eight|nine|ten)\s*[\)\]\}]\s*$/i,
+            /\s*-\s*(?:disc|cd|dsc)\s*\d+\s*$/i,
+            /\s*-\s*(?:disc|cd|dsc)\s*(?:one|two|three|four|five|six|seven|eight|nine|ten)\s*$/i,
+            /\s*,\s*(?:disc|cd|dsc)\s*\d+\s*$/i,
+            /\s*,\s*(?:disc|cd|dsc)\s*(?:one|two|three|four|five|six|seven|eight|nine|ten)\s*$/i,
         ];
 
         // PREFIX patterns to remove (case-insensitive):
         // - CD1 - Album, CD 1 - Album, Disc1 - Album, Disc 1 - Album
         // - CD1: Album, Disc 1: Album (with colon)
         const prefixPatterns = [
-            /^(?:disc|cd)\s*\d+\s*[-:]\s*/i,
-            /^(?:disc|cd)\s*(?:one|two|three|four|five|six|seven|eight|nine|ten)\s*[-:]\s*/i,
+            /^(?:disc|cd|dsc)\s*\d+\s*[-:]\s*/i,
+            /^(?:disc|cd|dsc)\s*(?:one|two|three|four|five|six|seven|eight|nine|ten)\s*[-:]\s*/i,
         ];
 
         let result = albumTitle;
@@ -902,6 +905,12 @@ export class MusicScannerService {
                                       where: { artistId: artist.id, title: albumTitle },
                                   });
                             if (existingByTitle) {
+                                // In playlist-only mode, if album already exists as LIBRARY,
+                                // skip adding this track (it's already in the main library)
+                                if (this.playlistOnlyMode && existingByTitle.location === "LIBRARY") {
+                                    console.log(`[Scanner] Skipping track from existing LIBRARY album "${existingByTitle.title}" (playlist mode)`);
+                                    return;
+                                }
                                 console.log(`[Scanner] Album already exists, reusing: "${existingByTitle.title}"`);
                                 album = existingByTitle;
                             } else {
@@ -995,6 +1004,20 @@ export class MusicScannerService {
                         }
                     }
             }
+        }
+
+        // Check if track with same title already exists in this album (prevents duplicates from playlist downloads)
+        const existingTrackInAlbum = await prisma.track.findFirst({
+            where: {
+                albumId: album.id,
+                title: title,
+            },
+        });
+
+        if (existingTrackInAlbum && this.playlistOnlyMode) {
+            // In playlist mode, skip adding duplicate tracks to existing library albums
+            console.log(`[Scanner] Skipping duplicate track "${title}" in album "${albumTitle}" (playlist mode)`);
+            return;
         }
 
         // Upsert track

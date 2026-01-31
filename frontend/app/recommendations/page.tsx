@@ -10,18 +10,20 @@ import { cn } from "@/utils/cn";
 import { toast } from "sonner";
 import { howlerEngine } from "@/lib/howler-engine";
 
-interface AlbumRecommendation {
+interface ArtistRecommendation {
     artistName: string;
     artistMbid?: string;
-    albumTitle: string;
-    albumMbid: string;
+    albumTitle: string;   // Now empty string ""
+    albumMbid: string;    // Now empty string ""
     similarity: number;
-    coverUrl?: string;
-    year?: number;
+    coverUrl?: string;    // Artist image from Last.fm
+    listeners?: number;   // Last.fm listener count
+    tags?: string[];      // Genre tags like ["rock", "indie", "alternative"]
+    bio?: string;
 }
 
 interface RecommendationsData {
-    recommendations: AlbumRecommendation[];
+    recommendations: ArtistRecommendation[];
     seedArtists: string[];
     generatedAt: string;
 }
@@ -316,23 +318,34 @@ export default function RecommendationsPage() {
         return "yesterday";
     };
 
-    const renderAlbumCard = (album: AlbumRecommendation, idx: number) => {
-        const albumKey = `${album.artistName}:${album.albumTitle}`;
-        const details = artistDetails[album.artistName];
-        const isExpanded = expandedAlbum === albumKey;
-        const isLoadingDetails = loadingArtist === album.artistName;
+    const formatListeners = (count: number): string => {
+        if (count >= 1_000_000) {
+            return `${(count / 1_000_000).toFixed(1)}M listeners`;
+        }
+        if (count >= 1_000) {
+            return `${(count / 1_000).toFixed(0)}K listeners`;
+        }
+        return `${count} listeners`;
+    };
+
+    const renderArtistCard = (artist: ArtistRecommendation, idx: number) => {
+        const artistKey = `${artist.artistName}:${artist.albumTitle}`;
+        const details = artistDetails[artist.artistName];
+        const isExpanded = expandedAlbum === artistKey;
+        const isLoadingDetails = loadingArtist === artist.artistName;
+        const bioText = artist.bio?.trim();
 
         return (
             <div key={idx} className="bg-white/5 rounded-lg overflow-hidden">
                 <button
-                    onClick={() => handleExpandAlbum(albumKey, album.artistName)}
+                    onClick={() => handleExpandAlbum(artistKey, artist.artistName)}
                     className="w-full flex items-center gap-4 p-4 hover:bg-white/5 transition-colors text-left"
                 >
                     <div className="w-16 h-16 bg-[#282828] rounded shrink-0 overflow-hidden">
-                        {album.coverUrl ? (
+                        {artist.coverUrl ? (
                             <Image
-                                src={album.coverUrl}
-                                alt={album.albumTitle}
+                                src={artist.coverUrl}
+                                alt={artist.artistName}
                                 width={64}
                                 height={64}
                                 className="w-full h-full object-cover"
@@ -348,12 +361,12 @@ export default function RecommendationsPage() {
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                             <p className="text-lg font-semibold text-white truncate">
-                                {album.artistName}
+                                {artist.artistName}
                             </p>
                             <Link
-                                href={album.artistMbid
-                                    ? `/artist/${album.artistMbid}`
-                                    : `/search?q=${encodeURIComponent(album.artistName)}`
+                                href={artist.artistMbid
+                                    ? `/artist/${artist.artistMbid}`
+                                    : `/search?q=${encodeURIComponent(artist.artistName)}`
                                 }
                                 className="text-xs text-blue-400 hover:text-blue-300 shrink-0 flex items-center gap-1"
                                 onClick={(e) => e.stopPropagation()}
@@ -362,13 +375,22 @@ export default function RecommendationsPage() {
                             </Link>
                         </div>
                         <div className="flex items-center gap-2">
-                            <p className="text-sm text-gray-200 truncate">
-                                {album.albumTitle}
-                            </p>
-                            {album.year && (
-                                <span className="text-xs text-gray-400">({album.year})</span>
+                            {artist.tags && artist.tags.length > 0 && (
+                                <p className="text-sm text-gray-400 truncate">
+                                    {artist.tags.slice(0, 4).join(" · ")}
+                                </p>
+                            )}
+                            {artist.listeners && (
+                                <span className="text-xs text-gray-500">
+                                    {formatListeners(artist.listeners)}
+                                </span>
                             )}
                         </div>
+                        {bioText && !isExpanded && (
+                            <p className="text-xs text-gray-400 mt-1 line-clamp-2">
+                                {bioText}
+                            </p>
+                        )}
                     </div>
 
                     <div className="shrink-0">
@@ -384,9 +406,17 @@ export default function RecommendationsPage() {
 
                 {isExpanded && (
                     <div className="border-t border-white/10 px-4 pb-4">
-                        <div className="pt-3 pb-2">
+                        {bioText && (
+                            <p className="text-sm text-gray-300 mb-4">
+                                {bioText}
+                            </p>
+                        )}
+                        <div className={cn(
+                            "pt-3 pb-2",
+                            bioText && "border-t border-white/10"
+                        )}>
                             <p className="text-xs text-gray-500 uppercase tracking-wider">
-                                Popular Tracks by {album.artistName}
+                                Popular Tracks by {artist.artistName}
                             </p>
                         </div>
 
@@ -398,7 +428,7 @@ export default function RecommendationsPage() {
                         ) : details?.topTracks && details.topTracks.length > 0 ? (
                             <div className="space-y-1">
                                 {details.topTracks.slice(0, 5).map((track, trackIdx) => {
-                                    const trackKey = `${album.artistName}:${track.title}`;
+                                    const trackKey = `${artist.artistName}:${track.title}`;
                                     const isThisPlaying = previewingTrack === trackKey;
                                     const isLoading = loadingPreview === trackKey;
                                     const preview = trackPreviews[trackKey];
@@ -406,7 +436,7 @@ export default function RecommendationsPage() {
                                     return (
                                         <div
                                             key={trackIdx}
-                                            onClick={() => handlePreview(album.artistName, track.title)}
+                                            onClick={() => handlePreview(artist.artistName, track.title)}
                                             className={cn(
                                                 "flex items-center gap-3 p-2 rounded hover:bg-white/5 transition-colors group cursor-pointer",
                                                 isThisPlaying && "bg-white/10"
@@ -457,7 +487,7 @@ export default function RecommendationsPage() {
                                             <button
                                                 onClick={(e) => {
                                                     e.stopPropagation();
-                                                    handlePreview(album.artistName, track.title);
+                                                    handlePreview(artist.artistName, track.title);
                                                 }}
                                                 disabled={isLoading}
                                                 className={cn(
@@ -496,11 +526,11 @@ export default function RecommendationsPage() {
             <div
                 className="relative pt-16 pb-10 px-4 md:px-8"
                 style={{
-                    background: 'linear-gradient(to bottom, rgba(34, 197, 94, 0.4), #1a1a1a, transparent)'
+                    background: 'linear-gradient(to bottom, rgba(213, 16, 7, 0.4), #1a1a1a, transparent)'
                 }}
             >
                 <div className="flex items-end gap-6">
-                    <div className="w-[140px] h-[140px] md:w-[192px] md:h-[192px] bg-gradient-to-br from-green-600 to-emerald-900 rounded shadow-2xl shrink-0 flex items-center justify-center">
+                    <div className="w-[140px] h-[140px] md:w-[192px] md:h-[192px] bg-gradient-to-br from-red-600 to-red-900 rounded shadow-2xl shrink-0 flex items-center justify-center">
                         <Music2 className="w-20 h-20 md:w-24 md:h-24 text-white" />
                     </div>
 
@@ -510,11 +540,11 @@ export default function RecommendationsPage() {
                             Recommended For You
                         </h1>
                         <p className="text-sm text-white/60 mb-2">
-                            Albums from artists similar to your favorites — powered by Last.fm
+                            Artists similar to your favorites — powered by Last.fm
                         </p>
                         {data && (
                             <div className="flex items-center gap-1 text-sm text-white/70 flex-wrap">
-                                <span>{data.recommendations.length} albums</span>
+                                <span>{data.recommendations.length} artists</span>
                                 <span>·</span>
                                 <span>Based on: {data.seedArtists.slice(0, 4).join(", ")}{data.seedArtists.length > 4 ? "..." : ""}</span>
                                 <span>·</span>
@@ -534,8 +564,8 @@ export default function RecommendationsPage() {
                         className={cn(
                             "flex items-center gap-2 h-10 px-4 rounded-full text-sm font-medium transition-all",
                             loading
-                                ? "bg-green-500/50 text-white/70"
-                                : "bg-green-500 hover:bg-green-400 text-white"
+                                ? "bg-red-600/50 text-white/70"
+                                : "bg-red-600 hover:bg-red-500 text-white"
                         )}
                     >
                         <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
@@ -564,10 +594,10 @@ export default function RecommendationsPage() {
             {data && data.recommendations.length > 0 && (
                 <div className="px-4 md:px-8 pb-32">
                     <div className="mb-4 text-sm text-gray-300">
-                        Click an album to preview top tracks
+                        Click an artist to preview top tracks
                     </div>
                     <div className="space-y-3">
-                        {data.recommendations.map((album, idx) => renderAlbumCard(album, idx))}
+                        {data.recommendations.map((artist, idx) => renderArtistCard(artist, idx))}
                     </div>
                 </div>
             )}
@@ -575,12 +605,12 @@ export default function RecommendationsPage() {
             {/* Empty State */}
             {!loading && !data && (
                 <div className="flex flex-col items-center justify-center py-24 text-center px-4">
-                    <div className="w-20 h-20 bg-green-500/20 rounded-full flex items-center justify-center mb-4">
-                        <Music2 className="w-10 h-10 text-green-400" />
+                    <div className="w-20 h-20 bg-red-500/20 rounded-full flex items-center justify-center mb-4">
+                        <Music2 className="w-10 h-10 text-red-400" />
                     </div>
                     <h3 className="text-lg font-medium text-white mb-1">Discover Similar Artists</h3>
                     <p className="text-sm text-gray-300 max-w-md">
-                        Find albums from artists similar to the ones you love, powered by Last.fm.
+                        Find artists similar to the ones you love, powered by Last.fm.
                     </p>
                 </div>
             )}

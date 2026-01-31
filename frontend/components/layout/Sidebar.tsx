@@ -413,16 +413,12 @@ export function Sidebar() {
                                         href={`/playlist/${playlist.id}`}
                                         prefetch={false}
                                         className={cn(
-                                            "block px-3 py-2.5 rounded-lg transition-all duration-300 group relative overflow-hidden",
+                                            "block px-3 py-2.5 rounded-lg transition-all duration-200 group relative overflow-hidden",
                                             isActive
-                                                ? "bg-gradient-to-r from-purple-500/10 to-transparent text-white border-l-2 border-purple-500 shadow-md shadow-purple-500/5"
-                                                : "text-gray-400 hover:text-white hover:bg-white/[0.05] border-l-2 border-transparent hover:border-l-2 hover:border-purple-500/30"
+                                                ? "bg-white/10 text-white"
+                                                : "text-gray-400 hover:text-white hover:bg-white/[0.05]"
                                         )}
                                     >
-                                        {/* Hover shimmer effect */}
-                                        {!isActive && (
-                                            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-purple-500/5 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
-                                        )}
 
                                         <div className="flex items-center gap-1.5">
                                             <div

@@ -1,31 +1,40 @@
 import { Router } from "express";
 import { requireAuthOrToken } from "../middleware/auth";
 import { prisma } from "../utils/db";
+import { redisClient } from "../utils/redis";
 import { lastFmService } from "../services/lastfm";
 import { musicBrainzService } from "../services/musicbrainz";
 import { openRouterService } from "../services/openrouter";
+import { deezerService } from "../services/deezer";
 import { startOfWeek, endOfWeek, subWeeks, subDays } from "date-fns";
 import axios from "axios";
 import fs from "fs";
 import path from "path";
 import { config } from "../config";
 
+// Cache TTL for AI recommendations (24 hours)
+const RECOMMENDATIONS_CACHE_TTL = 24 * 60 * 60;
+
 // Static imports for performance
 import { discoverQueue, scanQueue } from "../workers/queues";
 import { getSystemSettings } from "../utils/systemSettings";
 import { lidarrService } from "../services/lidarr";
 
-// Types for recommendation-only mode
+// Types for recommendation-only mode (artist-focused, not album-focused)
 interface RecommendedAlbum {
     artistName: string;
     artistMbid?: string;
-    albumTitle: string;
-    albumMbid: string;
+    albumTitle: string;  // Kept for backwards compatibility, now empty string
+    albumMbid: string;   // Kept for backwards compatibility, now empty string
     similarity: number;
     tier: "high" | "medium" | "explore" | "wildcard";
-    coverUrl?: string;
+    coverUrl?: string;   // Artist image
     year?: number;
-    reason?: string; // AI-generated explanation
+    reason?: string;     // AI-generated explanation
+    // Artist metadata
+    listeners?: number;
+    tags?: string[];
+    bio?: string;
 }
 
 // Discovery mode types
@@ -80,6 +89,24 @@ router.get("/recommendations", async (req, res) => {
 
         console.log(`\n[DISCOVER] Generating recommendations for user ${userId}`);
         console.log(`   Mode: ${mode}, Timeframe: ${timeframe}, Target: ${targetCount}, Include Library: ${includeLibrary}, Source: ${source}`);
+
+        // Check Redis cache first (skip for force refresh)
+        const forceRefresh = req.query.refresh === "true";
+        const cacheKey = `discover:recommendations:${userId}:${mode}:${timeframe}:${includeLibrary}:${source}`;
+        
+        if (!forceRefresh) {
+            try {
+                const cached = await redisClient.get(cacheKey);
+                if (cached) {
+                    console.log(`   Cache HIT - returning cached recommendations`);
+                    return res.json(JSON.parse(cached));
+                }
+            } catch (err) {
+                console.warn("[DISCOVER] Redis read error:", err);
+            }
+        } else {
+            console.log(`   Force refresh requested - skipping cache`);
+        }
 
         // Check if AI is available for mode-specific recommendations
         // If source=lastfm, skip AI entirely
@@ -301,6 +328,23 @@ router.get("/recommendations", async (req, res) => {
                 }
 
                 console.log(`   AI generated ${recommendations.length} recommendations`);
+                
+                // Post-filter: Remove any owned artists the AI missed (AI doesn't always respect exclusion list)
+                if (!includeLibrary) {
+                    const ownedSet = new Set(ownedArtistNames.map(n => n.toLowerCase()));
+                    const beforeCount = recommendations.length;
+                    recommendations = recommendations.filter(r => !ownedSet.has(r.artistName.toLowerCase()));
+                    
+                    if (sections) {
+                        sections.safe = sections.safe.filter(r => !ownedSet.has(r.artistName.toLowerCase()));
+                        sections.adjacent = sections.adjacent.filter(r => !ownedSet.has(r.artistName.toLowerCase()));
+                        sections.wildcard = sections.wildcard.filter(r => !ownedSet.has(r.artistName.toLowerCase()));
+                    }
+                    
+                    if (beforeCount !== recommendations.length) {
+                        console.log(`   Filtered out ${beforeCount - recommendations.length} owned artists AI missed`);
+                    }
+                }
             } catch (aiError: any) {
                 console.error(`   AI recommendations failed: ${aiError.message}, falling back to Last.fm`);
                 recommendations = await generateLastFmRecommendations(
@@ -320,14 +364,24 @@ router.get("/recommendations", async (req, res) => {
 
         console.log(`   Final: ${recommendations.length} recommendations`);
 
-        res.json({
+        const response = {
             recommendations,
             sections: mode === "mix" ? sections : undefined,
             seedArtists: seedArtists.map(a => a.name),
             mode,
             timeframe,
             generatedAt: new Date().toISOString(),
-        });
+        };
+
+        // Cache the response for 24 hours
+        try {
+            await redisClient.setEx(cacheKey, RECOMMENDATIONS_CACHE_TTL, JSON.stringify(response));
+            console.log(`   Cached recommendations for 24 hours`);
+        } catch (err) {
+            console.warn("[DISCOVER] Redis write error:", err);
+        }
+
+        res.json(response);
     } catch (error: any) {
         console.error("[DISCOVER] Recommendations error:", error?.message || error);
         res.status(500).json({
@@ -440,7 +494,7 @@ ${libraryRequirement}
 Output JSON array:
 {
   "recommendations": [
-    { "name": "Artist Name", "reason": "Brief explanation", "startWith": "Best album to start" }
+    { "name": "Artist Name", "reason": "Brief explanation" }
   ]
 }`;
 
@@ -457,7 +511,7 @@ ${libraryRequirement}
 Output JSON array:
 {
   "recommendations": [
-    { "name": "Artist Name", "reason": "Brief explanation", "startWith": "Best album to start" }
+    { "name": "Artist Name", "reason": "Brief explanation" }
   ]
 }`;
 
@@ -474,7 +528,7 @@ ${libraryRequirement}
 Output JSON array:
 {
   "recommendations": [
-    { "name": "Artist Name", "reason": "Brief explanation", "startWith": "Best album to start" }
+    { "name": "Artist Name", "reason": "Brief explanation" }
   ]
 }`;
 
@@ -509,73 +563,83 @@ ${mixLibraryRequirement}
 
 Output JSON:
 {
-  "safe": [{ "name": "Artist Name", "reason": "Brief explanation", "startWith": "Album" }],
-  "adjacent": [{ "name": "Artist Name", "reason": "Brief explanation", "startWith": "Album" }],
-  "wildcard": [{ "name": "Artist Name", "reason": "Brief explanation", "startWith": "Album" }]
+  "safe": [{ "name": "Artist Name", "reason": "Brief explanation" }],
+  "adjacent": [{ "name": "Artist Name", "reason": "Brief explanation" }],
+  "wildcard": [{ "name": "Artist Name", "reason": "Brief explanation" }]
 }`;
     }
 }
 
 /**
- * Process AI artist recommendations: fetch album covers and MusicBrainz IDs
+ * Process AI artist recommendations: fetch artist images, metadata, and MusicBrainz IDs
+ * Returns artist-focused data (no albums) - consistent with Last.fm recommendations
  */
 async function processAIArtists(
-    artists: { name: string; reason?: string; startWith?: string }[],
+    artists: { name: string; reason?: string }[],
     defaultTier: "high" | "medium" | "explore" | "wildcard"
 ): Promise<RecommendedAlbum[]> {
-    const results: RecommendedAlbum[] = [];
+    // Process artists in parallel for better performance
+    const results = await Promise.all(
+        artists.map(async (artist) => {
+            try {
+                // Fetch artist info and MusicBrainz ID in parallel
+                const [artistInfo, mbArtists] = await Promise.all([
+                    lastFmService.getArtistInfo(artist.name),
+                    musicBrainzService.searchArtist(artist.name, 1),
+                ]);
 
-    for (const artist of artists) {
-        try {
-            // Get top album from Last.fm
-            const topAlbums = await lastFmService.getArtistTopAlbums("", artist.name, 5);
+                const mbArtist = mbArtists?.[0];
 
-            // Prefer the suggested album, otherwise use most popular non-compilation
-            let selectedAlbum = topAlbums?.find((a: any) =>
-                artist.startWith && a.name.toLowerCase().includes(artist.startWith.toLowerCase())
-            );
+                // Get artist image - try Last.fm first, then Deezer as fallback
+                let coverUrl: string | undefined;
+                if (artistInfo?.image) {
+                    coverUrl = lastFmService.getBestImage(artistInfo.image) || undefined;
+                }
+                
+                // Fallback to Deezer if Last.fm has no image
+                if (!coverUrl) {
+                    try {
+                        coverUrl = await deezerService.getArtistImage(artist.name) || undefined;
+                    } catch {
+                        // Deezer failed, continue without image
+                    }
+                }
 
-            if (!selectedAlbum) {
-                selectedAlbum = topAlbums?.find((a: any) =>
-                    a.name &&
-                    !a.name.toLowerCase().includes("greatest hits") &&
-                    !a.name.toLowerCase().includes("best of") &&
-                    !a.name.toLowerCase().includes("collection")
-                ) || topAlbums?.[0];
+                // Extract and clean bio summary
+                let bio: string | undefined;
+                if (artistInfo?.bio?.summary) {
+                    bio = artistInfo.bio.summary
+                        .replace(/<a href=".*">Read more on Last\.fm<\/a>\.?/gi, "")
+                        .trim();
+                }
+
+                return {
+                    artistName: artist.name,
+                    artistMbid: mbArtist?.id || "",
+                    albumTitle: "", // No longer returning albums
+                    albumMbid: "",
+                    similarity: defaultTier === "high" ? 0.85 : defaultTier === "medium" ? 0.6 : 0.35,
+                    tier: defaultTier,
+                    coverUrl,
+                    reason: artist.reason,
+                    // Additional artist metadata
+                    listeners: artistInfo?.stats?.listeners ? parseInt(artistInfo.stats.listeners) : undefined,
+                    tags: artistInfo?.tags?.tag?.slice(0, 3).map((t: any) => t.name) || [],
+                    bio,
+                };
+            } catch (e) {
+                console.log(`   Failed to process AI recommendation: ${artist.name}`);
+                return null;
             }
+        })
+    );
 
-            if (!selectedAlbum?.name) continue;
-
-            // Get cover art from Last.fm
-            const lastfmImages = selectedAlbum.image || [];
-            const coverUrl = lastfmImages.find((img: any) => img.size === "extralarge")?.["#text"] ||
-                             lastfmImages.find((img: any) => img.size === "large")?.["#text"] ||
-                             undefined;
-
-            // Get MusicBrainz ID
-            const mbArtists = await musicBrainzService.searchArtist(artist.name, 1);
-            const mbArtist = mbArtists?.[0];
-
-            results.push({
-                artistName: artist.name,
-                artistMbid: mbArtist?.id || "",
-                albumTitle: selectedAlbum.name,
-                albumMbid: "",
-                similarity: defaultTier === "high" ? 0.85 : defaultTier === "medium" ? 0.6 : 0.35,
-                tier: defaultTier,
-                coverUrl: coverUrl && !coverUrl.includes("2a96cbd8b46e442fc41c2b86b821562f") ? coverUrl : undefined,
-                reason: artist.reason,
-            });
-        } catch (e) {
-            console.log(`   Failed to process AI recommendation: ${artist.name}`);
-        }
-    }
-
-    return results;
+    return results.filter((r): r is RecommendedAlbum => r !== null);
 }
 
 /**
  * Generate Last.fm-based recommendations (fallback when AI unavailable)
+ * Returns similar ARTISTS (not albums) - matching how Last.fm actually works
  */
 async function generateLastFmRecommendations(
     seedArtists: { name: string; mbid: string | null }[],
@@ -614,26 +678,31 @@ async function generateLastFmRecommendations(
 
     const recommendations: RecommendedAlbum[] = [];
 
-    for (const artist of sortedArtists) {
-        if (recommendations.length >= targetCount) break;
-
+    // Fetch artist info in parallel for better performance
+    const artistInfoPromises = sortedArtists.slice(0, targetCount).map(async (artist) => {
         try {
-            const topAlbums = await lastFmService.getArtistTopAlbums("", artist.name, 5);
-            const topAlbum = topAlbums?.find((a: any) =>
-                a.name &&
-                !a.name.toLowerCase().includes("greatest hits") &&
-                !a.name.toLowerCase().includes("best of")
-            ) || topAlbums?.[0];
+            // Fetch artist info (for image) and MusicBrainz ID in parallel
+            const [artistInfo, mbArtists] = await Promise.all([
+                lastFmService.getArtistInfo(artist.name),
+                musicBrainzService.searchArtist(artist.name, 1),
+            ]);
 
-            if (!topAlbum?.name) continue;
-
-            const lastfmImages = topAlbum.image || [];
-            const coverUrl = lastfmImages.find((img: any) => img.size === "extralarge")?.["#text"] ||
-                             lastfmImages.find((img: any) => img.size === "large")?.["#text"] ||
-                             undefined;
-
-            const mbArtists = await musicBrainzService.searchArtist(artist.name, 1);
             const mbArtist = mbArtists?.[0];
+            
+            // Get artist image - try Last.fm first, then Deezer as fallback
+            let coverUrl: string | undefined;
+            if (artistInfo?.image) {
+                coverUrl = lastFmService.getBestImage(artistInfo.image) || undefined;
+            }
+            
+            // Fallback to Deezer if Last.fm has no image (common since they deprecated artist images)
+            if (!coverUrl) {
+                try {
+                    coverUrl = await deezerService.getArtistImage(artist.name) || undefined;
+                } catch {
+                    // Deezer failed, continue without image
+                }
+            }
 
             const similarity = artist.match || 0.5;
             let tier: "high" | "medium" | "explore" | "wildcard";
@@ -642,17 +711,37 @@ async function generateLastFmRecommendations(
             else if (similarity >= 0.3) tier = "explore";
             else tier = "wildcard";
 
-            recommendations.push({
+            // Extract and clean bio summary (remove Last.fm link suffix)
+            let bio: string | undefined;
+            if (artistInfo?.bio?.summary) {
+                bio = artistInfo.bio.summary
+                    .replace(/<a href=".*">Read more on Last\.fm<\/a>\.?/gi, "")
+                    .trim();
+            }
+
+            return {
                 artistName: artist.name,
                 artistMbid: mbArtist?.id || "",
-                albumTitle: topAlbum.name,
+                albumTitle: "", // No longer returning albums
                 albumMbid: "",
                 similarity,
                 tier,
-                coverUrl: coverUrl && !coverUrl.includes("2a96cbd8b46e442fc41c2b86b821562f") ? coverUrl : undefined,
-            });
+                coverUrl: coverUrl || undefined,
+                // Additional artist metadata
+                listeners: artistInfo?.stats?.listeners ? parseInt(artistInfo.stats.listeners) : undefined,
+                tags: artistInfo?.tags?.tag?.slice(0, 3).map((t: any) => t.name) || [],
+                bio,
+            };
         } catch (e) {
-            // Skip failed artists
+            return null;
+        }
+    });
+
+    const results = await Promise.all(artistInfoPromises);
+    
+    for (const result of results) {
+        if (result && recommendations.length < targetCount) {
+            recommendations.push(result);
         }
     }
 

@@ -203,11 +203,13 @@ export function formatTrackForSubsonic(track: {
     duration: number;
     filePath: string;
     fileSize: number;
+    fileModified?: Date; // Used as 'created' timestamp for sorting
     album: {
         id: string;
         title: string;
         coverUrl?: string | null;
         year?: number | null;
+        createdAt?: Date | null; // Fallback if fileModified not available
         artist: {
             id: string;
             name: string;
@@ -216,6 +218,10 @@ export function formatTrackForSubsonic(track: {
 }, playData?: { played?: Date; playCount?: number }): object {
     const ext = track.filePath.split(".").pop()?.toLowerCase() || "mp3";
     const contentType = getContentType(ext);
+
+    // Use fileModified as the 'created' timestamp (best proxy for when track was added)
+    // Fall back to album createdAt if not available
+    const created = track.fileModified || track.album.createdAt;
 
     return {
         id: `tr-${track.id}`,
@@ -237,6 +243,7 @@ export function formatTrackForSubsonic(track: {
         albumId: `al-${track.album.id}`,
         artistId: `ar-${track.album.artist.id}`,
         type: "music",
+        created: created?.toISOString(), // Required for Symfonium "sort by latest added"
         played: playData?.played?.toISOString(),
         playCount: playData?.playCount ?? 0,
     };
