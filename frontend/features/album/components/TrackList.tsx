@@ -196,7 +196,7 @@ const TrackRow = memo(function TrackRow({
         <span
           className={cn(
             'group-hover:hidden text-sm',
-            isCurrentTrack ? 'text-purple-400 font-bold' : 'text-gray-500'
+            isCurrentTrack ? 'text-brand font-bold' : 'text-gray-500'
           )}
         >
           {displayNumber}
@@ -217,7 +217,7 @@ const TrackRow = memo(function TrackRow({
       </div>
 
       <div className="flex-1 min-w-0">
-        <div className={cn('font-medium truncate text-sm md:text-base flex items-center gap-2', isCurrentTrack ? 'text-purple-400' : 'text-white')}>
+        <div className={cn('font-medium truncate text-sm md:text-base flex items-center gap-2', isCurrentTrack ? 'text-brand' : 'text-white')}>
           <span className="truncate">{track.title}</span>
           {isPreviewOnly && (
             <span className="shrink-0 text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/30 font-medium">

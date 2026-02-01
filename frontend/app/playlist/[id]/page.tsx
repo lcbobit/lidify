@@ -20,7 +20,6 @@ import {
     ListMusic,
     Music,
     Clock,
-    RefreshCw,
     AlertCircle,
     Volume2,
     X,
@@ -557,7 +556,7 @@ export default function PlaylistDetailPage() {
                     {playlist.items && playlist.items.length > 0 && (
                         <button
                             onClick={handlePlayPlaylist}
-                            className="h-12 w-12 rounded-full bg-[#ecb200] hover:bg-[#d4a000] hover:scale-105 flex items-center justify-center shadow-lg transition-all"
+                            className="h-12 w-12 rounded-full bg-brand hover:bg-brand-hover hover:scale-105 flex items-center justify-center shadow-lg transition-all"
                         >
                             {isThisPlaylistPlaying && isPlaying ? (
                                 <Pause className="w-5 h-5 fill-current text-black" />
@@ -631,7 +630,7 @@ export default function PlaylistDetailPage() {
                 playlist.pendingTracks?.length > 0 ? (
                     <div className="w-full">
                         {/* Table Header */}
-                        <div className="hidden md:grid grid-cols-[40px_minmax(200px,4fr)_minmax(100px,1fr)_70px_80px] gap-4 px-4 py-2 text-xs text-gray-400 uppercase tracking-wider border-b border-white/10 mb-2">
+                        <div className="hidden md:grid grid-cols-[40px_minmax(200px,3fr)_minmax(100px,1fr)_70px_110px] gap-4 px-4 py-2 text-xs text-gray-400 uppercase tracking-wider border-b border-white/10 mb-2">
                             <span className="text-center">#</span>
                             <span>Title</span>
                             <span>Album</span>
@@ -666,7 +665,7 @@ export default function PlaylistDetailPage() {
                                                     }
                                                 }}
                                                 className={cn(
-                                                    "grid grid-cols-[40px_1fr_auto] md:grid-cols-[40px_minmax(200px,4fr)_minmax(100px,1fr)_70px_80px] gap-4 px-4 py-2 rounded-md hover:bg-white/5 transition-colors group cursor-pointer",
+                                                    "grid grid-cols-[40px_1fr_auto] md:grid-cols-[40px_minmax(200px,3fr)_minmax(100px,1fr)_70px_110px] gap-4 px-4 py-2 rounded-md hover:bg-white/5 transition-colors group cursor-pointer",
                                                     isCurrentlyPlaying && "bg-white/10"
                                                 )}
                                             >
@@ -751,7 +750,7 @@ export default function PlaylistDetailPage() {
                                                         className={cn(
                                                             "p-1.5 rounded-full opacity-0 group-hover:opacity-100 hover:bg-white/10 transition-all",
                                                             isRetrying
-                                                                ? "text-[#ecb200] opacity-100"
+                                                                ? "text-brand opacity-100"
                                                                 : "text-gray-400 hover:text-white"
                                                         )}
                                                         title="Download track"
@@ -759,7 +758,7 @@ export default function PlaylistDetailPage() {
                                                         {isRetrying ? (
                                                             <Loader2 className="w-4 h-4 animate-spin" />
                                                         ) : (
-                                                            <RefreshCw className="w-4 h-4" />
+                                                            <Download className="w-4 h-4" />
                                                         )}
                                                     </button>
 
@@ -810,7 +809,7 @@ export default function PlaylistDetailPage() {
                                                 }
                                             }}
                                             className={cn(
-                                                "grid grid-cols-[40px_1fr_auto] md:grid-cols-[40px_minmax(200px,4fr)_minmax(100px,1fr)_70px_80px] gap-4 px-4 py-2 rounded-md hover:bg-white/5 transition-colors group cursor-pointer",
+                                                "grid grid-cols-[40px_1fr_auto] md:grid-cols-[40px_minmax(200px,3fr)_minmax(100px,1fr)_70px_110px] gap-4 px-4 py-2 rounded-md hover:bg-white/5 transition-colors group cursor-pointer",
                                                 isCurrentlyPlaying &&
                                                     "bg-white/10"
                                             )}
@@ -821,12 +820,12 @@ export default function PlaylistDetailPage() {
                                                     className={cn(
                                                         "text-sm group-hover:hidden",
                                                         isCurrentlyPlaying
-                                                            ? isYouTubeTrack ? "text-red-500" : "text-[#ecb200]"
+                                                            ? isYouTubeTrack ? "text-red-500" : "text-brand"
                                                             : "text-gray-400"
                                                     )}
                                                 >
                                                     {isActuallyPlaying ? (
-                                                        <Music className={cn("w-4 h-4 animate-pulse", isYouTubeTrack ? "text-red-500" : "text-[#ecb200]")} />
+                                                        <Music className={cn("w-4 h-4 animate-pulse", isYouTubeTrack ? "text-red-500" : "text-brand")} />
                                                     ) : (
                                                         index + 1
                                                     )}
@@ -867,7 +866,7 @@ export default function PlaylistDetailPage() {
                                                         className={cn(
                                                             "text-sm font-medium truncate",
                                                             isCurrentlyPlaying
-                                                                ? isYouTubeTrack ? "text-red-500" : "text-[#ecb200]"
+                                                                ? isYouTubeTrack ? "text-red-500" : "text-brand"
                                                                 : "text-white"
                                                         )}
                                                     >

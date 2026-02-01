@@ -133,7 +133,7 @@ export function ReleaseSelectionModal({
 
             {loading ? (
                 <div className="flex flex-col items-center justify-center py-12 gap-4">
-                    <Loader2 className="w-8 h-8 animate-spin text-[#ecb200]" />
+                    <Loader2 className="w-8 h-8 animate-spin text-brand" />
                     <p className="text-white/60 text-sm">
                         Searching indexers for releases...
                     </p>
@@ -249,7 +249,7 @@ function ReleaseRow({
                             href={release.infoUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-sm text-white hover:text-[#ecb200] flex items-start gap-1.5 group"
+                            className="text-sm text-white hover:text-brand flex items-start gap-1.5 group"
                             title={`Open on ${release.indexer}`}
                             onClick={(e) => e.stopPropagation()}
                         >
@@ -271,7 +271,7 @@ function ReleaseRow({
                         "shrink-0 p-2 rounded-full transition-all",
                         disabled
                             ? "text-white/30 cursor-not-allowed"
-                            : "text-[#ecb200] hover:text-[#d4a000] hover:bg-white/10 hover:scale-105"
+                            : "text-brand hover:text-brand-hover hover:bg-white/10 hover:scale-105"
                     )}
                 >
                     {grabbing ? (

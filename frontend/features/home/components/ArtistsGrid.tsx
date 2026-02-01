@@ -21,9 +21,9 @@ interface Artist {
 
 const tierConfig: Record<TierType, { label: string; bgColor: string; textColor: string }> = {
     high: { label: "Safe Pick", bgColor: "bg-emerald-500/20", textColor: "text-emerald-400" },
-    medium: { label: "Adjacent", bgColor: "bg-amber-500/20", textColor: "text-amber-400" },
-    explore: { label: "Adjacent", bgColor: "bg-amber-500/20", textColor: "text-amber-400" },
-    wildcard: { label: "Wildcard", bgColor: "bg-fuchsia-500/20", textColor: "text-fuchsia-400" },
+    medium: { label: "Adjacent", bgColor: "bg-ai/20", textColor: "text-ai" },
+    explore: { label: "Adjacent", bgColor: "bg-ai/20", textColor: "text-ai" },
+    wildcard: { label: "Wildcard", bgColor: "bg-ai/20", textColor: "text-ai" },
 };
 
 interface ArtistsGridProps {

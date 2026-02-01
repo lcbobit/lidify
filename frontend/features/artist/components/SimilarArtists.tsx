@@ -73,7 +73,7 @@ export function SimilarArtists({
                                 {/* Library indicator badge */}
                                 {artist.inLibrary && (
                                     <div
-                                        className="absolute bottom-1 right-1 bg-[#ecb200] rounded-full p-1"
+                                        className="absolute bottom-1 right-1 bg-brand rounded-full p-1"
                                         title="In your library"
                                     >
                                         <Library className="w-3 h-3 text-black" />
@@ -98,7 +98,7 @@ export function SimilarArtists({
 
                             {/* Match Percentage */}
                             {matchPercentage !== null && (
-                                <p className="text-xs text-[#ecb200] mt-1">
+                                <p className="text-xs text-brand mt-1">
                                     {matchPercentage}% match
                                 </p>
                             )}

@@ -20,6 +20,7 @@ interface ArtistRecommendation {
     listeners?: number;   // Last.fm listener count
     tags?: string[];      // Genre tags like ["rock", "indie", "alternative"]
     bio?: string;
+    reason?: string;      // AI-generated explanation of why this artist was recommended
 }
 
 interface RecommendationsData {
@@ -386,7 +387,12 @@ export default function RecommendationsPage() {
                                 </span>
                             )}
                         </div>
-                        {bioText && !isExpanded && (
+                        {artist.reason && (
+                            <p className="text-xs text-brand mt-1 line-clamp-2">
+                                {artist.reason}
+                            </p>
+                        )}
+                        {bioText && !isExpanded && !artist.reason && (
                             <p className="text-xs text-gray-400 mt-1 line-clamp-2">
                                 {bioText}
                             </p>
@@ -442,16 +448,25 @@ export default function RecommendationsPage() {
                                                 isThisPlaying && "bg-white/10"
                                             )}
                                         >
-                                            <span className={cn(
-                                                "w-5 text-center text-sm",
-                                                isThisPlaying ? "text-blue-400" : "text-gray-300"
-                                            )}>
+                                            {/* Track Number / Play Icon - matches PopularTracks pattern */}
+                                            <div className="w-5 flex items-center justify-center">
+                                                <span className={cn(
+                                                    "text-sm group-hover:hidden",
+                                                    isThisPlaying ? "text-deezer" : "text-gray-400"
+                                                )}>
+                                                    {isThisPlaying && previewPlaying ? (
+                                                        <Pause className="w-4 h-4 text-deezer" />
+                                                    ) : (
+                                                        trackIdx + 1
+                                                    )}
+                                                </span>
+                                                {/* Show play/pause on hover */}
                                                 {isThisPlaying && previewPlaying ? (
-                                                    <Music className="w-4 h-4 text-blue-400 animate-pulse inline" />
+                                                    <Pause className="w-4 h-4 text-deezer hidden group-hover:block" />
                                                 ) : (
-                                                    trackIdx + 1
+                                                    <Play className="w-4 h-4 text-white hidden group-hover:block" />
                                                 )}
-                                            </span>
+                                            </div>
 
                                             <div className="w-8 h-8 bg-[#282828] rounded shrink-0 overflow-hidden">
                                                 {preview?.albumCover ? (
@@ -471,12 +486,15 @@ export default function RecommendationsPage() {
                                             </div>
 
                                             <div className="flex-1 min-w-0">
-                                                <p className={cn(
-                                                    "text-sm truncate",
-                                                    isThisPlaying ? "text-blue-400" : "text-white"
+                                                <div className={cn(
+                                                    "text-sm truncate flex items-center gap-2",
+                                                    isThisPlaying ? "text-deezer" : "text-white"
                                                 )}>
-                                                    {track.title}
-                                                </p>
+                                                    <span className="truncate">{track.title}</span>
+                                                    <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium bg-deezer/20 text-deezer">
+                                                        PREVIEW
+                                                    </span>
+                                                </div>
                                                 {preview?.albumTitle && (
                                                     <p className="text-xs text-gray-400 truncate">
                                                         {preview.albumTitle}
@@ -484,29 +502,9 @@ export default function RecommendationsPage() {
                                                 )}
                                             </div>
 
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handlePreview(artist.artistName, track.title);
-                                                }}
-                                                disabled={isLoading}
-                                                className={cn(
-                                                    "p-2 rounded-full transition-all",
-                                                    isThisPlaying
-                                                        ? "bg-blue-500/20 text-blue-400"
-                                                        : "hover:bg-white/10 text-gray-300 hover:text-white",
-                                                    isLoading && "opacity-50"
-                                                )}
-                                                title="Play Deezer preview"
-                                            >
-                                                {isLoading ? (
-                                                    <div className="w-4 h-4 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
-                                                ) : isThisPlaying && previewPlaying ? (
-                                                    <Pause className="w-4 h-4" />
-                                                ) : (
-                                                    <Play className="w-4 h-4" />
-                                                )}
-                                            </button>
+                                            {isLoading && (
+                                                <div className="w-4 h-4 border-2 border-deezer border-t-transparent rounded-full animate-spin" />
+                                            )}
                                         </div>
                                     );
                                 })}

@@ -151,7 +151,7 @@ export function ActiveDownloadsTab() {
                                     <span className="text-xs text-white/30">•</span>
                                     <span className="text-xs text-white/30 capitalize flex items-center gap-1">
                                         {download.type === "ad_removal" ? (
-                                            <Sparkles className="w-3 h-3 text-[#ecb200]" />
+                                            <Sparkles className="w-3 h-3 text-brand" />
                                         ) : download.type === "album" ? (
                                             <Disc className="w-3 h-3" />
                                         ) : (

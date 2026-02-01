@@ -280,7 +280,7 @@ export function MusicBrainzLookup({
                             type="button"
                             onClick={handleManualSubmit}
                             disabled={!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(manualMbid)}
-                            className="px-3 py-2 bg-[#ecb200] hover:bg-[#d4a000] disabled:bg-gray-600 disabled:cursor-not-allowed text-black rounded font-medium text-sm transition-colors flex items-center gap-1"
+                            className="px-3 py-2 bg-brand hover:bg-brand-hover disabled:bg-gray-600 disabled:cursor-not-allowed text-black rounded font-medium text-sm transition-colors flex items-center gap-1"
                         >
                             <Check className="w-4 h-4" />
                         </button>

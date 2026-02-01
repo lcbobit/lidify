@@ -109,7 +109,7 @@ export function AudiobookHero({
               <span className="mx-1">•</span>
               <span>{formatTime(audiobook.duration)}</span>
               <span className="mx-1">•</span>
-              <span className={isFinished ? "text-green-400" : "text-[#ecb200]"}>
+              <span className={isFinished ? "text-green-400" : "text-brand"}>
                 {isFinished ? "Finished" : `${Math.round(progressPercent)}% complete`}
               </span>
             </div>

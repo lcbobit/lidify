@@ -517,12 +517,13 @@ Output JSON array:
 
         case "adventurous":
             return `${baseContext}
-TASK: Recommend ${targetCount} artists with UNEXPECTED but COHERENT connections.
+TASK: Recommend ${targetCount} artists that expand the listener's horizons while staying musically grounded.
 
 REQUIREMENTS:
-- Find the thread that links across genres
-- Stretch boundaries but stay connected
-- Think: "If they like X, they might not expect Y, but they'd love it"
+- Must share REAL musical DNA (production style, song structure, vocal approach, instrumentation)
+- Can cross genres but the sonic connection must be obvious when you hear both artists
+- NO superficial connections like "both use strings" or "both are experimental"
+- Think: actual fans of the seed artists would genuinely enjoy these recommendations
 ${libraryRequirement}
 
 Output JSON array:
@@ -554,8 +555,9 @@ ADJACENT (${adjacentCount} artists):
 - "Fits the same playlist" feeling
 
 WILDCARD (${wildcardCount} artists):
-- Unexpected connections, stretch but stay coherent
-- "They'd never expect this but would love it"
+- Different genre but REAL sonic/production similarities
+- Must share actual musical DNA, not superficial traits
+- Fans of the seeds would genuinely enjoy these
 
 REQUIREMENTS:
 ${mixLibraryRequirement}

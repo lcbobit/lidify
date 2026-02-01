@@ -324,7 +324,7 @@ export default function BrowsePlaylistsPage() {
                 {showSourceBadge && (
                     <div className={`absolute top-2 left-2 px-2 py-1 rounded-full text-[10px] font-semibold flex items-center gap-1 ${
                         item.source === "spotify" 
-                            ? "bg-[#1DB954]/90 text-white" 
+                            ? "bg-spotify/90 text-white" 
                             : "bg-[#AD47FF]/90 text-white"
                     }`}>
                         {item.source === "spotify" ? (
@@ -337,7 +337,7 @@ export default function BrowsePlaylistsPage() {
                 )}
                 {/* Import button on hover */}
                 <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all duration-200">
-                    <div className="w-12 h-12 rounded-full bg-[#ecb200] flex items-center justify-center shadow-xl hover:scale-105 transition-transform">
+                    <div className="w-12 h-12 rounded-full bg-brand flex items-center justify-center shadow-xl hover:scale-105 transition-transform">
                         <svg
                             viewBox="0 0 24 24"
                             className="w-5 h-5 text-black ml-0.5"
@@ -371,7 +371,7 @@ export default function BrowsePlaylistsPage() {
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
             ) : (
-                <div className="w-full h-full bg-gradient-to-br from-[#AD47FF] to-[#ecb200]" />
+                <div className="w-full h-full bg-gradient-to-br from-[#AD47FF] to-brand" />
             )}
             <div className="absolute inset-0 bg-black/40 group-hover:bg-black/30 transition-colors" />
             <div className="absolute bottom-3 left-3 right-3">
@@ -394,7 +394,7 @@ export default function BrowsePlaylistsPage() {
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
             ) : (
-                <div className="w-full h-full bg-gradient-to-br from-[#1DB954] to-[#191414]" />
+                <div className="w-full h-full bg-gradient-to-br from-spotify to-[#191414]" />
             )}
             <div className="absolute inset-0 bg-black/40 group-hover:bg-black/30 transition-colors" />
             <div className="absolute bottom-3 left-3 right-3">
@@ -410,16 +410,16 @@ export default function BrowsePlaylistsPage() {
                 <div
                     className={`absolute inset-0 bg-gradient-to-b ${
                         activeSource === "spotify" 
-                            ? "from-[#1DB954]/15 via-[#191414]/10" 
-                            : "from-[#ecb200]/15 via-purple-900/10"
+                            ? "from-spotify/15 via-[#191414]/10" 
+                            : "from-brand/15 via-purple-900/10"
                     } to-transparent`}
                     style={{ height: "35vh" }}
                 />
                 <div
                     className={`absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,var(--tw-gradient-stops))] ${
                         activeSource === "spotify"
-                            ? "from-[#1DB954]/8"
-                            : "from-[#ecb200]/8"
+                            ? "from-spotify/8"
+                            : "from-brand/8"
                     } via-transparent to-transparent`}
                     style={{ height: "25vh" }}
                 />
@@ -430,14 +430,14 @@ export default function BrowsePlaylistsPage() {
                 <div className="mb-6">
                     <div className="flex items-center gap-3 mb-1">
                         {activeSource === "spotify" ? (
-                            <SpotifyIcon className="w-8 h-8 text-[#1DB954]" />
+                            <SpotifyIcon className="w-8 h-8 text-spotify" />
                         ) : (
                             <DeezerIcon className="w-8 h-8 text-[#AD47FF]" />
                         )}
                         <h1 className="text-3xl font-bold text-white">
                             Browse
                         </h1>
-                        <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide rounded bg-[#ecb200]/20 text-[#ecb200] border border-[#ecb200]/30">
+                        <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide rounded bg-brand/20 text-brand border border-brand/30">
                             Beta
                         </span>
                     </div>
@@ -463,7 +463,7 @@ export default function BrowsePlaylistsPage() {
                         onClick={() => handleSourceChange("spotify")}
                         className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all ${
                             activeSource === "spotify"
-                                ? "bg-[#1DB954] text-white"
+                                ? "bg-spotify text-white"
                                 : "bg-white/10 text-gray-400 hover:text-white hover:bg-white/20"
                         }`}
                     >
@@ -473,10 +473,10 @@ export default function BrowsePlaylistsPage() {
                 </div>
 
                 {/* Beta Notice */}
-                <div className="mb-6 flex items-start gap-3 px-4 py-3 rounded-lg bg-[#ecb200]/10 border border-[#ecb200]/20">
-                    <Info className="w-5 h-5 text-[#ecb200] shrink-0 mt-0.5" />
+                <div className="mb-6 flex items-start gap-3 px-4 py-3 rounded-lg bg-brand/10 border border-brand/20">
+                    <Info className="w-5 h-5 text-brand shrink-0 mt-0.5" />
                     <p className="text-sm text-gray-300">
-                        <span className="font-medium text-[#ecb200]">Beta feature:</span>{" "}
+                        <span className="font-medium text-brand">Beta feature:</span>{" "}
                         Importing from Spotify and Deezer relies on matching tracks through Soulseek and your configured indexers.
                         Results may vary depending on track availability and metadata quality.
                     </p>
@@ -533,7 +533,7 @@ export default function BrowsePlaylistsPage() {
                             onClick={() => setActiveTab("genres")}
                             className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
                                 activeTab === "genres"
-                                    ? activeSource === "spotify" ? "bg-[#1DB954] text-white" : "bg-[#AD47FF] text-white"
+                                    ? activeSource === "spotify" ? "bg-spotify text-white" : "bg-[#AD47FF] text-white"
                                     : "bg-white/10 text-white hover:bg-white/20"
                             }`}
                         >
@@ -711,7 +711,7 @@ export default function BrowsePlaylistsPage() {
                             </button>
 
                             <div className="flex items-center gap-3 mb-2">
-                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#ecb200] to-[#AD47FF] flex items-center justify-center">
+                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand to-[#AD47FF] flex items-center justify-center">
                                     <Link2 className="w-5 h-5 text-white" />
                                 </div>
                                 <h3 className="text-xl font-bold text-white">
@@ -726,15 +726,15 @@ export default function BrowsePlaylistsPage() {
                         {/* Supported platforms */}
                         <div className="px-6 pb-4">
                             <div className="flex items-center gap-3 p-3 bg-white/[0.03] rounded-xl border border-white/[0.03]">
-                                <div className="flex items-center gap-2 px-3 py-1.5 bg-[#1DB954]/10 rounded-full">
+                                <div className="flex items-center gap-2 px-3 py-1.5 bg-spotify/10 rounded-full">
                                     <svg
                                         viewBox="0 0 24 24"
-                                        className="w-4 h-4 text-[#1DB954]"
+                                        className="w-4 h-4 text-spotify"
                                         fill="currentColor"
                                     >
                                         <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z" />
                                     </svg>
-                                    <span className="text-xs font-medium text-[#1DB954]">
+                                    <span className="text-xs font-medium text-spotify">
                                         Spotify
                                     </span>
                                 </div>
@@ -760,7 +760,7 @@ export default function BrowsePlaylistsPage() {
                                         setUrlInput(e.target.value)
                                     }
                                     placeholder="Paste playlist URL here..."
-                                    className="w-full bg-black/40 border border-white/[0.06] rounded-xl px-4 py-4 text-white placeholder:text-white/30 focus:outline-none focus:border-[#ecb200]/40 focus:ring-1 focus:ring-[#ecb200]/20 transition-all text-sm"
+                                    className="w-full bg-black/40 border border-white/[0.06] rounded-xl px-4 py-4 text-white placeholder:text-white/30 focus:outline-none focus:border-brand/40 focus:ring-1 focus:ring-brand/20 transition-all text-sm"
                                     onKeyDown={(e) =>
                                         e.key === "Enter" && handleUrlSubmit()
                                     }
@@ -793,7 +793,7 @@ export default function BrowsePlaylistsPage() {
                             <button
                                 onClick={handleUrlSubmit}
                                 disabled={isParsing || !urlInput.trim()}
-                                className="flex-1 py-3.5 rounded-full bg-[#ecb200] text-black font-semibold hover:bg-[#d4a000] disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 shadow-lg shadow-[#ecb200]/20"
+                                className="flex-1 py-3.5 rounded-full bg-brand text-black font-semibold hover:bg-brand-hover disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 shadow-lg shadow-brand/20"
                             >
                                 {isParsing ? (
                                     <>

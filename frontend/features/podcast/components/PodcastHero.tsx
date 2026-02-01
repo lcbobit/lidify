@@ -110,7 +110,7 @@ export function PodcastHero({
                             {inProgressCount > 0 && (
                                 <>
                                     <span className="mx-1">•</span>
-                                    <span className="text-[#ecb200]">
+                                    <span className="text-brand">
                                         {inProgressCount} in progress
                                     </span>
                                 </>

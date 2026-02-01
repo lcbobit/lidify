@@ -101,14 +101,14 @@ export const PopularTracks: React.FC<PopularTracksProps> = ({
                                         // Hide number/icon on hover to show play/pause
                                         "group-hover:hidden",
                                         isPlaying
-                                            ? "text-[#ecb200]"
+                                            ? "text-brand"
                                             : isPreviewPlaying
                                             ? "text-blue-400"
                                             : "text-gray-400"
                                     )}
                                 >
                                     {isPlaying ? (
-                                        <Music className="w-4 h-4 text-[#ecb200] animate-pulse" />
+                                        <Music className="w-4 h-4 text-brand animate-pulse" />
                                     ) : isPreviewPlaying ? (
                                         <Pause className="w-4 h-4 text-blue-400" />
                                     ) : (
@@ -117,7 +117,7 @@ export const PopularTracks: React.FC<PopularTracksProps> = ({
                                 </span>
                                 {/* Show pause on hover when playing, play otherwise */}
                                 {isPlaying ? (
-                                    <Pause className="w-4 h-4 text-[#ecb200] hidden group-hover:block" />
+                                    <Pause className="w-4 h-4 text-brand hidden group-hover:block" />
                                 ) : isPreviewPlaying ? (
                                     <Pause className="w-4 h-4 text-blue-400 hidden group-hover:block" />
                                 ) : (
@@ -148,7 +148,7 @@ export const PopularTracks: React.FC<PopularTracksProps> = ({
                                         className={cn(
                                             "text-sm font-medium truncate flex items-center gap-2",
                                             isPlaying
-                                                ? "text-[#ecb200]"
+                                                ? "text-brand"
                                                 : isPreviewPlaying
                                                 ? "text-blue-400"
                                                 : "text-white"

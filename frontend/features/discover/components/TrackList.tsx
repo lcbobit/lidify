@@ -8,9 +8,9 @@ const tierColors: Record<string, string> = {
     high: "text-green-400",
     medium: "text-yellow-400",
     explore: "text-orange-400",
-    wildcard: "text-purple-400",
+    wildcard: "text-ai",
     low: "text-orange-400",
-    wild: "text-purple-400",
+    wild: "text-ai",
 };
 
 const tierLabels: Record<string, string> = {
@@ -78,11 +78,11 @@ export function TrackList({
                                 <span
                                     className={cn(
                                         "text-sm group-hover:hidden",
-                                        isTrackPlaying ? "text-[#ecb200]" : "text-gray-400"
+                                        isTrackPlaying ? "text-brand" : "text-gray-400"
                                     )}
                                 >
                                     {isTrackPlaying && isPlaying ? (
-                                        <Music className="w-4 h-4 text-[#ecb200] animate-pulse" />
+                                        <Music className="w-4 h-4 text-brand animate-pulse" />
                                     ) : (
                                         index + 1
                                     )}
@@ -112,7 +112,7 @@ export function TrackList({
                                     <p
                                         className={cn(
                                             "text-sm font-medium truncate",
-                                            isTrackPlaying ? "text-[#ecb200]" : "text-white"
+                                            isTrackPlaying ? "text-brand" : "text-white"
                                         )}
                                     >
                                         {track.title}
@@ -150,7 +150,7 @@ export function TrackList({
                                     className={cn(
                                         "p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-all",
                                         track.isLiked
-                                            ? "text-purple-400 hover:text-purple-300"
+                                            ? "text-ai hover:text-ai-hover"
                                             : "text-gray-400 hover:text-white"
                                     )}
                                     title={track.isLiked ? "Unlike" : "Keep in library"}

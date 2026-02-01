@@ -5,7 +5,8 @@ import type { Album } from "../types";
 import type { ArtistSource } from "../types";
 import { AISimilarArtists } from "./AISimilarArtists";
 
-const LIDIFY_YELLOW = "#ecb200";
+// Brand color for JS contexts (matches Tailwind brand color)
+const BRAND_COLOR = "#fca200";
 
 interface ArtistActionBarProps {
     artist: Artist;
@@ -57,7 +58,7 @@ export function ArtistActionBar({
             <button
                 onClick={handlePlayPauseClick}
                 className="h-12 w-12 rounded-full flex items-center justify-center shadow-lg transition-all hover:scale-105"
-                style={{ backgroundColor: LIDIFY_YELLOW }}
+                style={{ backgroundColor: BRAND_COLOR }}
             >
                 {showPause ? (
                     <Pause className="w-5 h-5 fill-current text-black" />

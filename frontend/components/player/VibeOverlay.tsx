@@ -20,6 +20,9 @@ import {
     Radio,
 } from "lucide-react";
 
+// Brand color for SVG (matches Tailwind brand color)
+const BRAND_COLOR = "#fca200";
+
 interface VibeOverlayProps {
     className?: string;
     currentTrackFeatures?: AudioFeatures | null;
@@ -611,8 +614,8 @@ export function VibeComparisonArt({
                 {/* Source polygon (yellow, dashed) */}
                 <polygon
                     points={getPolygonPoints(sourceValues)}
-                    fill="rgba(236, 178, 0, 0.15)"
-                    stroke="#ecb200"
+                    fill="rgba(252, 162, 0, 0.15)"
+                    stroke={BRAND_COLOR}
                     strokeWidth="2"
                     strokeDasharray="6,4"
                 />

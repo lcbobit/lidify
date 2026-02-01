@@ -180,7 +180,7 @@ export function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
                                 <span className="text-[15px] font-medium">
                                     Browse
                                 </span>
-                                <span className="px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide rounded bg-[#ecb200]/20 text-[#ecb200] border border-[#ecb200]/30">
+                                <span className="px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide rounded bg-brand/20 text-brand border border-brand/30">
                                     Beta
                                 </span>
                             </div>

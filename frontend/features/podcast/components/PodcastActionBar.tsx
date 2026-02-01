@@ -79,7 +79,7 @@ export function PodcastActionBar({
                 <button
                     onClick={onSubscribe}
                     disabled={isSubscribing}
-                    className="h-12 px-6 rounded-full bg-[#ecb200] hover:bg-[#ffc61a] hover:scale-105 transition-all flex items-center gap-2 font-semibold text-black disabled:opacity-50"
+                    className="h-12 px-6 rounded-full bg-brand hover:bg-brand-light hover:scale-105 transition-all flex items-center gap-2 font-semibold text-black disabled:opacity-50"
                 >
                     {isSubscribing ? (
                         <>
@@ -129,7 +129,7 @@ export function PodcastActionBar({
                             onClick={() => handleModeSelect("download_and_adfree")}
                             className={`px-3 py-1.5 rounded-full text-sm font-medium transition-all flex items-center gap-1.5 ${
                                 currentMode === "download_and_adfree"
-                                    ? "bg-purple-500/30 text-purple-400"
+                                    ? "bg-brand/30 text-brand"
                                     : "text-white/60 hover:text-white/80 hover:bg-white/5"
                             }`}
                             title="Automatically download and remove ads from new episodes"

@@ -99,7 +99,7 @@ export function DiscoverSettings({
                             onChange={(e) =>
                                 handleConfigChange("playlistSize", parseInt(e.target.value))
                             }
-                            className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-purple-500"
+                            className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-ai"
                         />
                         <p className="text-xs text-gray-400 mt-2">
                             One song per album. Larger = more discovery.
@@ -119,7 +119,7 @@ export function DiscoverSettings({
                             onChange={(e) =>
                                 handleConfigChange("downloadRatio", parseFloat(e.target.value))
                             }
-                            className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-purple-500"
+                            className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-ai"
                         />
                         <p className="text-xs text-gray-400 mt-2">
                             Extra albums to download in case some fail. Higher = more reliable, but uses more bandwidth.
@@ -143,7 +143,7 @@ export function DiscoverSettings({
                             onChange={(e) =>
                                 handleConfigChange("exclusionMonths", parseInt(e.target.value))
                             }
-                            className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-purple-500"
+                            className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-ai"
                         />
                         <p className="text-xs text-gray-400 mt-2">
                             How long to wait before recommending the same album again. Set to 0 to disable.

@@ -250,7 +250,7 @@ export default function LibraryPage() {
                         {/* Shuffle Button */}
                         <button
                             onClick={handleShuffleLibrary}
-                            className="flex items-center justify-center w-8 h-8 rounded-full bg-[#ecb200] hover:bg-[#d4a000] text-black transition-all hover:scale-105"
+                            className="flex items-center justify-center w-8 h-8 rounded-full bg-brand hover:bg-brand-hover text-black transition-all hover:scale-105"
                             title="Shuffle Library"
                         >
                             <Shuffle className="w-4 h-4" />

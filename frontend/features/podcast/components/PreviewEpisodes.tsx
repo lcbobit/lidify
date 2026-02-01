@@ -62,7 +62,7 @@ export function PreviewEpisodes({
                             <button
                                 onClick={onSubscribe}
                                 disabled={isSubscribing}
-                                className="flex items-center gap-2 pointer-events-auto h-12 px-6 rounded-full bg-[#ecb200] hover:bg-[#ffc61a] hover:scale-105 transition-all font-semibold text-black disabled:opacity-50 shadow-xl"
+                                className="flex items-center gap-2 pointer-events-auto h-12 px-6 rounded-full bg-brand hover:bg-brand-light hover:scale-105 transition-all font-semibold text-black disabled:opacity-50 shadow-xl"
                             >
                                 {isSubscribing ? (
                                     <>
@@ -86,7 +86,7 @@ export function PreviewEpisodes({
                         <button
                             onClick={onSubscribe}
                             disabled={isSubscribing}
-                            className="flex items-center gap-2 mx-auto h-12 px-6 rounded-full bg-[#ecb200] hover:bg-[#ffc61a] hover:scale-105 transition-all font-semibold text-black disabled:opacity-50"
+                            className="flex items-center gap-2 mx-auto h-12 px-6 rounded-full bg-brand hover:bg-brand-light hover:scale-105 transition-all font-semibold text-black disabled:opacity-50"
                         >
                             {isSubscribing ? (
                                 <>
@@ -110,7 +110,7 @@ export function PreviewEpisodes({
                     <h2 className="text-xl font-bold mb-4">About</h2>
                     <div className="bg-white/5 rounded-md p-4">
                         <div
-                            className="prose prose-invert prose-sm max-w-none text-white/70 [&_a]:text-[#ecb200] [&_a]:no-underline [&_a:hover]:underline"
+                            className="prose prose-invert prose-sm max-w-none text-white/70 [&_a]:text-brand [&_a]:no-underline [&_a:hover]:underline"
                             dangerouslySetInnerHTML={{
                                 __html: previewData.description,
                             }}

@@ -10,6 +10,9 @@ import { QueryProvider } from "@/lib/query-client";
 import { ServiceWorkerRegistration } from "@/components/ServiceWorkerRegistration";
 import { Toaster } from "sonner";
 
+// Brand color for JS contexts (matches Tailwind brand color)
+const BRAND_COLOR = "#fca200";
+
 const montserrat = Montserrat({
     weight: ["300", "400", "500", "600", "700", "800"],
     subsets: ["latin"],
@@ -63,7 +66,7 @@ export default function RootLayout({
                     toastOptions={{
                         style: {
                             background: "linear-gradient(135deg, #1a1a2e 0%, #0f0f15 100%)",
-                            border: "2px solid #f5c518",
+                            border: `2px solid ${BRAND_COLOR}`,
                             color: "#fff",
                             padding: "16px 20px",
                             fontSize: "16px",

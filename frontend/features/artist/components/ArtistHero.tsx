@@ -126,7 +126,7 @@ export function ArtistHero({
                                     {ownedAlbums.length > 0 && (
                                         <>
                                             <span className="mx-1">•</span>
-                                            <span className="text-[#ecb200]">
+                                            <span className="text-brand">
                                                 {ownedAlbums.length} owned
                                             </span>
                                         </>

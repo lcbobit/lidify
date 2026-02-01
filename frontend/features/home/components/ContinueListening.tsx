@@ -99,7 +99,7 @@ const ContinueListeningCard = memo(function ContinueListeningCard({
                         {hasProgress && (
                             <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/50">
                                 <div
-                                    className="h-full bg-[#ecb200]"
+                                    className="h-full bg-brand"
                                     style={{
                                         width: `${item.progress}%`,
                                     }}

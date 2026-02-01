@@ -264,7 +264,7 @@ export default function BrowsePlaylistDetailPage() {
     return (
         <div className="min-h-screen">
             {/* Hero Section */}
-            <div className="relative bg-gradient-to-b from-[#ecb200]/20 via-[#1a1a1a] to-transparent pt-16 pb-10 px-4 md:px-8">
+            <div className="relative bg-gradient-to-b from-brand/20 via-[#1a1a1a] to-transparent pt-16 pb-10 px-4 md:px-8">
                 <div className="flex items-end gap-6">
                     {/* Cover Art */}
                     <div className="w-[140px] h-[140px] md:w-[192px] md:h-[192px] bg-[#282828] rounded shadow-2xl shrink-0 overflow-hidden">
@@ -275,7 +275,7 @@ export default function BrowsePlaylistDetailPage() {
                                 className="w-full h-full object-cover"
                             />
                         ) : (
-                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-[#ecb200]/30 to-[#ecb200]/10">
+                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-brand/30 to-brand/10">
                                 <Music2 className="w-16 h-16 text-gray-600" />
                             </div>
                         )}
@@ -285,7 +285,7 @@ export default function BrowsePlaylistDetailPage() {
                     <div className="flex-1 min-w-0 pb-1">
                         <div className="flex items-center gap-2 mb-1">
                             {playlist.source === "spotify" ? (
-                                <SpotifyIcon className="w-4 h-4 text-[#1DB954]" />
+                                <SpotifyIcon className="w-4 h-4 text-spotify" />
                             ) : (
                                 <DeezerIcon className="w-4 h-4 text-[#EF4444]" />
                             )}
@@ -329,7 +329,7 @@ export default function BrowsePlaylistDetailPage() {
                             handlePlay(playlist.tracks[0], 0)
                         }
                         disabled={playlist.tracks.length === 0}
-                        className="w-10 h-10 rounded-full bg-[#ecb200] hover:bg-[#d4a000] hover:scale-105 flex items-center justify-center shadow-lg transition-all disabled:opacity-50 disabled:hover:scale-100"
+                        className="w-10 h-10 rounded-full bg-brand hover:bg-brand-hover hover:scale-105 flex items-center justify-center shadow-lg transition-all disabled:opacity-50 disabled:hover:scale-100"
                     >
                         <Play className="w-4 h-4 text-black ml-0.5" fill="black" />
                     </button>
@@ -354,7 +354,7 @@ export default function BrowsePlaylistDetailPage() {
                     <button
                         onClick={handleImport}
                         disabled={isImporting || isSaving}
-                        className="flex items-center gap-2 px-4 py-2 rounded-full bg-[#ecb200] hover:bg-[#d4a000] text-black text-sm font-medium transition-colors disabled:opacity-50"
+                        className="flex items-center gap-2 px-4 py-2 rounded-full bg-brand hover:bg-brand-hover text-black text-sm font-medium transition-colors disabled:opacity-50"
                     >
                         {isImporting ? (
                             <Loader2 className="w-4 h-4 animate-spin" />

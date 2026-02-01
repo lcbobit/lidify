@@ -1,5 +1,22 @@
 @import "tailwindcss";
 
+@theme {
+    /* Brand colors */
+    --color-brand: #fca200;
+    --color-brand-hover: #e69200;
+    --color-brand-light: #fcb84d;
+    --color-brand-dark: #d48c00;
+    
+    /* External Services */
+    --color-spotify: #1DB954;
+    --color-deezer: #A855F7;
+    --color-lastfm: #D51007;
+    
+    /* AI features - Muted lavender */
+    --color-ai: #8B7EC8;
+    --color-ai-hover: #7A6BB8;
+}
+
 :root {
     /* Lidify Design System - Dark Theme Only */
 

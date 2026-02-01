@@ -77,7 +77,7 @@ export function TVSearchInput({ initialQuery = "", onSearch }: TVSearchInputProp
                             outline-none
                             border-2
                             ${isFocused
-                                ? "border-[#ecb200] bg-[#242424]"
+                                ? "border-brand bg-[#242424]"
                                 : "border-transparent hover:bg-[#242424]"
                             }
                         `}

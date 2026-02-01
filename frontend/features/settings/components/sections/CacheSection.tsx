@@ -15,7 +15,7 @@ interface CacheSectionProps {
 // Progress bar component
 function ProgressBar({ 
     progress, 
-    color = "bg-[#ecb200]",
+    color = "bg-brand",
     showPercentage = true 
 }: { 
     progress: number; 
@@ -74,7 +74,7 @@ function EnrichmentStage({
                 {isComplete ? (
                     <CheckCircle className="w-4 h-4 text-green-400" />
                 ) : hasActivity ? (
-                    <Loader2 className="w-4 h-4 text-[#ecb200] animate-spin" />
+                    <Loader2 className="w-4 h-4 text-brand animate-spin" />
                 ) : (
                     <Icon className="w-4 h-4 text-white/40" />
                 )}
@@ -92,12 +92,12 @@ function EnrichmentStage({
                 <div className="flex items-center gap-2 mt-2">
                     <ProgressBar 
                         progress={progress} 
-                        color={isComplete ? "bg-green-500" : isBackground ? "bg-purple-500" : "bg-[#ecb200]"}
+                        color={isComplete ? "bg-green-500" : isBackground ? "bg-purple-500" : "bg-brand"}
                     />
                 </div>
                 <div className="flex items-center gap-3 mt-1 text-[10px] text-white/30">
                     <span>{completed} / {total}</span>
-                    {processing > 0 && <span className="text-[#ecb200]">{processing} processing</span>}
+                    {processing > 0 && <span className="text-brand">{processing} processing</span>}
                     {(showAllStats || skipped > 0) && (
                         <span className="text-orange-400">{skipped} skipped</span>
                     )}

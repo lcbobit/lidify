@@ -53,7 +53,7 @@ export function ContinueListening({
                             {episode.progress && episode.progress.progress > 0 && (
                                 <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/5 rounded-full overflow-hidden">
                                     <div
-                                        className="h-full bg-[#ecb200]/60 transition-all"
+                                        className="h-full bg-brand/60 transition-all"
                                         style={{
                                             width: `${episode.progress.progress}%`,
                                         }}
@@ -69,7 +69,7 @@ export function ContinueListening({
                                 <div className="w-8 flex items-center justify-center shrink-0">
                                     {isCurrentEpisode && isPlaying ? (
                                         <Pause
-                                            className="w-4 h-4 text-[#ecb200] cursor-pointer"
+                                            className="w-4 h-4 text-brand cursor-pointer"
                                             onClick={(e) => {
                                                 e.stopPropagation();
                                                 onPlayPause(episode);
@@ -80,7 +80,7 @@ export function ContinueListening({
                                             className={cn(
                                                 "w-4 h-4 cursor-pointer",
                                                 isCurrentEpisode
-                                                    ? "text-[#ecb200]"
+                                                    ? "text-brand"
                                                     : "text-white/40 group-hover:text-white"
                                             )}
                                             onClick={(e) => {
@@ -97,7 +97,7 @@ export function ContinueListening({
                                         className={cn(
                                             "font-medium truncate text-sm",
                                             isCurrentEpisode
-                                                ? "text-[#ecb200]"
+                                                ? "text-brand"
                                                 : "text-white"
                                         )}
                                     >
@@ -110,7 +110,7 @@ export function ContinueListening({
                                         {episode.adsRemoved ? (
                                             <>
                                                 <span>•</span>
-                                                <span title="Ad-free" className="text-[#ecb200]">
+                                                <span title="Ad-free" className="text-brand">
                                                     <Sparkles className="w-3 h-3 inline" />
                                                 </span>
                                             </>

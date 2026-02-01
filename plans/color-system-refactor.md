@@ -1,5 +1,24 @@
 # Color System Refactor Plan
 
+## Current State (as of Jan 2026)
+
+| Color | Uses | Should Be |
+|-------|------|-----------|
+| `#ecb200` | 177 | `brand` |
+| `#fca200` | 26 | `brand` |
+| `#d4a000` | 19 | `brand-hover` |
+| `#1DB954` | 27 | `spotify` |
+| `#A855F7` / `#a855f7` | 24 | `deezer` / `ai` |
+| `#1a1a1a`, `#282828`, etc. | 200+ | `surface-*` (optional) |
+
+**Key issues:**
+- Brand color inconsistent (`#ecb200` vs `#fca200`)
+- 125 uses of `text-[#ecb200]` instead of `text-brand`
+- Service colors hardcoded everywhere
+- ~400 arbitrary Tailwind color classes `[#...]`
+
+---
+
 ## Goal
 Centralize all colors in `tailwind.config.js` for easy global adjustments while maintaining full Tailwind functionality (opacity modifiers, hover states, etc.)
 

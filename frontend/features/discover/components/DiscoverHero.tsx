@@ -21,11 +21,11 @@ export function DiscoverHero({ playlist, config }: DiscoverHeroProps) {
     };
 
     return (
-        <div className="relative bg-gradient-to-b from-purple-900/40 via-[#1a1a1a] to-transparent pt-16 pb-10 px-4 md:px-8">
+        <div className="relative bg-gradient-to-b from-ai/40 via-[#1a1a1a] to-transparent pt-16 pb-10 px-4 md:px-8">
             <div className="flex items-end gap-6">
                 {/* Icon */}
-                <div className="w-[140px] h-[140px] md:w-[192px] md:h-[192px] bg-gradient-to-br from-purple-600/30 to-yellow-600/20 rounded shadow-2xl shrink-0 flex items-center justify-center border border-white/10">
-                    <Music2 className="w-16 h-16 md:w-20 md:h-20 text-purple-400" />
+                <div className="w-[140px] h-[140px] md:w-[192px] md:h-[192px] bg-gradient-to-br from-ai/30 to-yellow-600/20 rounded shadow-2xl shrink-0 flex items-center justify-center border border-white/10">
+                    <Music2 className="w-16 h-16 md:w-20 md:h-20 text-ai" />
                 </div>
 
                 {/* Info - Bottom Aligned */}

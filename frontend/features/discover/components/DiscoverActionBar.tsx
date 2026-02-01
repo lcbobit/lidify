@@ -62,8 +62,8 @@ export function DiscoverActionBar({
                         className={cn(
                             "h-12 w-12 rounded-full flex items-center justify-center shadow-lg transition-all",
                             isGenerating
-                                ? "bg-[#ecb200]/50 cursor-not-allowed"
-                                : "bg-[#ecb200] hover:bg-[#d4a000] hover:scale-105"
+                                ? "bg-brand/50 cursor-not-allowed"
+                                : "bg-brand hover:bg-brand-hover hover:scale-105"
                         )}
                     >
                         {isPlaylistPlaying && isPlaying ? (
@@ -82,7 +82,7 @@ export function DiscoverActionBar({
                         "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all",
                         isGenerating || !config?.enabled
                             ? "bg-white/5 text-white/50 cursor-not-allowed"
-                            : "bg-purple-600/20 hover:bg-purple-600/30 text-white border border-purple-500/30"
+                            : "bg-ai/20 hover:bg-ai/30 text-white border border-ai/30"
                     )}
                 >
                     {isGenerating ? (

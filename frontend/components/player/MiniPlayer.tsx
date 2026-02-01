@@ -387,7 +387,7 @@ export function MiniPlayer() {
             return (
                 <button
                     onClick={() => setIsMinimized(false)}
-                    className="fixed right-0 z-50 bg-gradient-to-l from-[#f5c518] via-[#e6a700] to-[#a855f7] rounded-l-full pl-3 pr-2 py-2 shadow-lg flex items-center gap-2 transition-transform hover:scale-105 active:scale-95"
+                    className="fixed right-0 z-50 bg-gradient-to-l from-brand via-brand-hover to-ai rounded-l-full pl-3 pr-2 py-2 shadow-lg flex items-center gap-2 transition-transform hover:scale-105 active:scale-95"
                     style={{
                         bottom: "calc(56px + env(safe-area-inset-bottom, 0px) + 16px)",
                     }}
@@ -432,15 +432,15 @@ export function MiniPlayer() {
             >
                 {/* Gradient background - richer, more vibrant colors */}
                 <div className="absolute inset-0 bg-gradient-to-r from-[#1a1a2e] via-[#2d1847] to-[#1a1a2e]" />
-                <div className="absolute inset-0 bg-gradient-to-r from-[#f5c518]/30 via-[#a855f7]/40 to-[#f5c518]/30" />
+                <div className="absolute inset-0 bg-gradient-to-r from-brand/30 via-ai/40 to-brand/30" />
                 {/* Edge glow effects */}
-                <div className="absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-[#f5c518] via-[#e6a700] to-[#f5c518]" />
-                <div className="absolute inset-y-0 right-0 w-1 bg-gradient-to-b from-[#a855f7] via-[#7c3aed] to-[#a855f7]" />
+                <div className="absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-brand via-brand-hover to-brand" />
+                <div className="absolute inset-y-0 right-0 w-1 bg-gradient-to-b from-ai via-[#7c3aed] to-ai" />
 
                 {/* Progress bar at top */}
                 <div className="relative h-[2px] bg-white/20 w-full">
                     <div
-                        className="h-full bg-gradient-to-r from-[#f5c518] via-[#e6a700] to-[#a855f7] transition-all duration-150"
+                        className="h-full bg-gradient-to-r from-brand via-brand-hover to-ai transition-all duration-150"
                         style={{ width: `${progress}%` }}
                     />
                 </div>
@@ -536,7 +536,7 @@ export function MiniPlayer() {
                             className={cn(
                                 "w-9 h-9 flex items-center justify-center rounded-full transition-colors",
                                 showVolumeSlider
-                                    ? "text-[#f5c518] bg-white/10"
+                                    ? "text-brand bg-white/10"
                                     : "text-white/80 hover:text-white active:bg-white/10"
                             )}
                             title="Volume"
@@ -553,8 +553,8 @@ export function MiniPlayer() {
                                 !canSkip
                                     ? "text-gray-600"
                                     : vibeMode
-                                    ? "text-[#f5c518]"
-                                    : "text-white/70 hover:text-[#f5c518]"
+                                    ? "text-brand"
+                                    : "text-white/70 hover:text-brand"
                             )}
                             title={
                                 vibeMode

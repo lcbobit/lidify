@@ -42,11 +42,11 @@ export default function ArtistsPage() {
             {/* Extended gradient background that fades from hero into content */}
             <div className="absolute inset-0 pointer-events-none">
                 <div
-                    className="absolute inset-0 bg-gradient-to-b from-[#ecb200]/20 via-purple-900/15 to-transparent"
+                    className="absolute inset-0 bg-gradient-to-b from-brand/20 via-purple-900/15 to-transparent"
                     style={{ height: "120vh" }}
                 />
                 <div
-                    className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-[#ecb200]/10 via-transparent to-transparent"
+                    className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-brand/10 via-transparent to-transparent"
                     style={{ height: "100vh" }}
                 />
             </div>

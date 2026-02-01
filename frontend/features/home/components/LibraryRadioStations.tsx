@@ -45,7 +45,7 @@ const STATIC_STATIONS: RadioStation[] = [
         id: "all",
         name: "Shuffle All",
         description: "Your entire library",
-        color: "from-[#ecb200]/60 to-amber-600/40",
+        color: "from-brand/60 to-amber-600/40",
         filter: { type: "all" },
         minTracks: 10,
     },
@@ -338,7 +338,7 @@ export function LibraryRadioStations() {
 
             {/* Play button on hover */}
             <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                <div className="w-8 h-8 rounded-full bg-[#f5c518] flex items-center justify-center shadow-lg transform scale-90 group-hover:scale-100 transition-transform">
+                <div className="w-8 h-8 rounded-full bg-brand flex items-center justify-center shadow-lg transform scale-90 group-hover:scale-100 transition-transform">
                     <Play
                         className="w-4 h-4 text-black ml-0.5"
                         fill="currentColor"

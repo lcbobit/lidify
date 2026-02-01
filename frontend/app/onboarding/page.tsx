@@ -187,7 +187,7 @@ export default function OnboardingPage() {
         <div className="min-h-screen relative overflow-hidden">
             {/* Dark background (matches login) */}
             <div className="absolute inset-0 bg-[#000]">
-                <div className="absolute inset-0 bg-gradient-to-br from-[#fca200]/5 via-transparent to-transparent" />
+                <div className="absolute inset-0 bg-gradient-to-br from-brand/5 via-transparent to-transparent" />
             </div>
 
             {/* Show loading spinner while checking session */}
@@ -236,7 +236,7 @@ export default function OnboardingPage() {
                                         <div
                                             className={`w-9 h-9 rounded-lg flex items-center justify-center font-bold text-sm transition-all ${
                                                 s.num === step
-                                                    ? "bg-[#fca200] text-black shadow-lg shadow-[#fca200]/20 scale-110"
+                                                    ? "bg-brand text-black shadow-lg shadow-brand/20 scale-110"
                                                     : s.num < step
                                                     ? "bg-white/5 text-white/80 border border-white/10"
                                                     : "bg-white/5 text-white/40 border border-white/10"
@@ -258,7 +258,7 @@ export default function OnboardingPage() {
                                         <div
                                             className={`w-16 h-0.5 mx-4 mb-6 transition-all ${
                                                 s.num < step
-                                                    ? "bg-[#fca200]/25"
+                                                    ? "bg-brand/25"
                                                     : "bg-white/10"
                                             }`}
                                         />
@@ -359,7 +359,7 @@ export default function OnboardingPage() {
                                             <button
                                                 type="submit"
                                                 disabled={loading}
-                                                className="w-full py-3.5 bg-[#fca200] text-black font-bold rounded-lg hover:bg-[#e69200] transition-all disabled:opacity-50 disabled:cursor-not-allowed relative group overflow-hidden mt-8"
+                                                className="w-full py-3.5 bg-brand text-black font-bold rounded-lg hover:bg-brand-hover transition-all disabled:opacity-50 disabled:cursor-not-allowed relative group overflow-hidden mt-8"
                                             >
                                                 <span className="relative z-10 flex items-center justify-center gap-2">
                                                     {loading ? (
@@ -517,7 +517,7 @@ export default function OnboardingPage() {
                                             <button
                                                 onClick={handleNextStep}
                                                 disabled={loading}
-                                                className="flex-1 py-3.5 bg-[#fca200] text-black font-bold rounded-lg hover:bg-[#e69200] transition-all disabled:opacity-50"
+                                                className="flex-1 py-3.5 bg-brand text-black font-bold rounded-lg hover:bg-brand-hover transition-all disabled:opacity-50"
                                             >
                                                 {loading
                                                     ? "Saving..."
@@ -541,9 +541,9 @@ export default function OnboardingPage() {
 
                                         <div className="bg-[#0f0f0f] border border-white/10 rounded-lg p-6 mt-8">
                                             <div className="flex items-start gap-4">
-                                                <div className="w-12 h-12 bg-[#fca200]/10 border border-[#fca200]/20 rounded-lg flex items-center justify-center flex-shrink-0">
+                                                <div className="w-12 h-12 bg-brand/10 border border-brand/20 rounded-lg flex items-center justify-center flex-shrink-0">
                                                     <svg
-                                                        className="w-6 h-6 text-[#fca200]"
+                                                        className="w-6 h-6 text-brand"
                                                         fill="none"
                                                         stroke="currentColor"
                                                         viewBox="0 0 24 24"
@@ -667,7 +667,7 @@ export default function OnboardingPage() {
                                                 }
                                                 className={`relative w-12 h-6 rounded-lg transition-all ${
                                                     enrichmentEnabled
-                                                        ? "bg-[#fca200]"
+                                                        ? "bg-brand"
                                                         : "bg-white/20"
                                                 }`}
                                             >
@@ -792,7 +792,7 @@ function IntegrationCard({
                         <div
                             className={`w-9 h-9 rounded-lg flex items-center justify-center ${
                                 enabled
-                                    ? "bg-[#fca200]/10 border border-[#fca200]/20 text-[#fca200]"
+                                    ? "bg-brand/10 border border-brand/20 text-brand"
                                     : "bg-white/5 border border-white/10 text-white/40"
                             }`}
                         >
@@ -808,11 +808,11 @@ function IntegrationCard({
                     <button
                         onClick={onToggle}
                         className={`relative w-11 h-6 rounded-lg transition-all ${
-                            enabled ? "bg-[#fca200]" : "bg-white/20"
+                            enabled ? "bg-brand" : "bg-white/20"
                         }`}
                     >
                         <div
-                            className={`absolute top-0.5 left-0.5 w-5 h-5 bg-[#fca200] rounded-lg transition-all shadow-lg ${
+                            className={`absolute top-0.5 left-0.5 w-5 h-5 bg-brand rounded-lg transition-all shadow-lg ${
                                 enabled ? "translate-x-5" : ""
                             }`}
                         />
@@ -921,7 +921,7 @@ function SoulseekCard({
                         <div
                             className={`w-9 h-9 rounded-lg flex items-center justify-center ${
                                 enabled
-                                    ? "bg-[#fca200]/10 border border-[#fca200]/20 text-[#fca200]"
+                                    ? "bg-brand/10 border border-brand/20 text-brand"
                                     : "bg-white/5 border border-white/10 text-white/40"
                             }`}
                         >
@@ -949,11 +949,11 @@ function SoulseekCard({
                     <button
                         onClick={onToggle}
                         className={`relative w-11 h-6 rounded-lg transition-all ${
-                            enabled ? "bg-[#fca200]" : "bg-white/20"
+                            enabled ? "bg-brand" : "bg-white/20"
                         }`}
                     >
                         <div
-                            className={`absolute top-0.5 left-0.5 w-5 h-5 bg-[#fca200] rounded-lg transition-all shadow-lg ${
+                            className={`absolute top-0.5 left-0.5 w-5 h-5 bg-brand rounded-lg transition-all shadow-lg ${
                                 enabled ? "translate-x-5" : ""
                             }`}
                         />
@@ -982,7 +982,7 @@ function SoulseekCard({
                                 href="https://www.slsknet.org/news/node/1"
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-[#fca200] hover:underline"
+                                className="text-brand hover:underline"
                             >
                                 slsknet.org
                             </a>

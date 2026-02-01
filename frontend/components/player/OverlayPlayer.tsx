@@ -264,7 +264,7 @@ export function OverlayPlayer() {
                 
                 toast.success(`Vibe mode on`, {
                     description: `${response.tracks.length} matching tracks queued`,
-                    icon: <AudioWaveform className="w-4 h-4 text-[#f5c518]" />,
+                    icon: <AudioWaveform className="w-4 h-4 text-brand" />,
                 });
             } else {
                 toast.error("Couldn't find matching tracks");
@@ -378,7 +378,7 @@ export function OverlayPlayer() {
                         "absolute inset-0 rounded-2xl blur-2xl opacity-50",
                         vibeMode 
                             ? "bg-gradient-to-br from-brand/30 via-transparent to-purple-500/30" 
-                            : "bg-gradient-to-br from-[#f5c518]/20 via-transparent to-[#a855f7]/20"
+                            : "bg-gradient-to-br from-brand/20 via-transparent to-ai/20"
                     )} />
                     
                     {/* Album art OR Vibe Comparison when in vibe mode */}
@@ -474,7 +474,7 @@ export function OverlayPlayer() {
                                     className={cn(
                                         "h-full rounded-full transition-all duration-150",
                                         seekEnabled
-                                            ? "bg-gradient-to-r from-[#f5c518] to-[#a855f7]"
+                                            ? "bg-gradient-to-r from-brand to-ai"
                                             : "bg-white/40"
                                     )}
                                     style={{ width: `${progress}%` }}
@@ -536,7 +536,7 @@ export function OverlayPlayer() {
                                 !canSkip
                                     ? "text-gray-700 cursor-not-allowed"
                                     : isShuffle
-                                    ? "text-[#f5c518]"
+                                    ? "text-brand"
                                     : "text-gray-500 hover:text-white"
                             )}
                             title="Shuffle"
@@ -552,7 +552,7 @@ export function OverlayPlayer() {
                                 !canSkip
                                     ? "text-gray-700 cursor-not-allowed"
                                     : repeatMode !== "off"
-                                    ? "text-[#f5c518]"
+                                    ? "text-brand"
                                     : "text-gray-500 hover:text-white"
                             )}
                             title={repeatMode === "one" ? "Repeat One" : repeatMode === "all" ? "Repeat All" : "Repeat Off"}
@@ -572,8 +572,8 @@ export function OverlayPlayer() {
                                 !canSkip
                                     ? "text-gray-700 cursor-not-allowed"
                                     : vibeMode
-                                    ? "text-[#f5c518]"
-                                    : "text-gray-500 hover:text-[#f5c518]"
+                                    ? "text-brand"
+                                    : "text-gray-500 hover:text-brand"
                             )}
                             title={vibeMode ? "Turn off vibe mode" : "Match this vibe"}
                         >

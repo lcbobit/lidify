@@ -22,12 +22,12 @@ export function CompactToggle({
     const bgColor = locked
         ? 'bg-[#505050]'  // Locked state - muted
         : variant === 'purple'
-            ? checked ? 'bg-purple-500' : 'bg-[#404040]'
-            : checked ? 'bg-[#1DB954]' : 'bg-[#404040]';
+            ? checked ? 'bg-brand' : 'bg-[#404040]'
+            : checked ? 'bg-spotify' : 'bg-[#404040]';
 
     const ringColor = variant === 'purple'
-        ? 'peer-focus:ring-purple-500/30'
-        : 'peer-focus:ring-[#1DB954]/30';
+        ? 'peer-focus:ring-brand/30'
+        : 'peer-focus:ring-spotify/30';
 
     return (
         <label

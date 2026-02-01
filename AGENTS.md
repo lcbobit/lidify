@@ -121,6 +121,43 @@ if (hasValidMbid) {
 }
 ```
 
+## Color System
+
+Colors are centralized in `frontend/tailwind.config.js`. Use semantic tokens, not hex codes.
+
+### Tailwind Tokens
+| Token | Hex | Usage |
+|-------|-----|-------|
+| `brand` | `#fca200` | Primary app color (buttons, active states, highlights) |
+| `brand-hover` | `#e69200` | Hover states for brand elements |
+| `spotify` | `#1DB954` | Spotify-related UI |
+| `deezer` | `#A855F7` | Deezer-related UI |
+| `ai` | `#A855F7` | AI/ML feature highlights |
+
+### Usage Examples
+```tsx
+// Brand button
+<button className="bg-brand hover:bg-brand-hover text-black">
+
+// Spotify import indicator  
+<span className="bg-spotify/20 text-spotify">Spotify</span>
+
+// Opacity modifiers work
+<div className="bg-brand/50 border-brand/30">
+```
+
+### For Non-Tailwind Contexts (canvas, SVG, JS styles)
+```tsx
+// Define at top of file
+const BRAND_COLOR = "#fca200";
+
+// Use in canvas
+ctx.strokeStyle = BRAND_COLOR;
+
+// Use in SVG
+<Radar stroke={BRAND_COLOR} fill={BRAND_COLOR} />
+```
+
 ## Gotchas
 
 1. **Prisma queries without `orderBy`** return by insertion order (primary key) - causes bias
@@ -128,6 +165,7 @@ if (hasValidMbid) {
 3. **Artist links** should use `artist.id` (CUID), not `artist.mbid` (can be temp)
 4. **Lidarr metadata refresh** is async - wait for completion before album search
 5. **Essentia mood models** have inconsistent column ordering - check per-model
+6. **Use Tailwind color tokens** - avoid hardcoded hex colors in class names
 
 ## Environment Variables
 

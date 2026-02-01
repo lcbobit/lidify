@@ -33,7 +33,7 @@ export function AudiobookActionBar({
       {onPlayPause && (
         <button
           onClick={onPlayPause}
-          className="w-14 h-14 rounded-full bg-[#ecb200] hover:bg-[#ffc61a] hover:scale-105 transition-all flex items-center justify-center shadow-lg"
+          className="w-14 h-14 rounded-full bg-brand hover:bg-brand-light hover:scale-105 transition-all flex items-center justify-center shadow-lg"
           title={showingPause ? "Pause" : (hasProgress && !isFinished ? "Resume" : "Play")}
         >
           {showingPause ? (
@@ -56,7 +56,7 @@ export function AudiobookActionBar({
           </div>
           <div className="w-24 h-1 bg-white/10 rounded-full overflow-hidden">
             <div
-              className="h-full bg-[#ecb200] rounded-full transition-all"
+              className="h-full bg-brand rounded-full transition-all"
               style={{
                 width: `${isThisBookPlaying ? (currentTime / audiobook.duration) * 100 : audiobook.progress.progress}%`,
               }}

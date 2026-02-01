@@ -14,8 +14,8 @@ import { GradientSpinner } from "@/components/ui/GradientSpinner";
 import { api } from "@/lib/api";
 import { cn } from "@/utils/cn";
 
-// Lidify brand yellow
-const LIDIFY_YELLOW = "#ecb200";
+// Brand color for JS contexts (matches Tailwind brand color)
+const BRAND_COLOR = "#fca200";
 
 interface PlaylistItem {
     id: string;
@@ -152,7 +152,7 @@ function PlaylistCard({
                             e.stopPropagation();
                             onPlay(playlist.id);
                         }}
-                        style={{ backgroundColor: LIDIFY_YELLOW }}
+                        style={{ backgroundColor: BRAND_COLOR }}
                         className={cn(
                             "absolute bottom-2 right-2 w-10 h-10 rounded-full flex items-center justify-center",
                             "shadow-lg shadow-black/40 transition-all duration-200",
@@ -248,11 +248,11 @@ export default function PlaylistsPage() {
             {/* Quick gradient fade - yellow to purple */}
             <div className="absolute inset-0 pointer-events-none">
                 <div
-                    className="absolute inset-0 bg-gradient-to-b from-[#ecb200]/15 via-purple-900/10 to-transparent"
+                    className="absolute inset-0 bg-gradient-to-b from-brand/15 via-purple-900/10 to-transparent"
                     style={{ height: "35vh" }}
                 />
                 <div
-                    className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,var(--tw-gradient-stops))] from-[#ecb200]/8 via-transparent to-transparent"
+                    className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,var(--tw-gradient-stops))] from-brand/8 via-transparent to-transparent"
                     style={{ height: "25vh" }}
                 />
             </div>
@@ -276,7 +276,7 @@ export default function PlaylistsPage() {
                         {/* Browse Public Playlists */}
                         <Link
                             href="/browse/playlists"
-                            className="px-4 py-2 rounded-full text-sm font-medium bg-[#ecb200] text-black hover:brightness-110 transition-all"
+                            className="px-4 py-2 rounded-full text-sm font-medium bg-brand text-black hover:brightness-110 transition-all"
                         >
                             Browse Playlists
                         </Link>
@@ -315,7 +315,7 @@ export default function PlaylistsPage() {
                         </p>
                         <Link
                             href="/browse/playlists"
-                            className="mt-6 px-5 py-2.5 rounded-full text-sm font-medium bg-[#ecb200] text-black hover:brightness-110 transition-all"
+                            className="mt-6 px-5 py-2.5 rounded-full text-sm font-medium bg-brand text-black hover:brightness-110 transition-all"
                         >
                             Browse Playlists
                         </Link>

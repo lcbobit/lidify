@@ -4,6 +4,9 @@ import { useAudioState } from "@/lib/audio-state-context";
 import { cn } from "@/utils/cn";
 import { useMemo } from "react";
 
+// Brand color for SVG (matches Tailwind brand color)
+const BRAND_COLOR = "#fca200";
+
 interface AudioFeatures {
     bpm?: number | null;
     energy?: number | null;
@@ -139,8 +142,8 @@ export function VibeGraph({ className, currentTrackFeatures }: VibeGraphProps) {
                     {/* Source track polygon (yellow, dashed) */}
                     <polygon
                         points={getPolygonPoints(sourceValues)}
-                        fill="rgba(236, 178, 0, 0.15)"
-                        stroke="#ecb200"
+                        fill="rgba(252, 162, 0, 0.15)"
+                        stroke={BRAND_COLOR}
                         strokeWidth="1.5"
                         strokeDasharray="3,2"
                     />
@@ -179,7 +182,7 @@ export function VibeGraph({ className, currentTrackFeatures }: VibeGraphProps) {
                         className={cn(
                             "text-xs font-bold tabular-nums",
                             matchScore >= 80 ? "text-green-400" :
-                            matchScore >= 60 ? "text-[#ecb200]" :
+                            matchScore >= 60 ? "text-brand" :
                             "text-gray-400"
                         )}
                     >

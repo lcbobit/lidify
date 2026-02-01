@@ -64,7 +64,7 @@ export function SoulseekSection({ settings, onUpdate, onTest, isTesting }: Souls
                                     href="https://www.slsknet.org/news/node/1"
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1 text-[#ecb200] hover:underline"
+                                    className="inline-flex items-center gap-1 text-brand hover:underline"
                                 >
                                     <ExternalLink className="w-3 h-3" />
                                     Create Account

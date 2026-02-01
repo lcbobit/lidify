@@ -198,7 +198,7 @@ export function FullPlayer() {
                 
                 toast.success(`Vibe mode on`, {
                     description: `${response.tracks.length} matching tracks queued up next`,
-                    icon: <AudioWaveform className="w-4 h-4 text-[#ecb200]" />,
+                    icon: <AudioWaveform className="w-4 h-4 text-brand" />,
                 });
             } else {
                 toast.error("Couldn't find matching tracks in your library");
@@ -580,8 +580,8 @@ export function FullPlayer() {
                                 !hasMedia || playbackType !== "track"
                                     ? "text-gray-600"
                                     : vibeMode
-                                    ? "text-[#ecb200] hover:text-[#d4a000]"
-                                    : "text-gray-400 hover:text-[#ecb200]"
+                                    ? "text-brand hover:text-brand-hover"
+                                    : "text-gray-400 hover:text-brand"
                             )}
                             disabled={!hasMedia || playbackType !== "track" || isVibeLoading}
                             title={vibeMode ? "Turn off vibe mode" : "Match this vibe - find similar sounding tracks"}

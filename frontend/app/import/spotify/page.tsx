@@ -301,11 +301,11 @@ function SpotifyImportPageContent() {
             {/* Quick gradient fade - yellow to purple like home page */}
             <div className="absolute inset-0 pointer-events-none">
                 <div
-                    className="absolute inset-0 bg-linear-to-b from-[#ecb200]/15 via-purple-900/10 to-transparent"
+                    className="absolute inset-0 bg-linear-to-b from-brand/15 via-purple-900/10 to-transparent"
                     style={{ height: "35vh" }}
                 />
                 <div
-                    className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,var(--tw-gradient-stops))] from-[#ecb200]/8 via-transparent to-transparent"
+                    className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,var(--tw-gradient-stops))] from-brand/8 via-transparent to-transparent"
                     style={{ height: "25vh" }}
                 />
             </div>
@@ -336,7 +336,7 @@ function SpotifyImportPageContent() {
                         Looking for playlists to import?{" "}
                         <Link
                             href="/browse/playlists"
-                            className="text-[#ecb200] hover:underline font-medium"
+                            className="text-brand hover:underline font-medium"
                         >
                             Browse Deezer playlists & radio stations →
                         </Link>
@@ -355,7 +355,7 @@ function SpotifyImportPageContent() {
                                 value={url}
                                 onChange={handleUrlChange}
                                 placeholder="https://www.deezer.com/playlist/... or https://open.spotify.com/playlist/..."
-                                className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-[#ecb200]/50 focus:border-[#ecb200] transition-colors"
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-brand/50 focus:border-brand transition-colors"
                                 onKeyDown={(e) =>
                                     e.key === "Enter" && handleFetchPreview()
                                 }
@@ -364,14 +364,14 @@ function SpotifyImportPageContent() {
                                 Paste a public{" "}
                                 <span className="text-[#AD47FF]">Deezer</span>{" "}
                                 or{" "}
-                                <span className="text-[#1DB954]">Spotify</span>{" "}
+                                <span className="text-spotify">Spotify</span>{" "}
                                 playlist URL
                             </p>
                         </div>
                         <button
                             onClick={handleFetchPreview}
                             disabled={isLoading || !url.trim()}
-                            className="w-full py-3 rounded-full font-medium bg-[#ecb200] text-black hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                            className="w-full py-3 rounded-full font-medium bg-brand text-black hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
                         >
                             {isLoading ? (
                                 <>
@@ -427,7 +427,7 @@ function SpotifyImportPageContent() {
                                 }
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-gray-400 hover:text-[#1DB954] transition-colors"
+                                className="text-gray-400 hover:text-spotify transition-colors"
                             >
                                 <ExternalLink className="w-4 h-4" />
                             </a>
@@ -451,8 +451,8 @@ function SpotifyImportPageContent() {
                                     In Library
                                 </div>
                             </div>
-                            <div className="text-center py-3 bg-[#1DB954]/10 rounded-lg">
-                                <div className="text-xl font-bold text-[#1DB954]">
+                            <div className="text-center py-3 bg-spotify/10 rounded-lg">
+                                <div className="text-xl font-bold text-spotify">
                                     {preview.summary.downloadable}
                                 </div>
                                 <div className="text-xs text-gray-500">
@@ -564,7 +564,7 @@ function SpotifyImportPageContent() {
                                     className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors"
                                 >
                                     <div className="flex items-center gap-2">
-                                        <Download className="w-4 h-4 text-[#1DB954]" />
+                                        <Download className="w-4 h-4 text-spotify" />
                                         <span className="text-sm font-medium text-white">
                                             {preview.summary.downloadable} songs
                                             to download
@@ -630,7 +630,7 @@ function SpotifyImportPageContent() {
                                     setPlaylistName(e.target.value)
                                 }
                                 placeholder="Enter playlist name"
-                                className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-[#1DB954]/50 focus:border-[#1DB954] transition-colors"
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-spotify/50 focus:border-spotify transition-colors"
                             />
                         </div>
 
@@ -652,7 +652,7 @@ function SpotifyImportPageContent() {
                                     (preview.summary.inLibrary === 0 &&
                                         preview.summary.downloadable === 0)
                                 }
-                                className="flex-1 py-3 rounded-full font-medium bg-[#1DB954] text-black hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                                className="flex-1 py-3 rounded-full font-medium bg-spotify text-black hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
                             >
                                 {isLoading ? (
                                     <>
@@ -672,7 +672,7 @@ function SpotifyImportPageContent() {
                 {/* Step: Importing */}
                 {step === "importing" && importJob && (
                     <div className="text-center py-12">
-                        <Loader2 className="w-10 h-10 text-[#1DB954] animate-spin mx-auto mb-4" />
+                        <Loader2 className="w-10 h-10 text-spotify animate-spin mx-auto mb-4" />
                         <h2 className="text-lg font-bold text-white mb-1">
                             {importJob.status === "downloading"
                                 ? "Downloading Songs"
@@ -717,7 +717,7 @@ function SpotifyImportPageContent() {
                         </p>
                         <div className="w-full max-w-xs mx-auto bg-white/10 rounded-full h-1.5">
                             <div
-                                className="bg-[#1DB954] h-1.5 rounded-full transition-all duration-500"
+                                className="bg-spotify h-1.5 rounded-full transition-all duration-500"
                                 style={{ width: `${importJob.progress}%` }}
                             />
                         </div>
@@ -757,7 +757,7 @@ function SpotifyImportPageContent() {
                                     ? "bg-red-500"
                                     : importJob.status === "cancelled"
                                     ? "bg-amber-500"
-                                    : "bg-[#1DB954]")
+                                    : "bg-spotify")
                             }
                         >
                             {importJob.status === "failed" || importJob.status === "cancelled" ? (
@@ -874,7 +874,7 @@ function SpotifyImportPageContent() {
                                             `/playlist/${importJob.createdPlaylistId}`
                                         )
                                     }
-                                    className="px-5 py-2.5 rounded-full text-sm font-medium bg-[#1DB954] text-black hover:brightness-110 transition-all"
+                                    className="px-5 py-2.5 rounded-full text-sm font-medium bg-spotify text-black hover:brightness-110 transition-all"
                                 >
                                     View Playlist
                                 </button>
@@ -892,7 +892,7 @@ export default function SpotifyImportPage() {
         <Suspense
             fallback={
                 <div className="min-h-screen flex items-center justify-center">
-                    <Loader2 className="w-8 h-8 text-[#ecb200] animate-spin" />
+                    <Loader2 className="w-8 h-8 text-brand animate-spin" />
                 </div>
             }
         >

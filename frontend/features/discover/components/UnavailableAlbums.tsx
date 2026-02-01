@@ -8,10 +8,10 @@ const tierColors: Record<string, string> = {
     high: "text-green-400",
     medium: "text-yellow-400",
     explore: "text-orange-400",
-    wildcard: "text-purple-400",
+    wildcard: "text-ai",
     // Legacy mappings
     low: "text-orange-400",
-    wild: "text-purple-400",
+    wild: "text-ai",
 };
 
 const tierLabels: Record<string, string> = {

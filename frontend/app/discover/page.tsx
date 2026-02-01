@@ -504,7 +504,7 @@ export default function DiscoverPage() {
                                     ? `/artist/${album.artistMbid}`
                                     : `/search?q=${encodeURIComponent(album.artistName)}`
                                 }
-                                className="text-xs text-fuchsia-400 hover:text-fuchsia-300 shrink-0 flex items-center gap-1"
+                                className="text-xs text-ai hover:text-ai-hover shrink-0 flex items-center gap-1"
                                 onClick={(e) => e.stopPropagation()}
                             >
                                 <ExternalLink className="w-3 h-3" />
@@ -562,7 +562,7 @@ export default function DiscoverPage() {
 
                         {isLoadingDetails ? (
                             <div className="flex items-center justify-center py-4">
-                                <div className="w-5 h-5 border-2 border-fuchsia-400 border-t-transparent rounded-full animate-spin" />
+                                <div className="w-5 h-5 border-2 border-ai border-t-transparent rounded-full animate-spin" />
                                 <span className="ml-2 text-sm text-gray-300">Loading tracks...</span>
                             </div>
                         ) : details?.topTracks && details.topTracks.length > 0 ? (
@@ -584,10 +584,10 @@ export default function DiscoverPage() {
                                         >
                                             <span className={cn(
                                                 "w-5 text-center text-sm",
-                                                isThisPlaying ? "text-fuchsia-400" : "text-gray-300"
+                                                isThisPlaying ? "text-ai" : "text-gray-300"
                                             )}>
                                                 {isThisPlaying && previewPlaying ? (
-                                                    <Music className="w-4 h-4 text-fuchsia-400 animate-pulse inline" />
+                                                    <Music className="w-4 h-4 text-ai animate-pulse inline" />
                                                 ) : (
                                                     trackIdx + 1
                                                 )}
@@ -613,7 +613,7 @@ export default function DiscoverPage() {
                                             <div className="flex-1 min-w-0">
                                                 <p className={cn(
                                                     "text-sm truncate",
-                                                    isThisPlaying ? "text-fuchsia-400" : "text-white"
+                                                    isThisPlaying ? "text-ai" : "text-white"
                                                 )}>
                                                     {track.title}
                                                 </p>
@@ -633,7 +633,7 @@ export default function DiscoverPage() {
                                                 className={cn(
                                                     "p-2 rounded-full transition-all",
                                                     isThisPlaying
-                                                        ? "bg-fuchsia-500/20 text-fuchsia-400"
+                                                        ? "bg-ai/20 text-ai"
                                                         : "hover:bg-white/10 text-gray-300 hover:text-white",
                                                     isLoading && "opacity-50"
                                                 )}
@@ -670,7 +670,7 @@ export default function DiscoverPage() {
                 }}
             >
                 <div className="flex items-end gap-6">
-                    <div className="w-[140px] h-[140px] md:w-[192px] md:h-[192px] bg-gradient-to-br from-fuchsia-600 to-purple-900 rounded shadow-2xl shrink-0 flex items-center justify-center">
+                    <div className="w-[140px] h-[140px] md:w-[192px] md:h-[192px] bg-gradient-to-br from-ai to-ai-hover rounded shadow-2xl shrink-0 flex items-center justify-center">
                         <Compass className="w-20 h-20 md:w-24 md:h-24 text-white" />
                     </div>
 
@@ -713,7 +713,7 @@ export default function DiscoverPage() {
                                     className={cn(
                                         "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all",
                                         isActive
-                                            ? "bg-fuchsia-500 text-white"
+                                            ? "bg-ai text-white"
                                             : "bg-white/5 text-white/70 hover:bg-white/10 hover:text-white",
                                         loading && "opacity-50 cursor-not-allowed"
                                     )}
@@ -763,7 +763,7 @@ export default function DiscoverPage() {
                         className={cn(
                             "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all",
                             includeLibrary
-                                ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                                ? "bg-ai/20 text-ai border border-ai/30"
                                 : "bg-white/5 text-white/70 hover:bg-white/10 hover:text-white",
                             loading && "opacity-50 cursor-not-allowed"
                         )}
@@ -791,8 +791,8 @@ export default function DiscoverPage() {
                         className={cn(
                             "flex items-center gap-2 h-10 px-4 rounded-full text-sm font-medium transition-all",
                             loading
-                                ? "bg-fuchsia-500/50 text-white/70"
-                                : "bg-fuchsia-500 hover:bg-fuchsia-400 text-white"
+                                ? "bg-ai/50 text-white/70"
+                                : "bg-ai hover:bg-ai-hover text-white"
                         )}
                     >
                         <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
@@ -855,7 +855,7 @@ export default function DiscoverPage() {
                     {data.sections.wildcard.length > 0 && (
                         <div className="mb-8">
                             <div className="flex items-center gap-2 mb-3">
-                                <Sparkles className="w-5 h-5 text-purple-400" />
+                                <Sparkles className="w-5 h-5 text-ai" />
                                 <h2 className="text-lg font-semibold text-white">Wildcards</h2>
                                 <span className="text-sm text-gray-400">— Unexpected but still you</span>
                             </div>
@@ -883,8 +883,8 @@ export default function DiscoverPage() {
             {/* Empty State */}
             {!loading && !data && (
                 <div className="flex flex-col items-center justify-center py-24 text-center px-4">
-                    <div className="w-20 h-20 bg-fuchsia-500/20 rounded-full flex items-center justify-center mb-4">
-                        <Compass className="w-10 h-10 text-fuchsia-400" />
+                    <div className="w-20 h-20 bg-ai/20 rounded-full flex items-center justify-center mb-4">
+                        <Compass className="w-10 h-10 text-ai" />
                     </div>
                     <h3 className="text-lg font-medium text-white mb-1">Discover New Music</h3>
                     <p className="text-sm text-gray-300 max-w-md mb-2">

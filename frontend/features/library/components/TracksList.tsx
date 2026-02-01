@@ -62,10 +62,10 @@ const TrackRow = memo(function TrackRow({
       <div className="w-8 flex items-center justify-center">
         <span className={cn(
           "text-sm group-hover:hidden",
-          isCurrentlyPlaying ? "text-[#ecb200]" : "text-gray-500"
+          isCurrentlyPlaying ? "text-brand" : "text-gray-500"
         )}>
           {isCurrentlyPlaying ? (
-            <AudioLines className="w-4 h-4 text-[#ecb200]" />
+            <AudioLines className="w-4 h-4 text-brand" />
           ) : (
             index + 1
           )}
@@ -92,7 +92,7 @@ const TrackRow = memo(function TrackRow({
         <div className="min-w-0">
           <h3 className={cn(
             "text-sm font-medium truncate",
-            isCurrentlyPlaying ? "text-[#ecb200]" : "text-white"
+            isCurrentlyPlaying ? "text-brand" : "text-white"
           )}>
             {track.title}
           </h3>

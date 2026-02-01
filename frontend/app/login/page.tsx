@@ -7,6 +7,9 @@ import Image from "next/image";
 import { Loader2 } from "lucide-react";
 import { GalaxyBackground } from "@/components/ui/GalaxyBackground";
 
+// Brand color for JS contexts (matches Tailwind brand color)
+const BRAND_COLOR = "#fca200";
+
 interface Artist {
     id: string;
     mbid?: string;
@@ -138,13 +141,13 @@ export default function LoginPage() {
             {/* Animated Background with Artist Images */}
             <div className="absolute inset-0 bg-[#000]">
                 {/* Subtle accent gradient */}
-                <div className="absolute inset-0 bg-gradient-to-br from-[#fca200]/5 via-transparent to-transparent" />
+                <div className="absolute inset-0 bg-gradient-to-br from-brand/5 via-transparent to-transparent" />
 
                 {/* Ultra-subtle starfield texture (dialed down vs the main app) */}
                 <div className="opacity-[0.08]">
                     <GalaxyBackground
-                        primaryColor="#fca200"
-                        secondaryColor="#fca200"
+                        primaryColor={BRAND_COLOR}
+                        secondaryColor={BRAND_COLOR}
                     />
                 </div>
 
@@ -368,7 +371,7 @@ export default function LoginPage() {
                             <button
                                 type="submit"
                                 disabled={isLoading}
-                                className="w-full py-3 bg-[#fca200] text-black font-bold rounded-lg hover:bg-[#e69200] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="w-full py-3 bg-brand text-black font-bold rounded-lg hover:bg-brand-hover transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 <span className="flex items-center justify-center gap-2">
                                     {isLoading ? (
