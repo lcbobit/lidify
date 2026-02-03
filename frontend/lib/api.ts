@@ -133,11 +133,11 @@ const getApiBaseUrl = () => {
         // Use relative paths - Next.js rewrites will proxy to backend
         return "";
     }
-
+    return "";
     // Development mode: Backend on separate port
-    const currentHost = window.location.hostname;
-    const apiPort = "3006";
-    return `${window.location.protocol}//${currentHost}:${apiPort}`;
+    //const currentHost = window.location.hostname;
+    //const apiPort = "3006";
+    //return `${window.location.protocol}//${currentHost}:${apiPort}`;
 };
 
 class ApiClient {
