@@ -25,7 +25,12 @@ echo "[START] Starting Lidify Backend..."
 # Docker Compose health checks ensure database and Redis are ready
 # Add a small delay to be extra safe
 echo "[WAIT] Waiting for services to be ready..."
-sleep 10
+echo "[DB] Waiting for database..."
+until npx prisma db pull >/dev/null 2>&1; do
+  echo "Database not ready yet... retrying in 2s"
+  sleep 2
+done
+echo "[DB] Database ready, running migrations..."
 echo "Services are ready"
 
 # Run database migrations
