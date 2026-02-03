@@ -25,7 +25,7 @@ echo "[START] Starting Lidify Backend..."
 # Docker Compose health checks ensure database and Redis are ready
 # Add a small delay to be extra safe
 echo "[WAIT] Waiting for services to be ready..."
-sleep 3
+sleep 10
 echo "Services are ready"
 
 # Run database migrations
